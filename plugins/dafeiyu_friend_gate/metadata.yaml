@@ -1,0 +1,5 @@
+name: dafeiyu_friend_gate
+display_name: 哦鲸鲸好友申请管理
+desc: 自动通过好友申请、同步聊天白名单并给新好友发一次语音欢迎，仅爸爸可管理例外，处理记录持久化
+version: 0.3.1
+author: Local

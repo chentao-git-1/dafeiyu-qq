@@ -1,0 +1,6 @@
+name: astrbot_plugin_dafeiyu_voice_request
+display_name: 按要求发语音
+author: local
+version: 0.1.2
+desc: 明确要求语音时直接合成，明确要求文字时发文字，普通聊天沿用原生概率。
+astrbot_version: ">=4.29.1"

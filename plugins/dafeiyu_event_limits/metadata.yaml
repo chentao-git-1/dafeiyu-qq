@@ -1,0 +1,6 @@
+name: dafeiyu_event_limits
+display_name: DeepSeek峰谷回复限流
+desc: 谷时不限量；峰时滚动30分钟每人10次、每群15次回复，通知不占聊天额度。
+version: 0.2.1
+author: Local
+repo: local

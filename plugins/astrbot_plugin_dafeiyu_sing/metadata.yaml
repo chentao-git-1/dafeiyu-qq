@@ -1,0 +1,6 @@
+name: astrbot_plugin_dafeiyu_sing
+display_name: 小鲸鱼唱歌
+author: local
+version: 0.1.2
+desc: 使用小米 MiMo 官方歌唱模式生成短歌，带群白名单、并发和冷却限制。
+astrbot_version: ">=4.29.1"

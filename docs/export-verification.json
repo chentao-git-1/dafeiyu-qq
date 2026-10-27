@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "python_files_parsed": 964,
+  "json_files_parsed": 175,
+  "privacy_scan_passed": true,
+  "private_qq_values_replaced": true,
+  "configured_secrets_exported": false,
+  "chat_databases_exported": false,
+  "public_export_behavioral_tests": 55,
+  "installer_copy_checks": 3,
+  "real_qq_test_messages": 0,
+  "real_qzone_test_posts": 0,
+  "paid_test_model_calls": 0,
+  "production_service_changed": false
+}

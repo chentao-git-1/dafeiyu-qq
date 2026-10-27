@@ -1,0 +1,6 @@
+name: astrbot_plugin_dafeiyu_draw
+display_name: 小鲸鱼画图
+author: local
+version: 0.1.7
+desc: 识别自拍、头像等自然生图请求，承接同一人的图片修改；调用指定 SheApi 的 gpt-image-2 生成并发送到 QQ。
+astrbot_version: ">=4.29.1"

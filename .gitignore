@@ -1,0 +1,27 @@
+# Private deployment material
+.env
+.env.*
+!.env.example
+local-identities.json
+*private*.local.*
+data/
+plugin_data/
+logs/
+backups/
+*.db
+*.db-*
+*.sqlite*
+*.log
+*.zip
+*.tar*
+*.pem
+*.key
+*.p12
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+**/dist/
+**/.cache/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,20 @@
+{
+  "enable_at_avatar": {
+    "description": "启用@用户头像功能",
+    "type": "bool",
+    "default": true,
+    "hint": "允许 @用户 + /反色 获取对方头像进行反色处理"
+  },
+  "match_mode": {
+    "description": "词语精准匹配模式",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后，引用图片直接发「反色」或「调速 倍数」（无需 /），即可触发"
+  },
+  "gif_speed_allow_frame_drop": {
+    "description": "GIF调速允许丢帧加速",
+    "type": "bool",
+    "default": false,
+    "hint": "当调速倍率使帧率超过50FPS时，允许通过均匀丢帧达成目标倍率；关闭时自动回退到不超过50FPS的最高倍率"
+  }
+}

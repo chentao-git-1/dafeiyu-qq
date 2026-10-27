@@ -1,0 +1,6 @@
+{
+  "enabled": {"type":"bool","description":"启用画图","default":false},
+  "api_key": {"type":"string","description":"SheApi 画图令牌","secret":true,"default":""},
+  "cooldown_seconds": {"type":"int","description":"每个会话的画图冷却秒数","default":30},
+  "timeout_seconds": {"type":"int","description":"非流式出图等待超时秒数","default":180}
+}

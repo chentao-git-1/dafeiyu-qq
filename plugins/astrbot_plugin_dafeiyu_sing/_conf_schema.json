@@ -1,0 +1,10 @@
+{
+  "enabled": {"type":"bool","description":"启用唱歌（填好 MiMo 密钥后开启）","default":false},
+  "api_key": {"type":"string","description":"小米 MiMo API Key","secret":true,"default":""},
+  "voice": {"type":"string","description":"唱歌女声音色","default":"茉莉","options":["冰糖","茉莉"]},
+  "allowed_groups": {"type":"list","description":"允许唱歌的 QQ 群","default":["7000000101","7000000102"]},
+  "allowed_private_users": {"type":"list","description":"允许私信唱歌的 QQ","default":["7000000001"]},
+  "max_lyrics_chars": {"type":"int","description":"每段歌词最多字数","default":160},
+  "cooldown_seconds": {"type":"int","description":"每个会话的唱歌冷却秒数","default":90},
+  "timeout_seconds": {"type":"int","description":"云端请求超时秒数","default":75}
+}
