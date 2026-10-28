@@ -1,5 +1,5 @@
 name: dafeiyu_runtime
 display_name: 小鲸鱼聊天节奏与运行状态
 desc: 连发合并与去重、回复超时保障、媒体失败文字回退与卡顿采样
-version: 0.3.0
+version: 0.3.1
 author: Local

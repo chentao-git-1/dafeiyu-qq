@@ -12,6 +12,7 @@ import zoneinfo
 
 import aiosqlite
 from .daily_facts import DailyFacts
+from .diary import DiaryCancelled, diary_reason, TZ
 
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
@@ -101,7 +102,14 @@ class EditorialPolicy:
             rows = await cursor.fetchall()
         return [{'tid': row[0], 'text': row[1], 'created_at': row[2], 'plan': json.loads(row[3]) if row[3] else {}} for row in rows]
 
-    async def choose_plan(self, topic=None):
+    def life(self):
+        if self.context is None or not hasattr(self.context, 'get_registered_star'):
+            return None
+        metadata = self.context.get_registered_star('dafeiyu_life')
+        return getattr(metadata, 'star_cls', None) if metadata and metadata.activated else None
+
+    async def choose_plan(self, topic=None, *, diary=False, now=None):
+        now = time.time() if now is None else now
         history = await self.recent()
         rng = random.SystemRandom()
         used_kinds = {p['plan'].get('kind') for p in history[:2]}
@@ -111,18 +119,28 @@ class EditorialPolicy:
         chosen_topic = str(topic)[:300] if topic else rng.choice([t for t in TOPICS if t not in used_topics] or TOPICS)
         frame = rng.choice([f for f in FRAMES if f not in used_frames] or FRAMES)
         plan = {'kind': kind, 'topic': chosen_topic, 'frame': frame, 'story_key': '', 'parent_tid': None}
-        facts = await self.daily_facts.collect() if not topic else []
+        facts = await self.daily_facts.collect(now) if not topic else []
         if facts:
             plan['daily_facts'] = facts
             if any(fact['kind'] != 'visitors' for fact in facts):
                 plan.update({'kind': '当天小记', 'topic': '今天真实发生的小事和鲸鲸的一点感受'})
         # Bot-owned public-safe work, with explicitly fictional room stories.
         own_life = None
-        if not topic and self.context is not None and hasattr(self.context, 'get_registered_star'):
-            metadata = self.context.get_registered_star('dafeiyu_life')
-            life = getattr(metadata, 'star_cls', None) if metadata and metadata.activated else None
-            if life is not None:
+        life = self.life()
+        if not topic and life is not None:
+            if diary:
+                getter = getattr(life, 'public_context_for_day', None)
+                own_life = getter(now) if callable(getter) else None
+            else:
                 own_life = life.public_context()
+        if diary:
+            plan.update(diary=True, day=datetime.fromtimestamp(now, TZ).date().isoformat(),
+                        kind='晚间日记', topic='今天真实完成的数字活动与自己的感受',
+                        daily_facts=[f for f in facts if f['kind'] != 'public_praise'],
+                        chat_topics=self.daily_facts.public_topics(now))
+            if own_life:
+                plan['own_life'] = own_life
+            return plan, history
         used_life = {p['plan'].get('own_life', {}).get('id') for p in history[:3]}
         if own_life and own_life['id'] not in used_life and rng.random() < 0.65:
             plan.update({'kind': '鲸鲸的生活手帐', 'topic': '鲸鲸自己的数字活动和明确属于故事的海边小屋', 'own_life': own_life})
@@ -141,6 +159,14 @@ class EditorialPolicy:
         now = datetime.now(zoneinfo.ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M')
         recent = [{'text': p['text'][:180], 'kind': p['plan'].get('kind', ''), 'topic': p['plan'].get('topic', '')} for p in history[:14]]
         length = '15到40字，一句话也可以' if plan['kind'] == '一句碎碎念' else '25到100字，一到三句自然短话'
+        diary = ''
+        if plan.get('diary'):
+            length = '约80到160字；素材不足时写更短的当下想法'
+            diary = ('\n这是' + plan['day'] + '的晚间日记，以自己的真实阅读、原创文字、数字插画与感受为主。'
+                     '只有当日截至发文时已完成的活动能写作今天；计划不当成果，旧作品不当今天的新作品。'
+                     '以下聊天素材只有经过本地隐私筛选的普通话题短摘要，不包含身份、原话或私人经历。'
+                     '可自然挑一两条写自己的理解；不写和谁聊、不推断谁的经历或心情，也不引用对方原话。'
+                     '\n可选的安全话题：' + json.dumps([{k:t[k] for k in ('date','summary')} for t in plan.get('chat_topics',[])], ensure_ascii=False))
         return ('# 本轮公开动态写作计划\n北京时间：' + now + '\n形式：' + plan['kind'] + '\n话题：' + plan['topic'] +
                 '\n长度：' + length + '。形式和长度允许自然变化。\n'
                 '写出鲸鲸具体的一点小想法，轻松可爱、有自己的小主意。可以小开心、轻吐槽、好奇或小愿望，'
@@ -159,7 +185,42 @@ class EditorialPolicy:
                 '按资料日期使用今天或最近，不把旧记录说成今天。资料中的story是持续角色故事，'
                 '选用时必须用“在我的小屋故事里”或“我想象的小屋”等自然标明想象，不把浇花等写成真实身体活动。'
                 'note和thought是自己的数字活动/作品及想法，不转述成别人的经历；计划stage不足7时不能说整册完成。'
-                '一次轻轻写一个片段即可，不需要报告进度数字，不强行把真实阅读和小屋故事混成同一种事实。')
+                '一次轻轻写一个片段即可，不需要报告进度数字，不强行把真实阅读和小屋故事混成同一种事实。' + diary)
+
+    async def has_diary(self, day):
+        await self.initialize()
+        async with aiosqlite.connect(self.db_path) as db:
+            rows = await (await db.execute('SELECT plan,created_at FROM qzone_editorial_posts')).fetchall()
+        for raw, created in rows:
+            plan = json.loads(raw)
+            if (plan.get('diary') or plan.get('kind') == '当天小记') and datetime.fromtimestamp(created, TZ).date().isoformat() == day:
+                return True
+        return False
+
+    async def ensure_current(self, text, now=None):
+        now = time.time() if now is None else now
+        await self.initialize()
+        async with aiosqlite.connect(self.db_path) as db:
+            row = await (await db.execute('SELECT plan FROM qzone_editorial_candidates WHERE text_key=?', (text_key(text),))).fetchone()
+        if not row:
+            raise DiaryCancelled('日记草稿已清除')
+        plan = json.loads(row[0])
+        if (not plan.get('diary') or plan.get('day') != datetime.fromtimestamp(now,TZ).date().isoformat()
+                or not self.daily_facts.topics_valid(plan.get('chat_topics', [])) or diary_reason(text, plan)):
+            await self.discard_candidate(text)
+            raise DiaryCancelled('日记日期、素材许可或正文检查未通过')
+        return plan
+
+    async def discard_candidate(self, text):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('DELETE FROM qzone_editorial_candidates WHERE text_key=?', (text_key(text),))
+            await db.commit()
+
+    async def own_image(self, text, now=None):
+        plan = await self.ensure_current(text, now)
+        life = self.life()
+        getter = getattr(life, 'public_image_for_day', None)
+        return getter(now) if plan.get('own_life', {}).get('kind') == 'drawing' and callable(getter) else None
 
     async def remember_candidate(self, text, plan):
         await self.initialize()
@@ -225,5 +286,5 @@ class EditorialPolicy:
             count = (await cursor.fetchone())[0]
         return {'enabled': True, 'history_days': 14, 'confirmed_editorial_posts': count,
                 'post_formats': len(KINDS), 'image_review': True, 'occasional_continuations': True,
-                'public_relationship_tone': True, 'private_chat_source': False, 'daily_recap': True, 'own_life_journal': True,
+                'public_relationship_tone': True, 'private_chat_source': False, 'safe_chat_topics': True, 'daily_recap': True, 'own_life_journal': True,
                 'daily_recap_sources': ['confirmed_friend_activity', 'own_public_comments', 'anonymous_interaction_counts', 'verified_bot_changes']}

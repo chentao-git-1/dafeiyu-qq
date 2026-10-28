@@ -15,7 +15,8 @@ from astrbot.api.star import Star
 from astrbot.api.web import json_response
 from astrbot.core.message.components import At, Image, Plain, Record, Reply
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-from .access import store
+from .access import store, activity
+from .activity import KNOWN_BOTS, privacy_command
 from .store import DEFAULT, OWNER, SELF, TZ, can_notify_profile, clock_minutes
 from .cards import render_card
 
@@ -91,6 +92,40 @@ class DafeiyuSocial(Star):
         if not self.real_event(event) or not event.is_private_chat():return False
         cfg=self.context.get_config(event.unified_msg_origin)['platform_settings']
         return event.unified_msg_origin in {str(x) for x in cfg.get('id_whitelist',[])}
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=sys.maxsize+190)
+    async def activity_input(self, event):
+        if not self.real_event(event) or event.get_platform_name() != 'aiocqhttp':
+            return
+        uid, group = str(event.get_sender_id()), str(event.get_group_id() or '')
+        raw = event.message_obj.raw_message
+        sender = raw.get('sender') or {}
+        if uid in {SELF, *KNOWN_BOTS, *self.db.bots()} or isinstance(sender, dict) and sender.get('is_bot') is True:
+            return
+        cfg = self.context.get_config(event.unified_msg_origin)['platform_settings']
+        allowed = {str(x) for x in cfg.get('id_whitelist', [])}
+        if cfg.get('enable_id_white_list') and not (group in allowed if group else uid in allowed or event.unified_msg_origin in allowed):
+            return
+        parts = event.get_messages()
+        if group and not any(isinstance(p, At) and str(p.qq) == SELF for p in parts):
+            return
+        text = ''.join(p.text for p in parts if isinstance(p, Plain)).strip()
+        if re.fullmatch(r'饭钱(?:状态|检查|暂停|继续)|(?:我的设置|聊天设置|相处设置)(?:\s+.*)?|(?:查|查询|查看)?余额', text):
+            return
+        if text.startswith(('/', '!', '！')) and not privacy_command(text):
+            return
+        source = activity().prepare(uid, event.unified_msg_origin,
+            str(getattr(event.message_obj, 'message_id', '') or raw.get('message_id') or ''),
+            raw.get('time'), text, media=any(not isinstance(p, (Plain, At)) for p in parts))
+        for qzone_path in (self.data / 'plugin_data/astrbot_plugin_qzone').glob('posts_*.db'):
+            activity().purge_drafts(qzone_path)
+        if source and source.get('command'):
+            reply = ('好，这段不会用作未发布日记的素材。' if source['command'] == 'segment' else
+                     '记住了，以后不把你的聊天用于公开日记，未发布的相关素材也已清除。')
+            await event.send(MessageChain(chain=[Plain(reply)]))
+            event.stop_event()
+        elif source:
+            event.set_extra('dafeiyu_activity_input', source)
 
     @filter.event_message_type(filter.EventMessageType.ALL,priority=sys.maxsize+200)
     async def bot_guard(self,event):
@@ -287,4 +322,4 @@ class DafeiyuSocial(Star):
             await asyncio.sleep(60)
 
     async def status(self):
-        return json_response({'version':'0.1.1','stats':self.stats,'bots':self.db.bots(),'calendar_records':len(self.db.dates(OWNER)),'calendar_running':self.task is not None and not self.task.done(),'bot_round_limit':3,'bot_cooldown_seconds':1800,'calendar_timezone':'Asia/Shanghai'})
+        return json_response({'version':'0.2.0','stats':self.stats,'bots':self.db.bots(),'calendar_records':len(self.db.dates(OWNER)),'calendar_running':self.task is not None and not self.task.done(),'bot_round_limit':3,'bot_cooldown_seconds':1800,'calendar_timezone':'Asia/Shanghai'})

@@ -20,6 +20,7 @@ backups/
 __pycache__/
 *.py[cod]
 .venv/
+.venv312/
 node_modules/
 **/dist/
 **/.cache/

@@ -4,7 +4,6 @@ import contextlib
 import json
 from pathlib import Path
 import re
-import sqlite3
 import time
 
 import aiohttp
@@ -16,8 +15,8 @@ from astrbot.api.web import json_response
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .watch import (
-    BalanceWatch, INTERVAL, OWNER, BOT, balance_snapshot,
-    eligible_contacts, notice_text,
+    BalanceWatch, INTERVAL, OWNER, BOT, HELP_THRESHOLD, balance_snapshot,
+    notice_text,
 )
 
 ENDPOINT = 'https://api.deepseek.com/user/balance'
@@ -60,10 +59,10 @@ def social_profile(uid):
     except ImportError:
         return {'voice':'auto','proactive':True}
 
-def social_can_notify(uid):
+def social_can_notify(uid, timestamp=None):
     try:
         from data.plugins.dafeiyu_social.access import can_notify
-        return can_notify(str(uid))
+        return can_notify(str(uid), timestamp)
     except ImportError:
         return True
 
@@ -127,7 +126,7 @@ class DafeiyuBalance(Star):
         self.next_check_at = None
         context.register_web_api(
             '/dafeiyu_balance/status', self.status, ['GET'],
-            'DeepSeek 七毛饭钱提醒状态',
+            'DeepSeek 两档饭钱提醒状态',
         )
 
     async def initialize(self):
@@ -142,29 +141,33 @@ class DafeiyuBalance(Star):
         async with self.lock:
             pass
 
-    def named_contacts(self, config):
-        names = {
-            '7000000011': '猛叔叔', '7000000012': '田阿姨', '7000000013': '定叔叔',
-        }
-        database = self.data / 'plugin_data/astrbot_plugin_memory_system/memory_system.db'
-        if database.exists():
-            try:
-                with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=1) as db:
-                    rows = db.execute(
-                        'SELECT content FROM memories WHERE user_id=? AND merged_into IS NULL ORDER BY id LIMIT 1000',
-                        (OWNER,),
-                    ).fetchall()
-                for (content,) in rows:
-                    match = re.fullmatch(
-                        r'QQ\s*([1-9]\d{4,11})\s*(?:被称作|被称为|称为|叫作|叫)\s*([^\s。.!！?？,，:：;；]{1,16})[。.]?',
-                        str(content).strip(),
-                    )
-                    if match:
-                        names.setdefault(match[1], match[2])
-            except sqlite3.Error:
-                pass
-        allowed = {str(value) for value in config['platform_settings'].get('id_whitelist', [])}
-        return eligible_contacts([{'qq': qq, 'name': name} for qq, name in names.items()], allowed)
+    @staticmethod
+    def private_allowed(qq, config):
+        settings = config['platform_settings']
+        allowed = {str(value) for value in settings.get('id_whitelist', [])}
+        return (not settings.get('enable_id_white_list', True) or str(qq) in allowed
+                or 'dafeiyu-qq:FriendMessage:' + str(qq) in allowed)
+
+    async def ranked_contacts(self, config, bot):
+        if bot is None:
+            return None
+        try:
+            from data.plugins.dafeiyu_social.access import activity, store
+            friends = await asyncio.wait_for(bot.get_friend_list(), timeout=8)
+            if isinstance(friends, dict):
+                friends = friends.get('friends', friends.get('data'))
+            if not isinstance(friends, list):
+                return None
+            reachable = {str(row['user_id']) for row in friends
+                         if isinstance(row, dict) and 'user_id' in row and row.get('is_bot') is not True}
+            ranking = activity().ranked(store().bots())
+            return [{'qq': row['qq'], 'name': '朋友'} for row in ranking
+                    if row['qq'] in reachable and self.private_allowed(row['qq'], config)
+                    and social_profile(row['qq']).get('proactive', True)
+                    and (not self.watch.daytime() or social_can_notify(row['qq'], self.watch.clock()))]
+        except Exception as error:
+            logger.warning('Balance contacts unavailable: %s', type(error).__name__)
+            return None
 
     async def run_once(self):
         async with self.lock:
@@ -180,12 +183,15 @@ class DafeiyuBalance(Star):
                 self.watch.record_error(type(error).__name__)
                 logger.warning('DeepSeek balance check failed: %s', type(error).__name__)
                 return None
-            actions = self.watch.observe(amount, available, self.named_contacts(config))
+            platform = self.context.get_platform('aiocqhttp')
+            bot = getattr(platform, 'bot', None)
+            if platform is None or platform.meta().id != 'dafeiyu-qq':
+                bot = None
+            contacts = await self.ranked_contacts(config, bot) if amount < HELP_THRESHOLD else []
+            actions = self.watch.observe(amount, available, contacts)
             outcome = {'amount': format(amount, 'f'), 'available': available, 'owner_notified': False}
             if not actions or self.stopping:
                 return outcome
-            platform = self.context.get_platform('aiocqhttp')
-            bot = getattr(platform, 'bot', None)
             if platform is None or platform.meta().id != 'dafeiyu-qq' or bot is None:
                 return outcome
             try:
@@ -199,11 +205,15 @@ class DafeiyuBalance(Star):
                     break
                 # Re-check the live allowlist immediately before a private notice.
                 current = self.context.get_config('dafeiyu-qq:FriendMessage:' + OWNER)
-                allowed = {str(x) for x in current['platform_settings'].get('id_whitelist', [])}
-                if 'dafeiyu-qq:FriendMessage:' + action['qq'] not in allowed:
+                if not self.private_allowed(action['qq'], current):
+                    if action['kind'] == 'help':
+                        self.watch.skip_helper(action['qq'])
                     continue
-                if action['kind'] == 'help' and not social_can_notify(action['qq']):
-                    continue
+                if action['kind'] == 'help':
+                    from data.plugins.dafeiyu_social.access import store
+                    if action['qq'] in store().bots() or not social_can_notify(action['qq'], self.watch.clock()):
+                        self.watch.skip_helper(action['qq'])
+                        continue
                 if not self.watch.reserve(action):
                     continue
                 try:
@@ -248,7 +258,7 @@ class DafeiyuBalance(Star):
 
     async def status(self):
         return json_response(dict(
-            self.watch.status(), version='0.2.1', monitored_account='deepseek',
+            self.watch.status(), version='0.3.0', monitored_account='deepseek',
             loop_running=self.task is not None and not self.task.done(),
             next_check_at=self.next_check_at, owner_qq=OWNER,
             helper_count_per_cycle=2, helper_hours='09:00–21:00 Asia/Shanghai',
@@ -311,7 +321,7 @@ class DafeiyuBalance(Star):
             info = self.watch.status()
             balance = info['last_balance_cny']
             reply = ('DeepSeek 可用余额：{} 元。'.format(balance) if balance is not None else '余额还没检查到。')
-            reply += '低于 0.70 元才提醒。'
+            reply += '低于 1.00 元提醒爸爸，低于 0.70 元进入亲友提醒。'
             if cycle and cycle['status'] == 'low':
                 if cycle.get('pause_until', 0) > time.time():
                     reply += '爸爸正在处理，催促已暂停。'

@@ -5,6 +5,7 @@ import time
 
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from .store import Store, can_notify_profile
+from .activity import ActivityStore
 
 
 @lru_cache(maxsize=4)
@@ -22,3 +23,12 @@ def profile(uid):
 
 def can_notify(uid, timestamp=None):
     return can_notify_profile(profile(uid), time.time() if timestamp is None else timestamp)
+
+
+def activity():
+    return ActivityStore(store().path)
+
+
+def record_delivery(event):
+    source = event.get_extra('dafeiyu_activity_input', None)
+    return activity().record_confirmed(source, store().bots())

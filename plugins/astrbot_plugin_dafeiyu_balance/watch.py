@@ -5,7 +5,6 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
-import random
 import re
 import time
 import uuid
@@ -13,10 +12,10 @@ from decimal import Decimal
 
 OWNER = "7000000001"
 BOT = "7000000002"
-THRESHOLD = Decimal("0.70")
+THRESHOLD = Decimal("1.00")
+HELP_THRESHOLD = Decimal("0.70")
 INTERVAL = 600
 REPEAT_AFTER = 2 * 3600
-HELP_AFTER = 6 * 3600
 PAUSE_FOR = 2 * 3600
 TZ = dt.timezone(dt.timedelta(hours=8))
 TERMINAL = {"sent", "unknown", "sending", "skipped"}
@@ -48,18 +47,16 @@ def balance_snapshot(data):
 
 
 def eligible_contacts(contacts, allowed):
-    """Keep explicitly named, allowed QQ contacts and exclude the owner and bot."""
+    """Keep ranked, privately reachable contacts; names do not confer eligibility."""
     result = {}
     for row in contacts:
-        qq, name = str(row.get("qq", "")), str(row.get("name", "")).strip()
+        qq = str(row.get("qq", ""))
         if (
             qq not in (OWNER, BOT)
             and re.fullmatch(r"[1-9]\d{4,11}", qq)
             and "dafeiyu-qq:FriendMessage:" + qq in allowed
-            and re.fullmatch(r"[^\s。.!！?？,，:：;；]{1,16}", name)
-            and not name.isdigit()
         ):
-            result.setdefault(qq, {"qq": qq, "name": name})
+            result.setdefault(qq, {"qq": qq, "name": "朋友"})
     return list(result.values())
 
 
@@ -69,19 +66,37 @@ class BalanceWatch:
     def __init__(self, path, clock=time.time, chooser=None):
         self.path = Path(path)
         self.clock = clock
-        self.chooser = chooser or random.SystemRandom().sample
         self.contacts = {}
-        self.state = {"version": 1, "cycle": None, "daily_help": {}}
+        self.state = {"version": 2, "cycle": None, "daily_help": {}, "help_days": {}}
         if self.path.exists():
             self.state = json.loads(self.path.read_text(encoding="utf-8"))
-            if self.state.get("version") != 1 or "cycle" not in self.state:
+            if self.state.get("version") not in (1, 2) or "cycle" not in self.state:
                 raise ValueError("Unsupported balance reminder state")
+            if self.state['version'] == 1:
+                # Retain an exact local backup before changing the state schema.
+                backup = self.path.with_suffix('.v1.bak')
+                if not backup.exists():
+                    with backup.open('x', encoding='utf-8') as stream:
+                        stream.write(json.dumps(self.state, ensure_ascii=False, indent=2) + '\n')
+                    backup.chmod(0o600)
+                self.state['version'] = 2
+                daily = self.state.get('daily_help', {})
+                self.state['help_days'] = {daily['day']: daily['cycle']} if daily.get('day') and daily.get('cycle') else {}
+                cycle = self.state.get('cycle')
+                if cycle:
+                    attempted = any(key.startswith('help:') for key in cycle.get('notices', {}))
+                    cycle['helpers_locked'] = attempted
+                    if not attempted:
+                        cycle['targets'] = []
+                    if cycle['status'] == 'recovered' and Decimal(self.state.get('last_balance', '1')) < THRESHOLD:
+                        cycle['status'] = 'low'
+                        cycle.pop('recovered_at', None)
             cycle = self.state.get("cycle")
             if cycle:
                 for notice in cycle.get("notices", {}).values():
                     if notice.get("status") == "sending":
                         notice["status"] = "unknown"
-                self.save()
+            self.save()
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +111,8 @@ class BalanceWatch:
 
     def observe(self, amount, available, contacts):
         now = self.clock()
-        self.contacts = {row["qq"]: row for row in contacts}
+        # None means contact discovery failed; never freeze an unknown list as empty.
+        self.contacts = {row["qq"]: row for row in (contacts or [])}
         self.state.update(
             last_checked_at=now,
             last_balance=format(amount, "f"),
@@ -108,19 +124,24 @@ class BalanceWatch:
             if not cycle or cycle["status"] != "low":
                 if cycle:
                     self.state["last_cycle"] = cycle
-                chosen = self.chooser(list(self.contacts.values()), min(2, len(self.contacts)))
                 self.state["cycle"] = {
                     "id": uuid.uuid4().hex,
                     "status": "low",
                     "low_since": now,
                     "pause_until": 0,
-                    "targets": copy.deepcopy(chosen),
+                    "targets": [],
+                    "helpers_locked": False,
                     "notices": {},
                 }
-            elif not cycle["targets"] and self.contacts:
-                cycle["targets"] = copy.deepcopy(
-                    self.chooser(list(self.contacts.values()), min(2, len(self.contacts)))
-                )
+            cycle = self.state['cycle']
+            if amount < HELP_THRESHOLD and not cycle.get('helpers_locked') and contacts is not None:
+                cycle['targets'] = copy.deepcopy(list(self.contacts.values())[:2])
+                cycle['helpers_locked'] = True
+                cycle['help_entered_at'] = now
+            if amount < HELP_THRESHOLD and cycle.get('helpers_locked') and contacts is not None:
+                for person in cycle['targets']:
+                    if person['qq'] not in self.contacts:
+                        self.skip_helper(person['qq'])
         elif cycle and cycle["status"] == "low":
             cycle["status"] = "recovered"
             cycle["recovered_at"] = now
@@ -159,7 +180,8 @@ class BalanceWatch:
 
     def plan(self):
         cycle = self.state.get("cycle")
-        if not cycle:
+        if (not cycle or self.state.get('last_error')
+                or self.clock() - self.state.get('last_checked_at', 0) > INTERVAL):
             return []
         notices = cycle["notices"]
         first = notices.get("first", {})
@@ -171,20 +193,17 @@ class BalanceWatch:
             return []
         amount = Decimal(self.state["last_balance"])
         critical = amount <= 0 or not self.state["last_available"]
-        if self.due("first"):
-            return [self.action("first", critical=critical)]
-        if first.get("status") not in TERMINAL:
-            return []
-        if critical and self.due("exhausted"):
-            return [self.action("exhausted", critical=True)]
-        elapsed = self.clock() - first.get("sent_at", first.get("attempted_at", self.clock()))
         actions = []
-        if self.daytime() and elapsed >= REPEAT_AFTER and self.due("repeat"):
+        if self.due("first"):
+            actions.append(self.action("first", critical=critical))
+        elif first.get('status') in TERMINAL and critical and self.due("exhausted"):
+            actions.append(self.action("exhausted", critical=True))
+        elapsed = self.clock() - first.get("sent_at", first.get("attempted_at", self.clock()))
+        if first.get('status') in TERMINAL and self.daytime() and elapsed >= REPEAT_AFTER and self.due("repeat"):
             actions.append(self.action("repeat"))
         day = dt.datetime.fromtimestamp(self.clock(), TZ).date().isoformat()
-        daily = self.state.get("daily_help", {})
-        round_allowed = daily.get("day") != day or daily.get("cycle") == cycle["id"]
-        if self.daytime() and elapsed >= HELP_AFTER and round_allowed:
+        round_allowed = self.state.get('help_days', {}).get(day) in (None, cycle['id'])
+        if self.daytime() and amount < HELP_THRESHOLD and round_allowed:
             for person in cycle["targets"]:
                 qq = person["qq"]
                 if qq in self.contacts and self.due("help:" + qq):
@@ -213,8 +232,19 @@ class BalanceWatch:
                 "day": dt.datetime.fromtimestamp(self.clock(), TZ).date().isoformat(),
                 "cycle": cycle["id"],
             }
+            days = self.state.setdefault('help_days', {})
+            days[self.state['daily_help']['day']] = cycle['id']
+            cutoff = (dt.datetime.fromtimestamp(self.clock(), TZ).date() - dt.timedelta(days=31)).isoformat()
+            self.state['help_days'] = {day: value for day, value in days.items() if day >= cutoff}
         self.save()
         return True
+
+    def skip_helper(self, qq):
+        cycle = self.state.get('cycle')
+        key = 'help:' + str(qq)
+        if cycle and self.due(key):
+            cycle['notices'][key] = {'status': 'skipped', 'attempted_at': self.clock()}
+            self.save()
 
     def complete(self, action, status, message_id=None):
         cycle = self.state.get("cycle")
@@ -255,6 +285,7 @@ class BalanceWatch:
         cycle = self.state.get("cycle")
         return {
             "threshold_cny": str(THRESHOLD),
+            "helper_threshold_cny": str(HELP_THRESHOLD),
             "comparison": "strictly_less_than",
             "check_interval_seconds": INTERVAL,
             "last_checked_at": self.state.get("last_checked_at"),
@@ -262,11 +293,13 @@ class BalanceWatch:
             "last_available": self.state.get("last_available"),
             "last_error": self.state.get("last_error"),
             "cycle": copy.deepcopy(cycle),
-            "eligible_named_contacts": list(self.contacts.values()),
+            "eligible_ranked_contacts": list(self.contacts.values()),
         }
 
 
 def notice_text(action, balance):
+    if action['kind'] == 'help':
+        return '鲸鲸的饭钱快不够啦，帮我提醒爸爸添一点嘛～'
     if action["critical"]:
         return (
             "爸爸，鲸鲸的 DeepSeek 饭钱见底啦，这会儿可能接不上话。"
@@ -276,13 +309,8 @@ def notice_text(action, balance):
     if action["kind"] == "first":
         return (
             "爸爸，鲸鲸的饭盒快见底啦，记得添点 DeepSeek 饭钱～"
-            "\n当前可用余额：{} 元，已经低于 0.70 元。".format(balance)
+            "\n当前可用余额：{} 元，已经低于 1.00 元。".format(balance)
         )
     if action["kind"] == "repeat":
-        return "爸爸是不是忙忘啦，我这边的饭钱还不足七毛呢。有空给鲸鲸添一点嘛～"
-    if action["kind"] == "help":
-        return (
-            "{}，帮鲸鲸喊一下爸爸嘛，DeepSeek 饭钱快不够啦，"
-            "我这边还没查到余额恢复呢～"
-        ).format(action["name"])
+        return "爸爸是不是忙忘啦，我这边的饭钱还不足一元呢。有空给鲸鲸添一点嘛～"
     return "饭钱够啦！谢谢爸爸，鲸鲸先安心吃饭～"

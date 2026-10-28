@@ -207,7 +207,7 @@ class DafeiyuRuntime(Star):
                 "progress_after_seconds": self.replies.progress_after,
                 "send_timeout_seconds": self.replies.send_timeout,
                 "progress_notice_cooldown_seconds": self.replies.progress_cooldown,
-                "version": "0.3.0",
+                "version": "0.3.1",
                 "reply_diagnostics": {'enabled': True, 'retained_turns': self.diagnostics.status()['retained_turns'], 'contains_chat_content': False},
                 "confirmed_delivery_receipts": True,
                 "group_reply_policy_active": callable(getattr(AiocqhttpMessageEvent, "_dafeiyu_group_reply_policy", None)),

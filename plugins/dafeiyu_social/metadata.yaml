@@ -1,6 +1,6 @@
 name: dafeiyu_social
 display_name: 鲸鲸聊天偏好、互刷保护与纪念日
-version: 0.1.1
+version: 0.2.0
 author: Local
 desc: 每人独立的语音、表情与免打扰设置，群内机器人互聊预算，明确记录的公历生日纪念日和祝福卡。
 astrbot_version: ">=4.29.1"
