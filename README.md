@@ -25,6 +25,8 @@
 
 ## 使用
 
+换电脑继续开发，先读 [接手说明](docs/NEXT_STEPS.md)，完整需求与验收见 [下一步方案](docs/PLAN.md)。本次上传只有现有源码和方案，下面三项新功能尚未实施。
+
 1. 按 `framework/README_zh.md` 安装并启动 AstrBot 4.29.1，按 NapCat 官方说明配置 OneBot。
 2. 创建仓库外的身份映射文件，参考 `identities.example.json`，将示例号码替换为自己的号码。
 3. 运行 `python scripts/install_plugins.py --target /path/to/AstrBot/data/plugins --identities /private/path/identities.json`，将插件复制并配置到运行目录。脚本不覆盖已有插件目录。
@@ -43,4 +45,4 @@
 
 第三方代码保留各自目录下的原始许可证与作者信息。来源与版本见 `THIRD_PARTY.md`。自定义插件许可由仓库所有者另行确定。
 
-晚间日记、聊天脱敏摘要以及「低于 1 元提醒主人、低于 0.70 元提醒最常聊天的两位好友」仍是待实施方案，见 `docs/PLAN.md`。
+晚间日记、聊天脱敏摘要以及「低于 1 元提醒主人、低于 0.70 元提醒最常聊天的两位好友」仍是待实施方案，见 [完整方案](docs/PLAN.md)。换电脑后的操作步骤和可直接交给 Codex 的提示词见 [接手说明](docs/NEXT_STEPS.md)。

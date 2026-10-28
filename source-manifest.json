@@ -6,11 +6,11 @@
     ".gitattributes": "a40b1ff8684ecd3282dbe58764371a5409c6c3a9bee34ccc75a3e0c8845d7ea9",
     ".gitignore": "f07c4dab32e28419c2c56c49427b745503b436669ae8af0d5e2f1573ef130633",
     "identities.example.json": "0b9a3f974c8c7f0ad1c8ff391669f53f09606db0d1cf2dd54ca87b888def09c2",
-    "README.md": "e24160a6099ac4df4540a90a7023f23c31d7998306fb2a453e78643d6cf49709",
+    "README.md": "262b533ddf5a05a5b30f1638c6dddae5564d9518c211c1734232ce607fd71a8c",
     "THIRD_PARTY.md": "286991866fa5db83a22c5d24b9de8bab8a0234915810a1e560d82ff25bc77ce7",
     "docs/DEPLOYMENT.md": "65cf6930039a0dcb310b3fc2403c154fa9d93eef13f8cf528e2da18606ed4f41",
     "docs/export-verification.json": "b12599bc72734e296a011f016f09e0ce63dc439d6bbc93f6a3b25a129ee5d036",
-    "docs/PLAN.md": "f8f0a1379b65447dae6da84154a3985151d889e86a101c391c95da8ff41bf695",
+    "docs/PLAN.md": "ab94f20b89a6a45894bac00e7459734d3d0f84bab81ab73f376dff8146989d8e",
     "framework/.dockerignore": "e116205267ba82b97003bd2a73aac0129227880cba0004998efc2de27ddde3f0",
     "framework/.gitignore": "986bb3652f2a4e8a0902a20d896f3ef339a38c8529e6c42c8d89bd0fc03a7aaf",
     "framework/.pre-commit-config.yaml": "3b5ab98c997cffe95f5902658006182991417c0d9a40e4b48731df3314d4c0c5",
@@ -2174,6 +2174,7 @@
     "framework/astrbot/api/provider/__init__.py": "98955ca27d2c9e39ffc588ab936867b706daeb29886180be64a2a6c6fc7e8e89",
     "framework/astrbot/api/star/__init__.py": "3b18071ad5a7de51101a36f8b706e96d69d17a951ebcfbbb831b4302402c7e14",
     "framework/astrbot/api/util/__init__.py": "2f53bf9851140e4f15e2510fb13e6288d6c888e561ec76eb3668adab35163198",
-    "framework/astrbot/api/event/filter/__init__.py": "a564263fa78b714a3977292ca2cfa55bf11b417cfdec7cfd16579cf38de56594"
+    "framework/astrbot/api/event/filter/__init__.py": "a564263fa78b714a3977292ca2cfa55bf11b417cfdec7cfd16579cf38de56594",
+    "docs/NEXT_STEPS.md": "7c66d91965f86d2e95c2d254c97273b5d08b8f0c10631270ff3a2688b8c28c70"
   }
 }
