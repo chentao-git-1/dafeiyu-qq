@@ -58,6 +58,9 @@ class Activity(unittest.TestCase):
         self.assertEqual(self.store.ranked()[0]['qq'], '7000000012')
 
     def test_rolling_week_future_and_excluded_accounts(self):
+        with self.store.connect() as db:
+            db.execute('CREATE TABLE bots(qq TEXT PRIMARY KEY,name TEXT)')
+            db.execute('INSERT INTO bots VALUES (?,?)', ('7000000201', 'test bot'))
         self.assertIsNone(self.prepare(stamp=self.clock()-WEEK))
         self.assertIsNone(self.prepare(stamp=self.clock()+60))
         self.record(stamp=self.clock()-WEEK+1)

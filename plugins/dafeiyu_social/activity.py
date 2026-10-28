@@ -17,7 +17,8 @@ import uuid
 
 OWNER = '7000000001'
 SELF = '7000000002'
-KNOWN_BOTS = {'7000000201', '7000000202'}
+# The runtime registry is authoritative; never invent deployed bot identities.
+KNOWN_BOTS = frozenset()
 TZ = dt.timezone(dt.timedelta(hours=8))
 WEEK = 7 * 86400
 SEGMENT_GAP = 30 * 60
@@ -134,6 +135,9 @@ class ActivityStore:
             return False
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
+            if (db.execute("SELECT 1 FROM sqlite_master WHERE name='bots'").fetchone()
+                    and db.execute('SELECT 1 FROM bots WHERE qq=?', (source['user_id'],)).fetchone()):
+                return False
             db.execute('DELETE FROM dialogue_turns WHERE occurred_at<=?', (now-WEEK,))
             db.execute('DELETE FROM public_topic_candidates WHERE occurred_at<?', (now-2*86400,))
             added = db.execute('INSERT OR IGNORE INTO dialogue_turns VALUES (?,?,?)',
