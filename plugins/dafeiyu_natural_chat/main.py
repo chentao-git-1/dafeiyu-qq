@@ -20,7 +20,7 @@ from .state import Episodes, FAMILY, OWNER, TZ, forbidden, key, mood_cue
 from .interaction import InteractionStore, parse_feedback, preference_context, repetition_context, settings_text
 from .image_chat import image_mode, image_instructions
 from .continuity import verified_names, decode_history, context_block, grounded_correction, pending_turn, DELAY
-from .spoken_style import style_context, conversational_text, close_short_ack, MARKER as SPOKEN_START, END as SPOKEN_END
+from .spoken_style import style_context, conversational_text, close_short_ack, close_idle_questions, MARKER as SPOKEN_START, END as SPOKEN_END
 from .self_profile import self_profile, profile_context
 from .exchanges import ExchangeStore, recall_context, forget_spec
 from .grounding import FactStore, evidence_context, ground_response, concise_reaction, search_succeeded, scheduled_job_id
@@ -57,7 +57,7 @@ def content_text(content):
     return ''
 
 
-@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.7.1')
+@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.7.2')
 class NaturalChat(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -345,8 +345,8 @@ class NaturalChat(Star):
         if not event.get_extra('jingjing_style_prepared',False):return
         base=without_block(req.system_prompt,'SPOKEN')
         human=self.input_snapshot(event)['text']
-        style=style_context(human)
         recent=event.get_extra('jingjing_assistant_tail','')
+        style=style_context(human,recent_assistant=recent)
         if len(re.findall(r'[?？]',recent))>=2 or re.search(r'别问|不要问|不用问|先不聊|不想聊|不想被问',human):
             style+='\n【这轮收尾】直接接住本人刚说的话后收住，不再追问或重复确认；只有执行请求确实缺少必要信息时才澄清。'
         req.system_prompt=base+'\n'+SPOKEN_START+style+'\n'+SPOKEN_END
@@ -358,6 +358,7 @@ class NaturalChat(Star):
         if text:
             human=self.input_snapshot(event)['text']
             text=conversational_text(text,human)
+            text=close_idle_questions(text,human,event.get_extra('jingjing_any_tool',False))
             if not event.get_extra('jingjing_any_tool',False):
                 text=close_short_ack(text,human,event.get_extra('jingjing_assistant_tail',''))
             text=concise_reaction(text,human,event.get_extra('jingjing_any_tool',False))
@@ -657,7 +658,7 @@ class NaturalChat(Star):
             counts={r['kind']:r['n'] for r in c.execute('SELECT kind,count(*) n FROM episodes GROUP BY kind')}
         with self.interaction_store().connect() as c:
             preference_count=c.execute('SELECT count(*) FROM preferences').fetchone()[0]
-        return json_response({'enabled':True,'version':'0.7.1','self_profile_version':self_profile()['version'],
+        return json_response({'enabled':True,'version':'0.7.2','self_profile_version':self_profile()['version'],
             'scoped_expiring_facts':True,'current_tool_receipts_required':True,
             'confirmed_delivery_only':True,'exchange_cleanup':self.exchange_store().cleanup_status(),
             'exchange_cleanup_error':getattr(self,'maintenance_error',None),

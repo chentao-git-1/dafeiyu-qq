@@ -22,6 +22,7 @@ def naturalness_feedback(text, *, recent_reply=False):
     complaint=r'(?:(?:人机味|机器味)(?:还是|真的|实在|有点|好|太|很)?(?:重|浓)|(?:好|太|很|有点)?机械|(?:好|太|很)?像客服)'
     if re.fullmatch(target+complaint+r'[了啊呀哦呢]*',raw):return True
     if re.fullmatch(r'(?:以后)?(?:别|不要)(?:再)?(?:这么|那么|太)?(?:像客服|机械|人机)[了啊呀]*',raw):return True
+    if (recent_reply or raw.startswith(('你说话','你回复'))) and re.fullmatch(r'(?:你)?(?:说话|回复)(?:能不能|可以)?(?:再|更)?(?:自然|有(?:点)?人(?:味|感))(?:一?点|一些)[啊呀呢吗？?]*',raw):return True
     return recent_reply and raw in ('好人机', '太人机了', '太像客服了', '说话自然点', '说话自然一点')
 
 
@@ -149,6 +150,7 @@ class InteractionStore:
 
 
 FRAME_PATTERNS = {
+    '客服式邀请': r'说清楚|我好接|我接着|随时(?:说|找我)|我(?:马上|立刻).{0,8}(?:帮你|给你)',
     '反复保证陪伴': r'我(?:一直|永远|都)?(?:在|陪着)|随时(?:找|叫)我|有我在|我不会离开',
     '通用安慰': r'抱抱|辛苦(?:你)?了|慢慢来|别(?:太)?难过|会好起来|都会好的|不用一个人',
     '固定赞美': r'你(?:真|太|好|已经很)(?:厉害|棒|优秀)|为你(?:骄傲|开心)|给你点赞',

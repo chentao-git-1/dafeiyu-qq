@@ -137,6 +137,34 @@ class Native(unittest.IsolatedAsyncioTestCase):
             await self.n.natural_delivery_context(event(text),ProviderRequest(system_prompt='base'))
         self.assertEqual(self.n.interaction_store().preferences(OWNER)['length'],'auto')
 
+    async def test_contextual_style_is_replaced_when_a_share_becomes_a_real_request(self):
+        e=event('今天游戏又输了三把');e.set_extra('jingjing_style_prepared',True)
+        e.set_extra('jingjing_assistant_tail','刚才赢了吗？')
+        req=ProviderRequest(system_prompt='base')
+        await self.n.prepare_spoken_style(e,req)
+        self.assertIn('【这句是在随口分享近况】',req.system_prompt)
+        reply=NS(completion_text='又输三把，这也太不顺了。今天是手感不对？',tools_call_name=[])
+        await self.n.conversational_response(e,reply)
+        self.assertEqual(reply.completion_text,'又输三把，这也太不顺了。')
+        followup=event('输了三把，帮我分析一下HTTP日志');followup.set_extra('jingjing_style_prepared',True)
+        await self.n.prepare_spoken_style(followup,req)
+        self.assertNotIn('【这句是在随口分享近况】',req.system_prompt)
+        self.assertIn('错误码',req.system_prompt)
+        self.assertEqual(req.system_prompt.count('<!-- BEGIN_JINGJING_SPOKEN -->'),1)
+        reply=NS(completion_text='先看HTTP日志。返回什么错误码？',tools_call_name=[])
+        await self.n.conversational_response(followup,reply)
+        self.assertEqual(reply.completion_text,'先看HTTP日志。返回什么错误码？')
+
+    async def test_unknown_delivery_response_is_conversational_without_changing_its_meaning(self):
+        e=event('你到底发给他了吗？');e.set_extra('jingjing_style_prepared',True)
+        response=NS(completion_text='还没确认发出去，回执是unknown，我没法说他已经收到了。',tools_call_name=[])
+        await self.n.conversational_response(e,response)
+        self.assertEqual(response.completion_text,'还没确认发出去，我没法说他已经收到了。')
+        e=event('回执unknown是什么意思');e.set_extra('jingjing_style_prepared',True)
+        response=NS(completion_text='回执是unknown，不能说明已送达。',tools_call_name=[])
+        await self.n.conversational_response(e,response)
+        self.assertEqual(response.completion_text,'回执是unknown，不能说明已送达。')
+
     async def test_emoji_praise_closes_a_questionnaire_without_changing_explicit_requests(self):
         e=event('厉害👍');e.set_extra('jingjing_style_prepared',True)
         reply=NS(completion_text='嘿嘿，这题我刚好会。你上课没犯困吧？',tools_call_name=[])

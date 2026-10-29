@@ -1,20 +1,20 @@
 {
   "date_beijing": "2026-10-29",
-  "base_commit": "a2f614a734354fda5bb0e465dbdd91720a73bfa9",
+  "base_commit": "dfed3c4e788293fec53c8acd214846946351b588",
   "python": "3.12.14",
   "platform": "Windows",
   "command": "python scripts/run_tests.py",
   "passed": true,
   "tests": {
-    "test_persona_tuning.py": 36,
+    "test_persona_tuning.py": 41,
     "test_evening_features.py": 21,
     "test_persona_native.py": 22,
     "test_evening_native.py": 22,
     "test_admin_quota.py": 8,
     "test_admin_quota_native.py": 6,
-    "test_dialogue_fixes.py": 27,
+    "test_dialogue_fixes.py": 29,
     "test_breeze_tts.py": 14,
-    "total": 156
+    "total": 163
   },
   "syntax_check_passed": true,
   "git_diff_check_passed": true,
