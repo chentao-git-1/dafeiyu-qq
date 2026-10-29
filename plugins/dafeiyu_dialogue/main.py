@@ -1,11 +1,13 @@
 """Private, opt-in dialogue context; shadow mode does not mutate native requests."""
 import asyncio
-from collections import deque
+from collections import deque, Counter
 import copy
 from pathlib import Path
 import sys
 import time
 import json
+import datetime as dt
+import sqlite3
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter
@@ -17,9 +19,12 @@ from .adapters import MemoryCatalog
 from .context_builder import compose
 from .contracts import ACTIVE_KEY, TurnContext
 from .retrieval import lexical_rank, recall_candidates, semantic_select
+from .persona import replace_persona
+from .review import review, verify_revision, packet_key, ReviewResult, UNAVAILABLE
+from .self_state import self_state
 
 
-@register('dafeiyu_dialogue', 'Local', '统一私聊资料与有来源的语义召回，支持只读影子模式', '0.1.1')
+@register('dafeiyu_dialogue', 'Local', '有来源的对话资料与发送前语义核对', '0.2.0')
 class Dialogue(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -27,6 +32,7 @@ class Dialogue(Star):
         self.root = Path(get_astrbot_data_path())
         self.samples = deque(maxlen=200)
         self.errors = 0
+        self.review_stats = Counter()
         context.register_web_api('/dafeiyu_dialogue/status', self.status, ['GET'], '统一对话资料数值状态（无正文）')
 
     def natural(self):
@@ -66,11 +72,16 @@ class Dialogue(Star):
         try:
             turn = self.identity(event)
             selected = (self.config.get('mode', 'shadow') == 'active'
-                        and getattr(self.natural(), 'dialogue_context_protocol', 0) == 1
+                        and getattr(self.natural(), 'dialogue_context_protocol', 0) == 2
                         and turn.actor in {str(x) for x in self.config.get('active_private_users', [])})
         except ValueError:
             selected = False
         event.set_extra(ACTIVE_KEY, selected)
+        if selected:
+            personas = getattr(getattr(self.context, 'persona_manager', None), 'personas', [])
+            matching = {p.system_prompt for p in personas if isinstance(getattr(p, 'system_prompt', None), str)
+                        and p.system_prompt and req.system_prompt.count(p.system_prompt) == 1}
+            event.set_extra('dafeiyu_dialogue_persona', next(iter(matching)) if len(matching) == 1 else '')
         if not selected:
             self.hide_recall(req)
 
@@ -87,18 +98,20 @@ class Dialogue(Star):
             source = natural.input_snapshot(event)
             snapshot = await asyncio.to_thread(self.catalog(automatic=True).read, turn, time.time())
             # Only a verified artifact may supply the bot's own recent activity.
-            meta = self.context.get_registered_star('dafeiyu_life')
-            life = getattr(meta, 'star_cls', None) if meta and meta.activated else None
-            record = life.public_context() if life else None
-            built = compose(req.system_prompt, turn, snapshot, source['text'],
+            record, progress = await self.own_activity()
+            prompt, compacted = replace_persona(req.system_prompt, event.get_extra('dafeiyu_dialogue_persona', ''))
+            built = compose(prompt, turn, snapshot, source['text'],
                 facts=event.get_extra('jingjing_current_facts', {}),
-                preferences=natural.interaction_store().preferences(turn.actor), life=record,
+                character=natural.dialogue_character() if hasattr(natural, 'dialogue_character') else None,
+                preferences=natural.interaction_store().preferences(turn.actor), life=record, progress=progress,
                 budget=self.config.get('memory_characters', 3600))
             selected = bool(event.get_extra(ACTIVE_KEY, False))
-            self.samples.append(dict(built.metrics, active=selected))
+            self.samples.append(dict(built.metrics, active=selected, persona_compacted=compacted))
             if selected:
                 req.system_prompt = built.prompt
                 event.set_extra('jingjing_style_prepared', True)
+                event.set_extra('dafeiyu_dialogue_evidence', built.evidence)
+                event.set_extra('dafeiyu_dialogue_history', copy.deepcopy(req.contexts[-8:]))
                 # Final fact/receipt guards and confirmed-delivery recording remain active.
         except asyncio.CancelledError:
             raise
@@ -112,6 +125,157 @@ class Dialogue(Star):
                 await self.natural().natural_delivery_context(event, req)
                 await self.natural().prepare_spoken_style(event, req)
             self.hide_recall(req)
+
+    async def own_activity(self):
+        meta = self.context.get_registered_star('dafeiyu_life')
+        life = getattr(meta, 'star_cls', None) if meta and meta.activated else None
+        if not life:
+            return None, None
+
+        def read():
+            completed = life.public_context()
+            store = getattr(life, 'store', None)
+            path = getattr(store, 'path', None)
+            today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).date().isoformat()
+            try:
+                rows = MemoryCatalog._read(path, 'SELECT day,kind,status,updated FROM runs WHERE day=?', (today,)) if path else []
+                progress = rows[0] if rows and rows[0]['status'] == 'started' else None
+                # A stale/interrupted run is not proof of something still happening.
+                if progress and not 0 <= time.time() - float(progress['updated']) <= 600:
+                    progress = None
+            except (OSError, ValueError, TypeError, sqlite3.Error):
+                progress = None
+            return completed, progress
+
+        return await asyncio.to_thread(read)
+
+    async def provider_call(self, event, prompt, policy, purpose):
+        provider = await self.context.get_using_provider_async(event.unified_msg_origin)
+        if provider is None:
+            raise ValueError('Current provider unavailable')
+        self.review_stats[purpose + '_calls'] += 1
+        started = time.perf_counter()
+        try:
+            response = await provider.text_chat(prompt=prompt, system_prompt=policy, contexts=[],
+                func_tool=None, request_max_retries=0)
+            usage = getattr(response, 'usage', None)
+            for name in ('input_other', 'input_cached', 'output'):
+                value = getattr(usage, name, 0)
+                if type(value) is int and value >= 0:
+                    self.review_stats[purpose + '_' + name] += value
+            return response.completion_text
+        finally:
+            self.review_stats[purpose + '_elapsed_ms'] += round((time.perf_counter() - started) * 1000)
+
+    async def reviewed(self, event, segments, audience=''):
+        mode = self.config.get('response_review', 'enforce')
+        if mode == 'off':
+            return ReviewResult(tuple(segments), 'off')
+        evidence = copy.deepcopy(event.get_extra('dafeiyu_dialogue_evidence', {}))
+        turn = self.identity(event)
+        # Recheck current rows after generation: a forgotten/corrected source is no longer evidence.
+        current = await asyncio.to_thread(self.catalog(automatic=True).read, turn, time.time())
+        existing = {row.id: row.data() for row in current.items if row.visible_to(turn)}
+        evidence['memory'] = [row for row in evidence.get('memory', []) if existing.get(row.get('id')) == row]
+        completed, progress = await self.own_activity()
+        evidence['verified_self'] = self_state(completed, progress)
+        cross_session = audience and audience != event.unified_msg_origin
+        if cross_session:
+            evidence['memory'] = [row for row in evidence.get('memory', []) if row.get('visibility') == 'shared']
+        history = event.get_extra('dafeiyu_dialogue_history', [])
+        tools = event.get_extra('dafeiyu_dialogue_tool_evidence', [])
+        packet = {'segments': segments, 'evidence': evidence, 'history': history, 'tools': tools, 'audience': audience}
+        key = packet_key(packet)
+        cache = event.get_extra('dafeiyu_dialogue_review_cache', {})
+        if key in cache:
+            self.review_stats['cache_hits'] += 1
+            return cache[key]
+        calls = event.get_extra('dafeiyu_dialogue_review_calls', 0)
+        if calls >= 2:
+            raise ValueError('Per-turn review budget exceeded')
+        event.set_extra('dafeiyu_dialogue_review_calls', calls + 1)
+        result = await review(segments, evidence,
+            lambda prompt, policy: self.provider_call(event, prompt, policy, 'review'),
+            human=self.natural().input_snapshot(event)['text'], history=history, tool_results=tools, audience=audience)
+        if result.decision == 'revise':
+            self.review_stats['revision_checks'] += 1
+            supported = await verify_revision(result.segments, evidence,
+                lambda prompt, policy: self.provider_call(event, prompt, policy, 'verification'),
+                human=self.natural().input_snapshot(event)['text'], history=history, tool_results=tools)
+            if not supported:
+                self.review_stats['revision_rejected'] += 1
+                raise ValueError('Rewritten facts were not supported')
+        after_completed, after_progress = await self.own_activity()
+        if self_state(after_completed, after_progress) != evidence['verified_self']:
+            raise ValueError('Activity evidence changed during review')
+        after = await asyncio.to_thread(self.catalog(automatic=True).read, turn, time.time())
+        after_rows = {row.id: row.data() for row in after.items if row.visible_to(turn)}
+        if any(after_rows.get(row['id']) != row for row in evidence['memory']):
+            raise ValueError('Memory changed during review')
+        self.review_stats[result.decision] += 1
+        for kind in result.issue_kinds:
+            self.review_stats[kind] += 1
+        if mode == 'audit':
+            result = ReviewResult(tuple(segments), 'audit')
+        cache[key] = result
+        event.set_extra('dafeiyu_dialogue_review_cache', cache)
+        event.set_extra('dafeiyu_dialogue_last_review', result.decision)
+        return result
+
+    @filter.on_llm_response(priority=-sys.maxsize + 1)
+    async def review_response(self, event, response):
+        if (not event.get_extra(ACTIVE_KEY, False) or getattr(response, 'tools_call_name', [])
+                or not response.completion_text.strip()):
+            return
+        try:
+            result = await self.reviewed(event, [response.completion_text], event.unified_msg_origin)
+            response.completion_text = result.segments[0]
+        except asyncio.CancelledError:
+            response.completion_text = UNAVAILABLE
+            raise
+        except Exception as error:
+            self.review_stats['failed'] += 1
+            event.set_extra('dafeiyu_dialogue_last_review', 'unavailable')
+            logger.warning('Dialogue review unavailable: %s', type(error).__name__)
+            if self.config.get('response_review', 'enforce') != 'audit':
+                response.completion_text = UNAVAILABLE
+
+    @filter.on_using_llm_tool(priority=-sys.maxsize + 1)
+    async def review_tool_message(self, event, tool, arguments):
+        if not event.get_extra(ACTIVE_KEY, False) or getattr(tool, 'name', '') != 'send_message_to_user':
+            return
+        messages = arguments.get('messages', [])
+        if not isinstance(messages, list):
+            return
+        positions = [i for i, part in enumerate(messages) if isinstance(part, dict)
+            and part.get('type') == 'plain' and isinstance(part.get('text'), str) and part['text'].strip()]
+        if not positions:
+            return
+        try:
+            result = await self.reviewed(event, [messages[i]['text'] for i in positions],
+                arguments.get('session') or event.unified_msg_origin)
+            for i, text in zip(positions, result.segments):
+                messages[i]['text'] = text
+        except asyncio.CancelledError:
+            # Raising alone cannot stop the framework's tool executor.
+            arguments['messages'] = []
+            raise
+        except Exception as error:
+            self.review_stats['failed'] += 1
+            logger.warning('Dialogue tool review unavailable: %s', type(error).__name__)
+            if self.config.get('response_review', 'enforce') != 'audit':
+                arguments['messages'] = []
+
+    @filter.on_llm_tool_respond(priority=-sys.maxsize + 1)
+    async def collect_tool_evidence(self, event, tool, arguments, result):
+        if not event.get_extra(ACTIVE_KEY, False):
+            return
+        text = result if isinstance(result, str) else None
+        rows = event.get_extra('dafeiyu_dialogue_tool_evidence', [])
+        if len(rows) < 8:
+            rows.append({'tool': getattr(tool, 'name', ''), 'result': text if text and len(text) <= 5000 else None,
+                         'complete': bool(text and len(text) <= 5000)})
+            event.set_extra('dafeiyu_dialogue_tool_evidence', rows)
 
     @filter.llm_tool(name='dafeiyu_recall')
     async def recall(self, event, query: str) -> str:
@@ -128,14 +292,8 @@ class Dialogue(Star):
             # Do not cache source bodies; a forgotten record must not reappear in another turn.
             lexical = lexical_rank(snapshot.items, query, limit=5)
             candidates = recall_candidates(snapshot.items, query, turn.actor)
-            provider = await self.context.get_using_provider_async(event.unified_msg_origin)
-            if provider is None:
-                raise ValueError('Current provider unavailable')
-
             async def call(prompt, policy):
-                response = await provider.text_chat(prompt=prompt, system_prompt=policy, contexts=[],
-                    func_tool=None, request_max_retries=0)
-                return response.completion_text
+                return await self.provider_call(event, prompt, policy, 'recall')
 
             try:
                 rows = await semantic_select(query, candidates, call, actor=turn.actor)
@@ -156,9 +314,10 @@ class Dialogue(Star):
             return json.dumps({'records': [], 'unavailable': True, 'error_type': type(error).__name__})
 
     async def status(self):
-        return json_response({'version': '0.1.1', 'mode': self.config.get('mode', 'shadow'),
-            'legacy_adapter_ready': getattr(self.natural(), 'dialogue_context_protocol', 0) == 1,
+        return json_response({'version': '0.2.0', 'mode': self.config.get('mode', 'shadow'),
+            'legacy_adapter_ready': getattr(self.natural(), 'dialogue_context_protocol', 0) == 2,
             'active_private_user_count': len(self.config.get('active_private_users', [])),
             'retained_samples': len(self.samples), 'samples': list(self.samples)[-20:], 'errors': self.errors,
+            'response_review': self.config.get('response_review', 'enforce'), 'review_statistics': dict(self.review_stats),
             'contains_chat_content': False, 'background_model_calls': 0, 'extra_qq_sends': 0,
             'source_databases_read_only': True, 'legacy_fact_guards_retained': True})

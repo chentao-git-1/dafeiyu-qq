@@ -21,7 +21,7 @@ from dialogue_scenarios import scenarios
 
 
 async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda value:None,
-                   variants=('baseline','candidate')):
+                   variants=('baseline','candidate'), split='dev'):
     import data.plugins
     data.plugins.__path__=[str(ROOT/'plugins'),*list(data.plugins.__path__)]
     natural=importlib.import_module('data.plugins.dafeiyu_natural_chat.main')
@@ -34,17 +34,27 @@ async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda
     from astrbot.core.message.components import Plain
     owner,bot='7000000001','7000000002'
     seed=(ROOT/'persona/live.md').read_text(encoding='utf-8')
-    cases={case['id']:case for case in scenarios('dev')}
-    if any(key not in cases for key in case_ids):raise ValueError('Only development scenarios are available to this runner')
+    if split not in ('dev','hidden'):raise ValueError('Invalid scenario split')
+    cases={case['id']:case for case in scenarios(split)}
+    if any(key not in cases for key in case_ids):raise ValueError('Case does not belong to the selected split')
     if any(v not in ('baseline','candidate') for v in variants):raise ValueError('Invalid evaluation variant')
-    report={'schema_version':1,'real_qq_messages':0,'real_tools':0,'production_memory_writes':0,
+    report={'schema_version':2,'split':split,'real_qq_messages':0,'real_tools':0,'production_memory_writes':0,
         'naturalness_verdict':'pending_human_review','group_plugin_included':False,'cases':[]}
     for key in case_ids:
         case=cases[key];result={'id':key,'family':case['family'],'rubric':case['rubric'],'variants':{}}
         report['cases'].append(result)
         for variant in variants:
             with tempfile.TemporaryDirectory() as tmp:
-                context=NS(register_web_api=lambda *x:None,get_config=lambda *x:{'platform_settings':{
+                auxiliary=[]
+                async def auxiliary_call(**kwargs):
+                    raw=await call(kwargs['system_prompt'],kwargs['contexts'],kwargs['prompt'])
+                    auxiliary.append(raw)
+                    usage=raw.get('usage') or {}
+                    return NS(completion_text=raw['text'],usage=NS(
+                        input_other=usage.get('prompt_tokens',0)-usage.get('prompt_cache_hit_tokens',0),
+                        input_cached=usage.get('prompt_cache_hit_tokens',0),output=usage.get('completion_tokens',0)))
+                context=NS(register_web_api=lambda *x:None,persona_manager=NS(personas=[NS(system_prompt=seed)]),
+                    get_using_provider_async=AsyncMock(return_value=NS(text_chat=auxiliary_call)),get_config=lambda *x:{'platform_settings':{
                     'enable_id_white_list':True,'id_whitelist':[owner]}},get_platform=lambda *x:None)
                 with patch.object(natural,'get_astrbot_data_path',return_value=tmp):
                     n=natural.NaturalChat(context)
@@ -54,6 +64,7 @@ async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda
                 history=[];turns=[]
                 result['variants'][variant]=turns
                 for index,human in enumerate(case['turns']):
+                    auxiliary_start=len(auxiliary)
                     msg=AstrBotMessage();msg.type=MessageType.FRIEND_MESSAGE;msg.self_id=bot;msg.session_id=owner
                     msg.group_id='';msg.message_id=variant+str(index);msg.sender=MessageMember(owner,'爸爸')
                     msg.message=[Plain(human)];msg.message_str=human
@@ -65,6 +76,7 @@ async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda
                     raw=await call(req.system_prompt,req.contexts,human)
                     response=NS(completion_text=raw['text'],tools_call_name=[])
                     await n.conversational_response(e,response);await n.ground_current_facts(e,response)
+                    await d.review_response(e,response)
                     delivered=response.completion_text
                     # Simulated confirmation writes only this variant's temporary exchange DB.
                     e.set_extra('dafeiyu_confirmed_delivery',[{'kind':'reply','text':delivered,'at':time.time()}])
@@ -72,6 +84,8 @@ async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda
                     history.extend([{'role':'user','content':human},{'role':'assistant','content':delivered}])
                     turns.append({'human':human,'raw':raw['text'],'delivered':delivered,
                         'elapsed_ms':raw.get('elapsed_ms'),'usage':raw.get('usage'),
+                        'review':e.get_extra('dafeiyu_dialogue_last_review','inactive'),
+                        'auxiliary':copy.deepcopy(auxiliary[auxiliary_start:]),
                         'postprocessor_changed':raw['text']!=delivered,'prompt_characters':len(req.system_prompt)})
                     progress({'case':key,'variant':variant,'turn':index+1})
                     checkpoint(report)

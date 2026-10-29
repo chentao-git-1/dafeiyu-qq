@@ -57,9 +57,18 @@ def content_text(content):
     return ''
 
 
-@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.7.4')
+@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.8.0')
 class NaturalChat(Star):
-    dialogue_context_protocol = 1
+    dialogue_context_protocol = 2
+
+    def dialogue_character(self):
+        # Operator lore is creative material, never proof of physical or completed activity.
+        try:
+            from data.plugins.dafeiyu_life.topic_context import world_profile
+            fiction = world_profile()
+        except (ImportError, OSError, ValueError):
+            fiction = None
+        return {'stable_profile': self_profile(), 'fictional_world': fiction}
 
     def __init__(self, context: Context):
         super().__init__(context)
