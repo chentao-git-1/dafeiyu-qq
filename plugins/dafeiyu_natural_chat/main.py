@@ -14,15 +14,17 @@ from astrbot.api.event import filter, MessageChain
 from astrbot.api.star import Context, Star, register
 from astrbot.api.web import json_response
 from astrbot.core.agent.message import TextPart
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path, get_astrbot_temp_path
 from astrbot.core.message.components import Plain, Image, Reply, At, Record
 from .state import Episodes, FAMILY, OWNER, TZ, forbidden, key, mood_cue
 from .interaction import InteractionStore, parse_feedback, preference_context, repetition_context, settings_text
 from .image_chat import image_mode, image_instructions
 from .continuity import verified_names, decode_history, context_block, grounded_correction, pending_turn, DELAY
-from .spoken_style import style_context, conversational_text, close_short_ack, MARKER as SPOKEN_START, END as SPOKEN_END
+from .spoken_style import style_context, conversational_text, close_short_ack, close_idle_questions, MARKER as SPOKEN_START, END as SPOKEN_END
 from .self_profile import self_profile, profile_context
-from .exchanges import ExchangeStore, recall_context
+from .exchanges import ExchangeStore, recall_context, forget_spec
+from .grounding import FactStore, evidence_context, ground_response, concise_reaction, search_succeeded, scheduled_job_id
+from .media import ImageCollection, media_intent
 from .recall_guard import asks_for_recall, history_evidence, known_current_fact, long_term_evidence, own_life_question, related, uncertain_reply
 from .memory import MemoryCoordinator
 from .prompt_blocks import without_block
@@ -55,7 +57,7 @@ def content_text(content):
     return ''
 
 
-@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.6.0')
+@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.7.3')
 class NaturalChat(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -113,6 +115,16 @@ class NaturalChat(Star):
         if not hasattr(self,'exchanges'):
             self.exchanges=ExchangeStore(self.store.path.with_name('interaction.db'))
         return self.exchanges
+
+    def fact_store(self):
+        if not hasattr(self,'facts'):
+            self.facts=FactStore(self.store.path.with_name('interaction.db'))
+        return self.facts
+
+    def image_collection(self):
+        if not hasattr(self,'images'):
+            self.images=ImageCollection(self.store.path.with_name('interaction.db'),self.store.path.parent/'saved_images',get_astrbot_temp_path())
+        return self.images
 
     def memory_coordinator(self):
         if not hasattr(self,'memory'):
@@ -176,6 +188,33 @@ class NaturalChat(Star):
         # before group_chat_plus renders image captions and quoted text.
         self.input_snapshot(event)
 
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=sys.maxsize-61)
+    async def original_image_controls(self,event):
+        try:uid=self.actor(event)
+        except ValueError:return
+        source=self.input_snapshot(event)
+        images=[part for part in event.get_messages() if isinstance(part,Image)]
+        if images:self.image_collection().capture(uid,event.unified_msg_origin,images)
+        if event.get_group_id() and not source['directed']:return
+        intent=media_intent(source['text'],source.get('previous_text',''))
+        if not intent:return
+        try:
+            collection=self.image_collection()
+            if intent=='forget':
+                collection.forget(uid,event.unified_msg_origin)
+                await event.send(MessageChain(chain=[Plain('已清空我这边为你保留的图片收藏。')]))
+            else:
+                path=await collection.save(uid,event.unified_msg_origin)
+                if intent=='send':await event.send(MessageChain(chain=[Image.fromFileSystem(str(path))]))
+                else:await event.send(MessageChain(chain=[Plain('这张已经存好啦，可以把原图发回给你。')]))
+        except ValueError as error:
+            await event.send(MessageChain(chain=[Plain(str(error))]))
+        except Exception as error:
+            logger.warning('Explicit image operation unconfirmed: %s',type(error).__name__)
+            # Sending may have succeeded; never automatically repeat the image.
+            await event.send(MessageChain(chain=[Plain('这次图片处理或发送没有确认完成，我先不重复发送。')]))
+        event.stop_event()
+
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE, priority=sys.maxsize+80)
     async def interaction_controls(self, event):
         try:
@@ -200,6 +239,14 @@ class NaturalChat(Star):
         except ValueError:
             return
         source = self.input_snapshot(event)
+        if not event.get_extra('jingjing_facts_prepared',False):
+            forgetting=forget_spec(source['text'])
+            if forgetting:
+                self.fact_store().forget(uid,None if forgetting.get('across') else event.unified_msg_origin)
+            elif not event.get_group_id() or source['directed']:
+                self.fact_store().observe(uid,event.unified_msg_origin,str(getattr(event.message_obj,'message_id','')),source['text'])
+            event.set_extra('jingjing_facts_prepared',True)
+        event.set_extra('jingjing_current_facts',self.fact_store().current(uid,event.unified_msg_origin))
         if not event.get_extra('jingjing_forget_processed',False):
             removed=self.memory_coordinator().forget_turn(uid,event.unified_msg_origin,source['text'])
             event.set_extra('jingjing_forget_processed',True)
@@ -246,7 +293,7 @@ class NaturalChat(Star):
         names=verified_names(getattr(self,'data',Path(self.store.path).parent),allowed)
         history=await self.current_chat_evidence(event)
         facts,question=context_block(names,uid,history,source['text'])
-        block+=facts+profile_context()
+        block+=facts+profile_context()+evidence_context(event.get_extra('jingjing_current_facts',{}),source['text'])
         if event.get_extra('jingjing_forgotten_pairs',0):
             block+='\n本轮已删除相关相处片段及短期重复表达缓存，不再主动提起。此结果不代表QQ原始聊天记录或其他长期记忆已全部删除；其他删除按实际结果说。'
         recall_stats={}
@@ -298,8 +345,8 @@ class NaturalChat(Star):
         if not event.get_extra('jingjing_style_prepared',False):return
         base=without_block(req.system_prompt,'SPOKEN')
         human=self.input_snapshot(event)['text']
-        style=style_context(human)
         recent=event.get_extra('jingjing_assistant_tail','')
+        style=style_context(human,recent_assistant=recent)
         if len(re.findall(r'[?？]',recent))>=2 or re.search(r'别问|不要问|不用问|先不聊|不想聊|不想被问',human):
             style+='\n【这轮收尾】直接接住本人刚说的话后收住，不再追问或重复确认；只有执行请求确实缺少必要信息时才澄清。'
         req.system_prompt=base+'\n'+SPOKEN_START+style+'\n'+SPOKEN_END
@@ -311,8 +358,10 @@ class NaturalChat(Star):
         if text:
             human=self.input_snapshot(event)['text']
             text=conversational_text(text,human)
+            text=close_idle_questions(text,human,event.get_extra('jingjing_any_tool',False))
             if not event.get_extra('jingjing_any_tool',False):
                 text=close_short_ack(text,human,event.get_extra('jingjing_assistant_tail',''))
+            text=concise_reaction(text,human,event.get_extra('jingjing_any_tool',False))
             response.completion_text=text
 
     @filter.on_decorating_result(priority=sys.maxsize-71)
@@ -335,6 +384,16 @@ class NaturalChat(Star):
         corrected=grounded_correction(text,self.input_snapshot(event)['text'],
             event.get_extra('jingjing_confirmed_names',{}),str(event.get_sender_id()),
             event.get_extra('jingjing_negative_delivery_question',''),event.get_extra('jingjing_actual_chat',[]))
+        reminder_verified=event.get_extra('jingjing_reminder_verified',False)
+        proofs=event.get_extra('jingjing_reminder_times',None)
+        if reminder_verified and proofs is not None:
+            claimed=re.findall(r'(?<!\d)([0-2]?\d:[0-5]\d)',corrected)
+            if not claimed and re.search(r'提醒|喊我|叫我',self.input_snapshot(event)['text']):
+                claimed=re.findall(r'(?<!\d)([0-2]?\d:[0-5]\d)',self.input_snapshot(event)['text'])
+            reminder_verified=all(value.zfill(5) in proofs for value in claimed)
+        corrected=ground_response(corrected,self.input_snapshot(event)['text'],
+            event.get_extra('jingjing_current_facts',{}),event.get_extra('jingjing_search_verified',False),
+            reminder_verified,bool(re.search(r'小屋故事|想象的小屋',event.get_extra('jingjing_assistant_tail',''))))
         if corrected!=text:
             response.completion_text='' if getattr(response,'tools_call_name',None) else corrected
 
@@ -495,6 +554,37 @@ class NaturalChat(Star):
         if re.search(r'^已(?:写入|更新)归属|^已更正记忆',body):
             event.set_extra('jingjing_fact_write_confirmed',True)
 
+    @filter.on_llm_tool_respond(priority=-sys.maxsize+10)
+    async def verify_execution(self,event,tool,arguments,result):
+        if not event.get_extra('jingjing_style_prepared',False):return
+        name=getattr(tool,'name','')
+        if search_succeeded(name,result):
+            event.set_extra('jingjing_search_verified',True)
+        job_id=scheduled_job_id(name,arguments,result)
+        if not job_id:return
+        manager=getattr(self.context,'cron_manager',None)
+        database=getattr(manager,'db',None)
+        getter=getattr(database,'get_cron_job',None)
+        if not callable(getter):return
+        try:
+            job=await getter(job_id)
+            payload=getattr(job,'payload',None)
+            if (job and getattr(job,'enabled',False) and isinstance(payload,dict)
+                    and payload.get('session')==event.unified_msg_origin
+                    and (str(payload.get('sender_id'))==str(event.get_sender_id())
+                         or name=='dafeiyu_tasks' and str(payload.get('dafeiyu_creator'))==str(event.get_sender_id())
+                         and str(payload.get('dafeiyu_target'))==str(event.get_sender_id()))):
+                event.set_extra('jingjing_reminder_verified',True)
+                stamp=getattr(job,'next_run_time',None)
+                times=list(event.get_extra('jingjing_reminder_times',[]))
+                if isinstance(stamp,dt.datetime):
+                    if stamp.tzinfo is None:stamp=stamp.replace(tzinfo=dt.timezone.utc)
+                    value=stamp.astimezone(TZ).strftime('%H:%M')
+                    if value not in times:times.append(value)
+                event.set_extra('jingjing_reminder_times',times)
+        except Exception as error:
+            logger.warning('Reminder receipt verification unavailable: %s',type(error).__name__)
+
     @filter.on_using_llm_tool()
     async def note_tool(self,event,tool,tool_args):
         event.set_extra('jingjing_any_tool',True)
@@ -570,7 +660,8 @@ class NaturalChat(Star):
             counts={r['kind']:r['n'] for r in c.execute('SELECT kind,count(*) n FROM episodes GROUP BY kind')}
         with self.interaction_store().connect() as c:
             preference_count=c.execute('SELECT count(*) FROM preferences').fetchone()[0]
-        return json_response({'enabled':True,'version':'0.6.0','self_profile_version':self_profile()['version'],
+        return json_response({'enabled':True,'version':'0.7.3','self_profile_version':self_profile()['version'],
+            'scoped_expiring_facts':True,'current_tool_receipts_required':True,
             'confirmed_delivery_only':True,'exchange_cleanup':self.exchange_store().cleanup_status(),
             'exchange_cleanup_error':getattr(self,'maintenance_error',None),
             'exchange_cleanup_running':getattr(self,'maintenance_task',None) is not None and not self.maintenance_task.done(),

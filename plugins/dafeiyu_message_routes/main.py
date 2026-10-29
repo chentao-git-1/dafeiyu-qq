@@ -35,7 +35,7 @@ def social_can_notify(uid):
         return True
 
 
-@register('dafeiyu_message_routes', 'Local', 'QQ目标映射与有据可查的私聊状态', '0.1.8')
+@register('dafeiyu_message_routes', 'Local', 'QQ目标映射与有据可查的私聊状态', '0.1.9')
 class MessageRoutes(Star):
     def __init__(self, context):
         super().__init__(context)
@@ -56,7 +56,7 @@ class MessageRoutes(Star):
         groups=await self.directory(event)
         return json_response({'groups':groups,'contacts':contacts,'last_request':self.audit,
             "private_history":dict(self.private_history.stats, enabled=True, owner_private_only=True,
-                source="NapCat.get_friend_msg_history",version="0.1.8")})
+                source="NapCat.get_friend_msg_history",version="0.1.9")})
 
     @staticmethod
     def cross_voice_request(text, groups, contexts, contacts=None):

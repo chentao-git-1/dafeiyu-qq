@@ -1,0 +1,28 @@
+{
+  "date_beijing": "2026-10-29",
+  "base_commit": "c01df1a48f9e1e34458d3e64ecce160458d1964e",
+  "python": "3.12.14",
+  "platform": "Windows",
+  "command": "python scripts/run_tests.py",
+  "passed": true,
+  "tests": {
+    "test_persona_tuning.py": 41,
+    "test_evening_features.py": 21,
+    "test_persona_native.py": 22,
+    "test_evening_native.py": 22,
+    "test_admin_quota.py": 8,
+    "test_admin_quota_native.py": 6,
+    "test_dialogue_fixes.py": 29,
+    "test_breeze_tts.py": 14,
+    "test_balance_context.py": 11,
+    "test_conversation_continuity.py": 23,
+    "total": 197
+  },
+  "syntax_check_passed": true,
+  "git_diff_check_passed": true,
+  "real_qq_messages": 0,
+  "real_qzone_posts": 0,
+  "paid_model_calls": 0,
+  "production_service_changed": false,
+  "scope": "Project behavioral and native plugin integration tests, using temporary data, fake providers and captured transports; not the full upstream framework suite or live deployment verification."
+}

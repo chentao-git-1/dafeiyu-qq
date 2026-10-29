@@ -48,9 +48,10 @@ class ReplyLimitExceeded(RuntimeError):
 
 
 class ReplyLedger:
-    def __init__(self, path, clock=time.time):
+    def __init__(self, path, clock=time.time, exempt_users=None):
         self.path = str(path)
         self.clock = clock
+        self.exempt_users = exempt_users or (lambda: ())
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS replies (
@@ -74,13 +75,25 @@ class ReplyLedger:
         finally:
             db.close()
 
-    @staticmethod
-    def clean(db, now):
+    def is_exempt(self, user_id):
+        return bool(user_id) and str(user_id) in self.exempt_users()
+
+    def clean(self, db, now):
         # A crashed or cancelled sender cannot keep a reservation indefinitely.
         db.execute(
             "DELETE FROM replies WHERE at <= ? OR (pending = 1 AND at <= ?)",
             (now - WINDOW, now - 600),
         )
+        # Old administrator replies must not keep a regular group's budget full.
+        # Resolve the trusted configuration on each check so role changes apply.
+        admins = tuple(uid for uid in self.exempt_users() if uid)
+        if admins:
+            db.execute(
+                "DELETE FROM replies WHERE user_id IN ("
+                + ",".join("?" for _ in admins)
+                + ")",
+                admins,
+            )
 
     @staticmethod
     def reason(db, user_id, group_id, now):
@@ -102,6 +115,8 @@ class ReplyLedger:
         return None
 
     def blocked(self, user_id="", group_id="", turn=None):
+        if self.is_exempt(user_id):
+            return None
         now = self.clock()
         with self.connect() as db:
             self.clean(db, now)
@@ -123,11 +138,13 @@ class ReplyLedger:
             group_id: Destination group, empty for private messages.
 
         Returns:
-            True for a new slot, False for another part of an existing reply.
+            True for a new slot; False for an administrator or an existing reply.
 
         Raises:
             ReplyLimitExceeded: Either applicable peak quota is exhausted.
         """
+        if self.is_exempt(user_id):
+            return False
         now = self.clock()
         user_id, group_id = str(user_id or ""), str(group_id or "")
         with self.connect() as db:
@@ -147,6 +164,8 @@ class ReplyLedger:
     def retry_at(self, user_id="", group_id=""):
         """Return the next admission time without changing any reply quotas."""
         now = self.clock()
+        if self.is_exempt(user_id):
+            return now
         if not is_peak(now):
             return now
         deadlines = []

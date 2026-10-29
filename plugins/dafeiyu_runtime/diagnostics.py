@@ -14,8 +14,9 @@ from pathlib import Path
 
 KEY = 'dafeiyu_turn_diagnostics'
 CURRENT = contextvars.ContextVar('dafeiyu_diagnostic_turn', default=None)
-PHASES = {'preparation', 'history', 'memory', 'schedule', 'agent', 'tools', 'vision', 'tts', 'send'}
-METRICS = {'recall_candidates', 'recall_selected', 'recall_time_filter', 'recall_synonym_matches', 'schedule_selected', 'schedule_unavailable'}
+PHASES = {'preparation', 'session_wait', 'first_response', 'history', 'memory', 'schedule', 'agent', 'tools', 'vision', 'tts', 'send'}
+METRICS = {'recall_candidates', 'recall_selected', 'recall_time_filter', 'recall_synonym_matches', 'schedule_selected', 'schedule_unavailable',
+           'prompt_characters', 'context_messages', 'context_characters', 'extra_characters'}
 CALLS = {'agent_runs', 'reported_agent_runs', 'vision', 'tts', 'tools', 'tts_characters'}
 OUTCOMES = {'reply', 'partial', 'timeout', 'delivery_failed', 'notice', 'no_reply', 'cancelled'}
 
@@ -76,6 +77,20 @@ def metric(name, value, event=None):
     turn = active(event)
     if turn and name in METRICS and number(value):
         turn.metrics[name] = value
+
+
+def request_metrics(request, event):
+    """Count text only; do not serialize binary media, tools, secrets or prompts."""
+    def characters(value):
+        if isinstance(value, str):return len(value)
+        if isinstance(value, list):return sum(len(p.get('text', '')) for p in value if isinstance(p, dict) and isinstance(p.get('text'), str))
+        return 0
+    contexts = getattr(request, 'contexts', []) or []
+    metric('prompt_characters', characters(getattr(request, 'system_prompt', '')), event)
+    metric('context_messages', len(contexts), event)
+    metric('context_characters', sum(characters(m.get('content')) for m in contexts if isinstance(m, dict)), event)
+    metric('extra_characters', sum(characters(p.get('text', '') if isinstance(p, dict) else getattr(p, 'text', ''))
+          for p in (getattr(request, 'extra_user_content_parts', []) or [])), event)
 
 
 class Turn:
@@ -210,7 +225,7 @@ class Journal:
         return {'enabled': True, 'retained_turns': len(self.rows), 'retention_days': 7, 'max_turns': 200,
                 'io_failures': self.io_failures, 'turns': list(self.rows)[-20:][::-1],
                 'coverage': 'main=core cumulative reported usage; vision=separate caption calls; TTS=characters, not tokens; no price estimate',
-                'timing': 'milliseconds; preparation includes history/memory/schedule/vision; agent includes tools; phases overlap',
+                'timing': 'milliseconds; preparation includes session_wait/history/memory/schedule/vision; agent includes tools; first_response is first complete model response, not first token; phases overlap',
                 'persist_interval_seconds': 120, 'contains_chat_content': False}
 
     async def flush(self):

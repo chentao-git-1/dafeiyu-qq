@@ -26,6 +26,7 @@ from astrbot.core.provider.register import provider_cls_map, register_provider_a
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path, get_astrbot_data_path
 
 from .expression import SPEECH_CONTEXT, relationship, relationship_prompt, speech_plan
+from .breeze import ADAPTER as BREEZE_ADAPTER
 
 ADAPTER = 'dafeiyu_bailian_tts'
 MODEL = 'qwen-audio-3.1-tts-flash'
@@ -206,9 +207,10 @@ class JingjingBailianTTS(Star):
 
     async def status(self):
         provider = await self.context.get_using_tts_provider_async('dafeiyu-qq:FriendMessage:7000000001')
-        active = provider is not None and provider.meta().type == ADAPTER
+        active = provider is not None and provider.meta().type in (ADAPTER,BREEZE_ADAPTER)
         return json_response({
             'active': active,
+            'engine':provider.meta().type if active else None,
             'provider_id': provider.meta().id if provider else None,
             'model': provider.get_model() if active else None,
             'voice': provider.provider_config.get('voice') if active else None,

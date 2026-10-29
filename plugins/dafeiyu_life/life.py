@@ -125,6 +125,27 @@ class LifeStore:
                 return {k:record[k] for k in ('id','day','kind','note','thought','story','project','stage','source','completed_at')}
             except (KeyError,OSError,ValueError):continue
         return None
+    def public_context_for_day(self, now=None):
+        now = time.time() if now is None else now
+        for record in self.records(60):
+            try:
+                completed = float(record['completed_at'])
+                if not 0 < completed <= now or beijing_day(completed) != beijing_day(now):continue
+                path = self.root / record['artifact']
+                if path.resolve().parent != (self.root/'works').resolve() or not path.is_file():continue
+                if hashlib.sha256(path.read_bytes()).hexdigest() != record['sha256']:continue
+                value = {k:record[k] for k in ('id','kind','note','thought','story','project','stage','source','completed_at')}
+                value['day'] = beijing_day(completed)
+                return value
+            except (KeyError, OSError, TypeError, ValueError):continue
+        return None
+    def public_image_for_day(self, now=None):
+        public = self.public_context_for_day(now)
+        if not public or public['kind'] != 'drawing':return None
+        for record in self.records(60):
+            if record.get('id') == public['id']:
+                return str(self.root/record['artifact'])
+        return None
     def cleanup(self):
         keep={r['artifact'] for r in self.records(60)}
         works=self.root/'works'

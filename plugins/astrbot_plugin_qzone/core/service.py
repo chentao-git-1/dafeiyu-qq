@@ -397,6 +397,7 @@ class PostService:
         post: Post | None = None,
         text: str | None = None,
         images: list | None = None,
+        before_publish=None,
     ) -> Post:
         """发表帖子（支持 Post / text / images，但不能为空）"""
 
@@ -416,7 +417,7 @@ class PostService:
             )
 
         # 发布
-        resp = await self.qzone.publish(post)
+        resp = await self.qzone.publish(post, before_publish=before_publish) if before_publish else await self.qzone.publish(post)
         if not resp.ok:
             raise RuntimeError(f"发布说说失败：{resp.data}")
 

@@ -1,5 +1,5 @@
 name: dafeiyu_bailian_tts
-display_name: 鲸鲸百炼聊天语音
-desc: 徐小俏温柔可爱语音，按真实熟悉度区分称呼和相处分寸，语气跟随聊天内容
-version: 0.2.1
+display_name: 鲸鲸聊天语音
+desc: 百炼与 Breeze TTS 2 原生语音适配，按真实熟悉度与聊天内容调整语气
+version: 0.3.3
 author: Local
