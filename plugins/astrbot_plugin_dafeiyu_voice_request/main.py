@@ -1,5 +1,7 @@
 """Honor per-message speech requests without changing native TTS probability."""
 import asyncio
+import random
+import re
 import sys
 
 from astrbot.api import logger
@@ -33,18 +35,22 @@ class DafeiyuVoiceRequest(Star):
     def __init__(self, context: Context):
         super().__init__(context)
 
-    def _intent(self, event):
-        if event.get_platform_name() != 'aiocqhttp':
-            return None
+    def _allowed(self, event):
+        if event.get_platform_name() != 'aiocqhttp' or event.get_platform_id() != 'dafeiyu-qq':
+            return False
         config = self.context.get_config(event.unified_msg_origin)
         settings = config['platform_settings']
         allowed = {str(value) for value in settings.get('id_whitelist', [])}
         group = str(event.get_group_id() or '')
         if settings.get('enable_id_white_list', False):
             if group and group not in allowed:
-                return None
+                return False
             if not group and str(event.get_sender_id()) not in allowed and event.unified_msg_origin not in allowed:
-                return None
+                return False
+        return True
+
+    def _intent(self, event):
+        if not self._allowed(event):return None
         text = ''.join(part.text for part in event.get_messages() if isinstance(part, Plain))
         explicit = output_intent(text)
         if explicit:
@@ -77,7 +83,7 @@ class DafeiyuVoiceRequest(Star):
             return
         intent = self._intent(event)
         result = event.get_result()
-        if not intent or not result or not result.is_llm_result():
+        if not self._allowed(event) or not result or not result.is_llm_result():
             return
         config = self.context.get_config(event.unified_msg_origin)
         settings = config['provider_tts_settings']
@@ -85,13 +91,29 @@ class DafeiyuVoiceRequest(Star):
             return
         if not await SessionServiceManager.should_process_tts_request(event):
             return
+        if intent is None:
+            source=event.get_extra('jingjing_original_input',{})
+            human=source.get('text') if isinstance(source,dict) else None
+            if human is None:human=''.join(part.text for part in event.get_messages() if isinstance(part,Plain))
+            brief=bool(re.fullmatch(r'(?:嗯+[嗯啊呀]?|好(?:的|吧|呀|啦)?|哦+|收到|知道啦?|谢谢(?:你)?|晚安|睡了|哈哈+|喵+)[。！!，,～~\s]*',human.strip()))
+            try:probability=max(0.0,min(float(settings.get('trigger_probability',1)),1.0))
+            except (TypeError,ValueError):probability=1.0
+            intent='text' if brief and not event.get_extra('jingjing_any_tool',False) else ('voice' if random.random()<probability else 'text')
         # A custom result bypasses native random TTS and prevents retry/doubling.
         result.result_content_type = ResultContentType.GENERAL_RESULT
-        if intent == 'text' or any(isinstance(part, Record) for part in result.chain):
-            return
+        if any(isinstance(part, Record) for part in result.chain):return
         text = ' '.join(part.text.strip() for part in result.chain if isinstance(part, Plain) and part.text.strip())
         if not text:
             return
+        # Collapse text before AstrBot's native segmentation/TTS stage.
+        coalesced=[]
+        inserted=False
+        for part in result.chain:
+            if isinstance(part,Plain):
+                if not inserted:coalesced.append(Plain(text));inserted=True
+            else:coalesced.append(part)
+        result.chain=coalesced
+        if intent=='text':return
         try:
             provider = await self.context.get_using_tts_provider_async(event.unified_msg_origin)
             if provider is None:
@@ -113,6 +135,7 @@ class DafeiyuVoiceRequest(Star):
                     chain.append(part)
             result.chain = chain
             event.set_extra('_dafeiyu_explicit_voice_sent', True)
-            logger.info('Explicit voice reply synthesized: umo=%s', event.unified_msg_origin)
+            event.set_extra('_dafeiyu_voice_coalesced',True)
+            logger.info('Single voice reply synthesized')
         except Exception as error:
             logger.warning('Explicit voice reply failed; keeping text: %s', type(error).__name__)

@@ -1,5 +1,5 @@
 {
-  "date_beijing": "2026-10-28",
+  "date_beijing": "2026-10-29",
   "base_commit": "017b77fa16c7bf5264955c5cbb3b898e8e69180b",
   "python": "3.12.14",
   "platform": "Windows",
@@ -10,7 +10,10 @@
     "test_evening_features.py": 21,
     "test_persona_native.py": 22,
     "test_evening_native.py": 22,
-    "total": 98
+    "test_admin_quota.py": 8,
+    "test_admin_quota_native.py": 6,
+    "test_dialogue_fixes.py": 23,
+    "total": 135
   },
   "syntax_check_passed": true,
   "git_diff_check_passed": true,
