@@ -246,7 +246,7 @@ class BalanceWatch:
             cycle['notices'][key] = {'status': 'skipped', 'attempted_at': self.clock()}
             self.save()
 
-    def complete(self, action, status, message_id=None):
+    def complete(self, action, status, message_id=None, text=None):
         cycle = self.state.get("cycle")
         if not cycle or cycle["id"] != action["cycle"]:
             return
@@ -255,6 +255,8 @@ class BalanceWatch:
         if status == "sent":
             notice["sent_at"] = self.clock()
             notice["message_id"] = message_id
+            if isinstance(text,str) and 1<=len(text.strip())<=1500:
+                notice['text']=text.strip()
         if action["kind"] == "first" and action["critical"]:
             cycle["notices"]["exhausted"] = copy.deepcopy(notice)
         if action["kind"] == "exhausted" and status in TERMINAL:

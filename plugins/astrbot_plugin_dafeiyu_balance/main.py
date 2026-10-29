@@ -13,6 +13,8 @@ from astrbot.api.star import Context, Star
 from astrbot.api import logger
 from astrbot.api.web import json_response
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from astrbot.core.agent.message import TextPart
+from .reply_context import MARKER, notice_records, latest_notice, bridge_history, context_note
 
 from .watch import (
     BalanceWatch, INTERVAL, OWNER, BOT, HELP_THRESHOLD, balance_snapshot,
@@ -130,7 +132,51 @@ class DafeiyuBalance(Star):
         )
 
     async def initialize(self):
+        await self.backfill_notice_text()
         self.task = asyncio.create_task(self.watch_loop())
+
+    async def backfill_notice_text(self):
+        """Recover legacy notice text by its confirmed ID in target-scoped QQ history."""
+        platform=self.context.get_platform('aiocqhttp')
+        bot=getattr(platform,'bot',None)
+        if platform is None or platform.meta().id!='dafeiyu-qq' or not callable(getattr(bot,'call_action',None)):return
+        try:from data.plugins.dafeiyu_natural_chat.continuity import decode_history
+        except ImportError:return
+        async with self.lock:
+            now=self.watch.clock()
+            rows=notice_records(self.watch.state,None,now)
+            targets=list(dict.fromkeys(r['qq'] for r in rows if not r['record'].get('text')))[:3]
+            for qq in targets:
+                if not self.private_allowed(qq,self.context.get_config('dafeiyu-qq:FriendMessage:'+qq)):continue
+                try:
+                    raw=await asyncio.wait_for(bot.call_action('get_friend_msg_history',user_id=int(qq),count=30,self_id=int(BOT)),timeout=4)
+                    proof=latest_notice(self.watch.state,qq,now,decode_history(raw,qq,before=now))
+                    if proof and not proof['record'].get('text'):
+                        proof['record']['text']=proof['text'];self.watch.save()
+                except Exception as error:logger.warning('Balance notice context unavailable: %s',type(error).__name__)
+
+    @filter.on_llm_request(priority=-1000040)
+    async def notice_reply_context(self,event,req):
+        raw=getattr(event.message_obj,'raw_message',None)
+        uid=str(event.get_sender_id())
+        if (event.get_platform_name()!='aiocqhttp' or event.get_platform_id()!='dafeiyu-qq' or not event.is_private_chat()
+                or not isinstance(raw,dict) or raw.get('post_type')!='message' or str(raw.get('self_id'))!=BOT or str(raw.get('user_id'))!=uid
+                or event.get_extra('cron_job',None) or event.get_extra('cron_payload',None)
+                or not self.private_allowed(uid,self.context.get_config(event.unified_msg_origin))):return
+        stamp=raw.get('time')
+        if isinstance(stamp,bool) or not isinstance(stamp,(int,float)) or not 0<=self.watch.clock()-stamp<=300:return
+        history=event.get_extra('jingjing_actual_chat',[]) or []
+        notice=latest_notice(self.watch.state,uid,stamp,history)
+        if not notice:return
+        contexts,added=bridge_history(getattr(req,'contexts',None),notice,history)
+        if added:req.contexts=contexts
+        source=event.get_extra('jingjing_original_input',{}) or {}
+        human=str(source.get('text',event.message_str) or '')
+        parts=getattr(req,'extra_user_content_parts',None)
+        if parts is None:parts=[];req.extra_user_content_parts=parts
+        parts[:]=[p for p in parts if not isinstance(p,TextPart) or not p.text.startswith(MARKER)]
+        parts.append(TextPart(text=context_note(notice,human,history)))
+        event.set_extra('dafeiyu_balance_context',{'notice_id':notice['id'],'history_added':added})
 
     async def terminate(self):
         self.stopping = True
@@ -216,12 +262,13 @@ class DafeiyuBalance(Star):
                         continue
                 if not self.watch.reserve(action):
                     continue
+                sent_text=notice_text(action,format(amount,'f'))
                 try:
                     # Account notifications are independent of model reply quotas.
                     reply = await asyncio.wait_for(bot.send_private_msg(
                         user_id=int(action['qq']),
                         message=[{'type': 'text', 'data': {
-                            'text': notice_text(action, format(amount, 'f')),
+                            'text': sent_text,
                         }}],
                     ), timeout=12)
                     message_id = reply.get('message_id') if isinstance(reply, dict) else None
@@ -233,7 +280,7 @@ class DafeiyuBalance(Star):
                     ):
                         self.watch.complete(action, 'unknown')
                     else:
-                        self.watch.complete(action, 'sent', message_id)
+                        self.watch.complete(action, 'sent', message_id, text=sent_text)
                     outcome['owner_notified'] |= action['qq'] == OWNER
                 except asyncio.CancelledError:
                     self.watch.complete(action, 'unknown')
@@ -258,11 +305,12 @@ class DafeiyuBalance(Star):
 
     async def status(self):
         return json_response(dict(
-            self.watch.status(), version='0.3.0', monitored_account='deepseek',
+            self.watch.status(), version='0.3.1', monitored_account='deepseek',
             loop_running=self.task is not None and not self.task.done(),
             next_check_at=self.next_check_at, owner_qq=OWNER,
             helper_count_per_cycle=2, helper_hours='09:00–21:00 Asia/Shanghai',
             uses_chat_model=False, uses_tts=False,
+            confirmed_notice_context=True,
         ))
 
     @staticmethod
