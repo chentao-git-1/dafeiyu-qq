@@ -75,6 +75,8 @@ class Facts(unittest.TestCase):
         self.assertFalse(g.search_succeeded('web_search_tavily','error: failed https://example.invalid'))
         self.assertTrue(g.search_succeeded('web_search_tavily',{'content':[{'type':'text','text':'官方时刻 https://example.invalid/train'}]}))
         self.assertFalse(g.search_succeeded('unrelated','https://example.invalid'))
+        technical='我查到了，刚才的 HTTP 状态码是 429。'
+        self.assertEqual(g.ground_response(technical,'刚才 HTTP 状态码是多少'),technical)
 
     def test_unscheduled_future_reminder_is_removed_and_success_is_kept(self):
         text='好。到时候提前喊你收拾行李。'

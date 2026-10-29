@@ -146,7 +146,8 @@ def ground_response(text, human, facts=None, search_ok=False, reminder_ok=False,
             return '列车终点是'+facts['terminus']+'，但你票上的下车站我还没确认，不能直接当成同一站。'
     if contradictory_transfer(text):
         return '这组到站和换乘时间前后对不上，需要重新核实，先别按它安排换乘。'
-    if not search_ok and re.search(r'(?:^|[。！\n])\s*(?:好[，,])?(?:我)?(?:刚(?:刚)?|已经)?(?:查到了|查完了|查过了|搜到了|查了)|几个来源都一致|这时刻表是查来的',text):
+    live_query=bool(re.search(r'实时|最新|车次|列车|时刻|换乘|发车|票价|汇率|天气|新闻|官网|联网|网上|搜索|搜一下|搜一搜|检索|来源|网页|资料',human+text))
+    if live_query and not search_ok and re.search(r'(?:^|[。！\n])\s*(?:好[，,])?(?:我)?(?:刚(?:刚)?|已经)?(?:查到了|查完了|查过了|搜到了|查了)|几个来源都一致|这时刻表是查来的',text):
         known = '你确认在'+facts['destination']+'下车；' if facts.get('destination') else ''
         return known+'这次还没拿到可核实的查询结果，我先不报未经确认的车次和时刻。' if re.search(r'车次|时刻|换乘|下车|发车',human+text) else '这次还没拿到可靠的查询结果，不能把猜测说成已经查证。'
     timed_request=bool(re.search(r'提醒|喊我|叫我',human))
