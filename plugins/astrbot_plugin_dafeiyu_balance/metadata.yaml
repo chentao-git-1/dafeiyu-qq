@@ -1,6 +1,6 @@
 name: astrbot_plugin_dafeiyu_balance
 display_name: DeepSeek 余额与两档饭钱提醒
 author: local
-version: 0.3.1
+version: 0.3.2
 desc: 人民币余额低于一元提醒主人，低于七毛按七天有效交流排名锁定最多两位合规好友，独立于聊天模型。
 astrbot_version: ">=4.29.1"

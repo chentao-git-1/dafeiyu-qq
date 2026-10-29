@@ -157,6 +157,7 @@ class DafeiyuBalance(Star):
 
     @filter.on_llm_request(priority=-1000040)
     async def notice_reply_context(self,event,req):
+        if event.get_extra('jingjing_outbound_managed',False):return
         raw=getattr(event.message_obj,'raw_message',None)
         uid=str(event.get_sender_id())
         if (event.get_platform_name()!='aiocqhttp' or event.get_platform_id()!='dafeiyu-qq' or not event.is_private_chat()
@@ -305,7 +306,7 @@ class DafeiyuBalance(Star):
 
     async def status(self):
         return json_response(dict(
-            self.watch.status(), version='0.3.1', monitored_account='deepseek',
+            self.watch.status(), version='0.3.2', monitored_account='deepseek',
             loop_running=self.task is not None and not self.task.done(),
             next_check_at=self.next_check_at, owner_qq=OWNER,
             helper_count_per_cycle=2, helper_hours='09:00–21:00 Asia/Shanghai',

@@ -57,7 +57,7 @@ def content_text(content):
     return ''
 
 
-@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.7.2')
+@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.7.3')
 class NaturalChat(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -571,7 +571,9 @@ class NaturalChat(Star):
             payload=getattr(job,'payload',None)
             if (job and getattr(job,'enabled',False) and isinstance(payload,dict)
                     and payload.get('session')==event.unified_msg_origin
-                    and str(payload.get('sender_id'))==str(event.get_sender_id())):
+                    and (str(payload.get('sender_id'))==str(event.get_sender_id())
+                         or name=='dafeiyu_tasks' and str(payload.get('dafeiyu_creator'))==str(event.get_sender_id())
+                         and str(payload.get('dafeiyu_target'))==str(event.get_sender_id()))):
                 event.set_extra('jingjing_reminder_verified',True)
                 stamp=getattr(job,'next_run_time',None)
                 times=list(event.get_extra('jingjing_reminder_times',[]))
@@ -658,7 +660,7 @@ class NaturalChat(Star):
             counts={r['kind']:r['n'] for r in c.execute('SELECT kind,count(*) n FROM episodes GROUP BY kind')}
         with self.interaction_store().connect() as c:
             preference_count=c.execute('SELECT count(*) FROM preferences').fetchone()[0]
-        return json_response({'enabled':True,'version':'0.7.2','self_profile_version':self_profile()['version'],
+        return json_response({'enabled':True,'version':'0.7.3','self_profile_version':self_profile()['version'],
             'scoped_expiring_facts':True,'current_tool_receipts_required':True,
             'confirmed_delivery_only':True,'exchange_cleanup':self.exchange_store().cleanup_status(),
             'exchange_cleanup_error':getattr(self,'maintenance_error',None),

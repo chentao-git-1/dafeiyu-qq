@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import sqlite3
 import time
+from .commitments import ground_commitments
 
 INDIRECT = re.compile(r'他说|她说|别人|朋友说|我(?:的)?(?:朋友|同学|同事|爸爸|妈妈)|(?:他|她)(?:的|在|坐|乘)|假如|假设|比如|举例|翻译|台词|小说|故事|转述|[“”「」『』"`]|https?://|sk-')
 FICTION = re.compile(r'翻译|逐字|原文|复述|台词|写.{0,8}(?:故事|小说|对白)|假如|假设')
@@ -119,6 +120,12 @@ def search_succeeded(name, result):
 
 
 def scheduled_job_id(name, arguments, result):
+    if name=='dafeiyu_tasks' and (arguments or {}).get('action')=='create':
+        try:
+            body=json.loads(result_text(result))
+            value=body.get('id')
+            return value if body.get('created') is True and isinstance(value,str) and re.fullmatch(r'[\w-]{8,64}',value) else None
+        except (ValueError,TypeError,AttributeError):return None
     if name!='future_task' or (arguments or {}).get('action') not in ('create','edit'):
         return None
     match = re.match(r'(?:Scheduled|Updated) future task ([\w-]{8,64})(?:\s|\()',result_text(result).strip())
@@ -156,7 +163,7 @@ def ground_response(text, human, facts=None, search_ok=False, reminder_ok=False,
     if not reminder_ok and (PROMISE.search(text) or confirms):
         pieces = re.split(r'(?<=[。！？\n])',text)
         pieces = [p for p in pieces if not PROMISE.search(p) and not REMINDER_CONFIRM.search(p) and not (timed_request and re.search(r'设好了|已设好|已经设置|已经安排|安排好了',p))]
-        return ''.join(pieces).strip()+'\n这条提醒还没有实际设好。' if timed_request or confirms else ''.join(pieces).strip() or '好。'
+        text = ''.join(pieces).strip()+'\n这条提醒还没有实际设好。' if timed_request or confirms else ''.join(pieces).strip() or '好。'
     text = re.sub(r'[^。！？\n]*(?:下车透口气|下车散步|下车溜达)[^。！？\n]*[。！？]?', '先按票面和车站提示安排，不为透气临时下车。',text)
     if proactive_question(human):
         text = re.sub(r'[^。！？\n]*(?:这条|这次|刚才).{0,6}回(?:复)?得?晚了[^。！？\n]*[。！？]?', '',text).strip()
@@ -164,7 +171,7 @@ def ground_response(text, human, facts=None, search_ok=False, reminder_ok=False,
     if (not story_known and not re.search(r'故事|想象|画里|插画|设定',text)
             and re.search(r'盆沿.{0,8}(?:压|拿)|(?:铅笔|叶子).{0,6}(?:叶脉|压平)|我(?:刚|正|正在|刚才)?给小芽浇水',text)):
         text='在我的小屋故事里，'+text
-    return text or '在呢。'
+    return ground_commitments(text,human,notification_ok=reminder_ok) or '在呢。'
 
 
 def concise_reaction(text, human, had_tool=False):

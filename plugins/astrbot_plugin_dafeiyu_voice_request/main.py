@@ -82,6 +82,7 @@ class DafeiyuVoiceRequest(Star):
                 result.result_content_type = ResultContentType.GENERAL_RESULT
             return
         intent = self._intent(event)
+        automatic_voice = intent is None
         result = event.get_result()
         if not self._allowed(event) or not result or not result.is_llm_result():
             return
@@ -120,6 +121,7 @@ class DafeiyuVoiceRequest(Star):
                 raise RuntimeError('TTS provider unavailable')
             budget=getattr(provider,'synthesis_timeout',None)
             timeout=budget+5 if isinstance(budget,(int,float)) and not isinstance(budget,bool) and 45<=budget<=85 else 45
+            if automatic_voice:timeout=min(timeout,8)
             path = await asyncio.wait_for(provider.get_audio(text), timeout=timeout)
             if not path:
                 raise RuntimeError('TTS returned no audio')

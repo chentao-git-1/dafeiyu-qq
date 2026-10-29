@@ -44,7 +44,7 @@
 
 新增纯逻辑测试：`python tests/test_evening_features.py plugins`。完整入口同时包含旧的人格回归和新的真实插件入口、余额发送、日记排程、素材撤回与发布传输测试，使用临时目录、假提供商和捕获发送。
 
-当前实现已在 Windows / Python 3.12.14 下通过全部 174 项项目回归，包含人格、按语境自然接话与表达反馈、晚间日记、余额及已发送主动通知衔接、管理员豁免、对话修正与 Breeze TTS 2 适配。验证见 [验证记录](docs/implementation-verification.json)，入口与范围见 [接手说明](docs/NEXT_STEPS.md)。这不包含整个上游框架测试集或生产账号验证。
+当前实现已在 Windows / Python 3.12.14 下通过全部 197 项项目回归，包含人格、自然接话、日记与余额、主动消息的持久衔接、新旧回复先后、交付承诺、管理员豁免及语音适配。自动语音最多等待 8 秒，明确语音要求保留提供商预算；诊断只增加排队、首个完整模型响应及上下文长度等数值。验证见 [验证记录](docs/implementation-verification.json)，边界见 [对话衔接](docs/CONTINUITY.md) 与 [接手说明](docs/NEXT_STEPS.md)。这不包含整个上游框架测试集或生产账号验证。
 
 ## 许可与来源
 

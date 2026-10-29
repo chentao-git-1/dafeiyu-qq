@@ -292,11 +292,11 @@ class Native(unittest.IsolatedAsyncioTestCase):
         async def wait(awaitable,timeout):
             timeouts.append(timeout);return await original(awaitable,timeout)
         with patch.object(voice.asyncio,'wait_for',side_effect=wait):
-            await self.deliver('今天有什么新发现')
+            await self.deliver('请用语音说今天的新发现')
             self.tts.synthesis_timeout=85
-            await self.deliver('今天有什么新发现')
+            await self.deliver('请用语音说今天的新发现')
             self.tts.synthesis_timeout=999
-            await self.deliver('今天有什么新发现')
+            await self.deliver('请用语音说今天的新发现')
         self.assertEqual(timeouts,[45,90,45])
 
 
