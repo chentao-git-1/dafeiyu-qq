@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import AsyncMock,patch
 import wave
 import httpx
+import httpcore
 
 STAGE=Path(sys.argv.pop(1));sys.path.insert(0,str(STAGE))
 import data.plugins
@@ -20,6 +21,7 @@ data.plugins.__path__=[str(STAGE),*list(data.plugins.__path__)]
 b=importlib.import_module('data.plugins.dafeiyu_bailian_tts.breeze')
 main=importlib.import_module('data.plugins.dafeiyu_bailian_tts.main')
 REAL_CLIENT=httpx.AsyncClient
+REAL_TRANSPORT=httpx.AsyncHTTPTransport
 
 
 def audio(silent=False,rate=24000):
@@ -38,7 +40,9 @@ class Breeze(unittest.IsolatedAsyncioTestCase):
         self.requests=[];self.status=200;self.content=audio()
         async def handler(request):
             self.requests.append(request);return httpx.Response(self.status,content=self.content)
-        def factory(**kwargs):return REAL_CLIENT(transport=httpx.MockTransport(handler),**kwargs)
+        def factory(**kwargs):
+            kwargs.pop('transport',None)
+            return REAL_CLIENT(transport=httpx.MockTransport(handler),**kwargs)
         client_patch=patch.object(b.httpx,'AsyncClient',side_effect=factory);self.client=client_patch.start();self.addCleanup(client_patch.stop)
         self.temp=patch.object(b,'get_astrbot_temp_path',return_value=self.tmp.name);self.temp.start();self.addCleanup(self.temp.stop)
         self.context_token=b.SPEECH_CONTEXT.set(None);self.addCleanup(b.SPEECH_CONTEXT.reset,self.context_token)
@@ -115,9 +119,37 @@ class Breeze(unittest.IsolatedAsyncioTestCase):
         async def handler(request):
             active[0]+=1;peak[0]=max(peak[0],active[0]);await asyncio.sleep(.01);active[0]-=1
             return httpx.Response(200,content=audio())
-        self.client.side_effect=lambda **kwargs:REAL_CLIENT(transport=httpx.MockTransport(handler),**kwargs)
+        def factory(**kwargs):
+            kwargs.pop('transport',None)
+            return REAL_CLIENT(transport=httpx.MockTransport(handler),**kwargs)
+        self.client.side_effect=factory
         paths=await asyncio.gather(self.provider.get_audio('第一句'),self.provider.get_audio('第二句'))
         self.assertEqual(peak[0],1);self.assertEqual(len(set(paths)),2)
+
+    async def test_connect_recovery_sends_exactly_one_synthesis_request(self):
+        attempts=[];writes=[];body=audio()
+        class Stream:
+            pending=b'HTTP/1.1 200 OK\r\nContent-Length: '+str(len(body)).encode()+b'\r\n\r\n'+body
+            async def start_tls(self,**kwargs):return self
+            async def write(self,data,timeout=None):writes.append(data)
+            async def read(self,max_bytes,timeout=None):
+                data,self.pending=self.pending[:max_bytes],self.pending[max_bytes:];return data
+            async def aclose(self):pass
+            def get_extra_info(self,name):return False if name=='is_readable' else None
+        class Backend:
+            async def connect_tcp(self,**kwargs):
+                attempts.append(kwargs)
+                if len(attempts)<3:raise httpcore.ConnectTimeout('synthetic handshake timeout')
+                return Stream()
+            async def sleep(self,seconds):await asyncio.sleep(0)
+        def transport(**kwargs):
+            instance=REAL_TRANSPORT(**kwargs);instance._pool._network_backend=Backend();return instance
+        self.client.side_effect=lambda **kwargs:REAL_CLIENT(**kwargs)
+        with patch.object(b.httpx,'AsyncHTTPTransport',side_effect=transport):
+            await self.provider.get_audio('连接恢复后只合成一次。')
+        self.assertEqual(len(attempts),3)
+        self.assertTrue(all(item['local_address']=='0.0.0.0' for item in attempts))
+        self.assertEqual(sum(data.startswith(b'POST ') for data in writes),1)
 
     async def test_native_status_accepts_both_bailian_and_breeze(self):
         plugin=main.JingjingBailianTTS.__new__(main.JingjingBailianTTS);plugin.relations={'people':{}}

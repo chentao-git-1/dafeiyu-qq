@@ -65,7 +65,10 @@ class BreezeSpeech(TTSProvider):
         instructions=INSTRUCTION+(plan['instruction'] if plan else '')
         try:
             async with asyncio.timeout(40),self.generation_lock:
-                async with httpx.AsyncClient(trust_env=False,follow_redirects=False,timeout=35) as client:
+                # Retry TCP/TLS setup only, before any synthesis request is sent.
+                transport=httpx.AsyncHTTPTransport(local_address='0.0.0.0',retries=2,trust_env=False)
+                async with httpx.AsyncClient(trust_env=False,follow_redirects=False,transport=transport,
+                        timeout=httpx.Timeout(30,connect=5,pool=5)) as client:
                     async with client.stream('POST',self.endpoint,
                             headers={'xi-api-key':self.provider_config['api_key'],'Content-Type':'application/json'},
                             params={'output_format':'wav'},json={'text':text,'model_id':MODEL,'language_code':'zh',

@@ -13,8 +13,8 @@
     "test_admin_quota.py": 8,
     "test_admin_quota_native.py": 6,
     "test_dialogue_fixes.py": 23,
-    "test_breeze_tts.py": 13,
-    "total": 148
+    "test_breeze_tts.py": 14,
+    "total": 149
   },
   "syntax_check_passed": true,
   "git_diff_check_passed": true,
