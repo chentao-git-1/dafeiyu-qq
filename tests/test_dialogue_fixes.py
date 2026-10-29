@@ -185,6 +185,8 @@ class Native(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):await self.n.images.save(actor,origin)
         self.n.images.capture(OWNER,scope,[component,component])
         with self.assertRaisesRegex(ValueError,'多张'):await self.n.images.save(OWNER,scope)
+        self.n.images.capture(OWNER,scope,[component]);self.n.images.clock=lambda:time.time()+301
+        with self.assertRaisesRegex(ValueError,'过期'):await self.n.images.save(OWNER,scope)
 
     async def test_invalid_outside_temp_and_expired_images_have_no_false_success(self):
         path=self.root/'private.png';PILImage.new('RGB',(2,2)).save(path)

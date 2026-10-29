@@ -65,6 +65,8 @@ class ImageCollection:
 
     async def source(self, actor, origin):
         cached = self.pending.get((str(actor),origin))
+        if cached and self.clock()-cached[1]>300:
+            raise ValueError('刚才那张图片的临时记录已过期，请重新发一次，避免拿错旧图。')
         if cached and self.clock()-cached[1]<=300:
             if cached[0] is None:raise ValueError('刚才有多张图片，我还不能确定你指哪张。')
             path = Path(await asyncio.wait_for(cached[0].convert_to_file_path(),timeout=15)).resolve()
@@ -95,6 +97,7 @@ class ImageCollection:
                 temporary = path.with_suffix(path.suffix+'.tmp')
                 temporary.write_bytes(raw);temporary.chmod(0o600);temporary.replace(path)
                 db.execute('INSERT INTO chat_images VALUES (?,?,?,?,?)',(str(actor),origin,digest,name,self.clock()))
+        self.pending.pop((str(actor),origin),None)
         return path
 
     def forget(self, actor, origin):

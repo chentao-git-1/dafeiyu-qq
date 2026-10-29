@@ -193,9 +193,9 @@ class NaturalChat(Star):
         try:uid=self.actor(event)
         except ValueError:return
         source=self.input_snapshot(event)
-        if event.get_group_id() and not source['directed']:return
         images=[part for part in event.get_messages() if isinstance(part,Image)]
         if images:self.image_collection().capture(uid,event.unified_msg_origin,images)
+        if event.get_group_id() and not source['directed']:return
         intent=media_intent(source['text'],source.get('previous_text',''))
         if not intent:return
         try:
