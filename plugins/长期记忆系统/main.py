@@ -93,6 +93,7 @@ class MemorySystemPlugin(Star):
             self.db,
             self.manager,
             candidate_pool=int(self.config.get("candidate_pool", 300)),
+            embedding=self.adapter.get_embedding if self.config.get('embedding_enable',False) else None,
         )
         llm_caller = self.adapter.make_llm_caller()
         self.manager.quality = MemoryQuality(self.db, llm_caller)
@@ -286,7 +287,7 @@ class MemorySystemPlugin(Star):
                     req.contexts = new_contexts
 
             # 2) 记忆包注入（追加到 system_prompt 末尾，不覆盖人格设定）
-            if self.config.get("auto_recall", True):
+            if self.config.get("auto_recall", True) and not event.get_extra('dafeiyu_dialogue_v2',False):
                 pack = await self.injector.build_pack(user_id, query)
                 if pack:
                     req.system_prompt = f"{req.system_prompt}\n\n{pack}".strip()

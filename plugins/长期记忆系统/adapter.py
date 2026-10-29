@@ -21,6 +21,8 @@ TODO(需按版本确认的接口，均有安全降级):
 from __future__ import annotations
 
 import logging
+import asyncio
+import math
 import os
 import re
 from typing import Any, Callable
@@ -181,12 +183,7 @@ class AstrBotAdapter:
     # --------------------------------------------------------------- embedding
 
     async def get_embedding(self, text: str) -> list[float] | None:
-        """（可选）文本向量化。
-
-        TODO: EmbeddingProvider 的方法名在不同版本有差异
-        （get_embedding / text_to_embedding / embed），确认后启用。
-        默认配置 embedding_enable=false，不调用本方法。
-        """
+        """Optional AstrBot EmbeddingProvider.get_embedding; disabled means no calls."""
         if not self.config.get("embedding_enable", False):
             return None
         provider_id = str(self.config.get("embedding_provider_id", "") or "").strip()
@@ -198,12 +195,13 @@ class AstrBotAdapter:
             )
             if provider is None:
                 return None
-            for method_name in ("get_embedding", "text_to_embedding", "embed"):
-                method = getattr(provider, method_name, None)
-                if callable(method):
-                    result = await method(text)
-                    if isinstance(result, (list, tuple)):
-                        return [float(x) for x in result]
+            method = getattr(provider, 'get_embedding', None)
+            if callable(method):
+                result = await asyncio.wait_for(method(text), timeout=3)
+                if (isinstance(result,(list,tuple)) and 0<len(result)<=65536
+                        and all(isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x) for x in result)
+                        and any(result)):
+                    return [float(x) for x in result]
         except Exception:
             logger.debug("embedding 获取失败", exc_info=True)
         return None

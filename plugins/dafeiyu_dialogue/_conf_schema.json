@@ -1,0 +1,18 @@
+{
+  "mode": {
+    "type": "string",
+    "description": "off关闭、shadow只读观察、active启用指定私聊；推广须通过阶段验收",
+    "default": "shadow",
+    "options": ["off", "shadow", "active"]
+  },
+  "active_private_users": {
+    "type": "list",
+    "description": "新路径的私聊QQ列表；还须通过原有真实身份和白名单校验，群聊不启用",
+    "default": []
+  },
+  "memory_characters": {
+    "type": "int",
+    "description": "相关记忆字符预算，按完整条目选择，不截断证据",
+    "default": 3600
+  }
+}

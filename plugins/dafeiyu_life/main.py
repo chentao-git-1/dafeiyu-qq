@@ -105,6 +105,8 @@ class JingjingLife(Star):
 
     @filter.on_llm_request(priority=400)
     async def life_context(self, event, req):
+        if event.get_extra('dafeiyu_dialogue_v2', False):
+            return
         try:
             self.actor(event)
         except ValueError:

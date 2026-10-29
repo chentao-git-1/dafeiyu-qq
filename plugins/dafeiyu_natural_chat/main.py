@@ -57,8 +57,10 @@ def content_text(content):
     return ''
 
 
-@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.7.3')
+@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.7.4')
 class NaturalChat(Star):
+    dialogue_context_protocol = 1
+
     def __init__(self, context: Context):
         super().__init__(context)
         self.data = Path(get_astrbot_data_path())
@@ -251,6 +253,12 @@ class NaturalChat(Star):
             removed=self.memory_coordinator().forget_turn(uid,event.unified_msg_origin,source['text'])
             event.set_extra('jingjing_forget_processed',True)
             event.set_extra('jingjing_forgotten_pairs',removed)
+        if event.get_extra('dafeiyu_dialogue_v2', False):
+            allowed=self.context.get_config(event.unified_msg_origin)['platform_settings'].get('id_whitelist',[])
+            event.set_extra('jingjing_confirmed_names',verified_names(getattr(self,'data',Path(self.store.path).parent),allowed))
+            event.set_extra('jingjing_style_prepared',True)
+            event.set_extra('dafeiyu_dialogue_legacy_skipped',True)
+            return
         store = self.interaction_store()
         history = store.recent(uid, event.unified_msg_origin)
         if not event.get_extra('jingjing_style_prepared', False):
@@ -342,6 +350,7 @@ class NaturalChat(Star):
 
     @filter.on_llm_request(priority=-1000030)
     async def prepare_spoken_style(self,event,req):
+        if event.get_extra('dafeiyu_dialogue_v2',False):return
         if not event.get_extra('jingjing_style_prepared',False):return
         base=without_block(req.system_prompt,'SPOKEN')
         human=self.input_snapshot(event)['text']
@@ -353,6 +362,7 @@ class NaturalChat(Star):
 
     @filter.on_llm_response(priority=sys.maxsize-101)
     async def conversational_response(self,event,response):
+        if event.get_extra('dafeiyu_dialogue_v2',False):return
         if not event.get_extra('jingjing_style_prepared',False) or getattr(response,'tools_call_name',None):return
         text=str(getattr(response,'completion_text','') or '')
         if text:
@@ -366,6 +376,7 @@ class NaturalChat(Star):
 
     @filter.on_decorating_result(priority=sys.maxsize-71)
     async def conversational_result(self,event):
+        if event.get_extra('dafeiyu_dialogue_v2',False):return
         if not event.get_extra('jingjing_style_prepared',False):return
         result=event.get_result()
         if not result or not (result.is_llm_result() or event.get_extra('dafeiyu_sing_outcome',None)):return
@@ -460,6 +471,12 @@ class NaturalChat(Star):
         try:
             uid = self.actor(event)
         except ValueError:
+            return
+        if event.get_extra('dafeiyu_dialogue_v2',False):
+            assistants=[content_text(m.get('content')) for m in (req.contexts or [])
+                        if isinstance(m,dict) and m.get('role')=='assistant'][-3:]
+            event.set_extra('jingjing_assistant_tail','\n'.join(assistants)[-3000:])
+            event.set_extra('dafeiyu_dialogue_legacy_skipped',True)
             return
         text = self.input_snapshot(event)['text']
         mid = str(getattr(event.message_obj,'message_id','') or '')
@@ -591,6 +608,7 @@ class NaturalChat(Star):
 
     @filter.on_decorating_result(priority=sys.maxsize-31)
     async def shape_short_reaction(self,event):
+        if event.get_extra('dafeiyu_dialogue_v2',False):return
         try:self.actor(event)
         except ValueError:return
         source=str(event.message_str or '').strip()
@@ -660,7 +678,7 @@ class NaturalChat(Star):
             counts={r['kind']:r['n'] for r in c.execute('SELECT kind,count(*) n FROM episodes GROUP BY kind')}
         with self.interaction_store().connect() as c:
             preference_count=c.execute('SELECT count(*) FROM preferences').fetchone()[0]
-        return json_response({'enabled':True,'version':'0.7.3','self_profile_version':self_profile()['version'],
+        return json_response({'enabled':True,'version':'0.7.4','self_profile_version':self_profile()['version'],
             'scoped_expiring_facts':True,'current_tool_receipts_required':True,
             'confirmed_delivery_only':True,'exchange_cleanup':self.exchange_store().cleanup_status(),
             'exchange_cleanup_error':getattr(self,'maintenance_error',None),
