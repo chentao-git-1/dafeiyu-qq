@@ -12,6 +12,7 @@ FICTION = re.compile(r'翻译|逐字|原文|复述|台词|写.{0,8}(?:故事|小
 PROACTIVE = re.compile(r'(?:为什么|为啥|怎么|咋).{0,8}(?:不|没)(?:主动|来找我)|希望你.{0,8}主动|主动找我聊')
 SHORT = re.compile(r'(?:嗯+|好(?:的|呀|哦|啦|吧)?|行|知道了|收到|谢谢|晚安|睡了|喵+|。{2,6}|…{1,3})[呀啊啦哦呢。！!，,～~\s]*$')
 PRAISE = re.compile(r'你(?:真|好|太).{0,5}(?:贴心|可爱|棒|厉害)|考完了.{0,5}(?:还不错|不错|挺好)')
+SHORT_PRAISE = re.compile(r'(?:厉害|好棒|真棒|太棒|好可爱|真可爱|牛啊|牛哇)[呀啊啦哦呢宝宝。！!，,～~👍👏💙❤\ufe0f\s]*$')
 PROMISE = re.compile(r'我(?:会|到时候|到时|届时).{0,16}(?:提醒你|喊你|叫你)|(?:到时候|到时|届时|一会儿|等会儿|提前).{0,12}(?:提醒|喊|叫)你')
 REMINDER_CONFIRM = re.compile(r'(?:提醒|闹钟|定时任务).{0,8}(?:设好|设置好|设置成功|创建成功|安排好|已创建|已设置)|(?:已经|已|帮你).{0,8}(?:设好|设置|创建|安排).{0,6}(?:提醒|闹钟|定时)')
 
@@ -169,7 +170,7 @@ def ground_response(text, human, facts=None, search_ok=False, reminder_ok=False,
 def concise_reaction(text, human, had_tool=False):
     if had_tool or FICTION.search(human) or '```' in text:return text
     if len(human)>32 or re.search(r'帮我|请你|提醒|怎么|为什么|能不能|[?？]',human):return text
-    if not (SHORT.fullmatch(human.strip()) or PRAISE.search(human)):
+    if not (SHORT.fullmatch(human.strip()) or SHORT_PRAISE.fullmatch(human.strip()) or PRAISE.search(human)):
         return text
     if re.fullmatch(r'喵+[。！!\s]*',human) and re.search(r'不是猫|可是鲸鱼',text):
         return '喵——鲸鱼也学一声。'

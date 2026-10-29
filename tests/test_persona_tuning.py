@@ -14,6 +14,7 @@ sys.path.insert(0,str(STAGE))
 from dafeiyu_natural_chat.image_chat import image_mode
 from dafeiyu_natural_chat.recall_guard import own_life_question
 from dafeiyu_natural_chat.spoken_style import conversational_text, technical_turn, close_short_ack
+from dafeiyu_natural_chat.interaction import parse_feedback, naturalness_feedback
 from dafeiyu_life.topic_context import relevant, world_profile
 
 def load(name,path):
@@ -96,6 +97,27 @@ class ShortAck(unittest.TestCase):
     def test_real_questions_technical_answers_and_normal_curiosity_survive(self):
         for human,reply,prior in [('我醒了，药怎么吃？','请问是什么药？','早吗？好了吗？'),('HTTP为什么失败','状态码504。还有日志吗？','早吗？好了吗？'),('我醒了','睡踏实了吗？','要睡会儿吗？')]:
             with self.subTest(human=human):self.assertEqual(close_short_ack(reply,human,prior),reply)
+
+class NaturalFeedback(unittest.TestCase):
+    def test_direct_style_complaints_select_brief_replies(self):
+        for text in ('你的人机味好重啊','感觉鲸鲸人机味好重啊','你说话好机械','你太像客服了','别那么机械了'):
+            with self.subTest(text=text):
+                self.assertTrue(naturalness_feedback(text))
+                self.assertEqual(parse_feedback(text),{'length':'short'})
+
+    def test_contextual_short_feedback_requires_a_recent_reply(self):
+        for text in ('好人机','太人机了','说话自然一点'):
+            with self.subTest(text=text):
+                self.assertFalse(naturalness_feedback(text))
+                self.assertEqual(parse_feedback(text,recent_reply=True),{'length':'short'})
+
+    def test_identity_questions_quotes_and_other_people_do_not_change_preferences(self):
+        for text in ('你是AI吗','你真的是机器人吗？','他说你的人机味好重啊','翻译“你太像客服了”','“你的人机味好重啊”','如果你太像客服了怎么办','你是客服吗？','照片里的你太像客服了'):
+            with self.subTest(text=text):
+                self.assertFalse(naturalness_feedback(text,recent_reply=True))
+                self.assertEqual(parse_feedback(text,recent_reply=True),{})
+        self.assertEqual(parse_feedback('你的人机味好重啊',has_image=True,recent_reply=True),{})
+
 
 class Lore(unittest.TestCase):
     def test_unrelated_turns_do_not_include_own_projects(self):

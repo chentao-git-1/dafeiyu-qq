@@ -123,6 +123,28 @@ class Native(unittest.IsolatedAsyncioTestCase):
         self.v=voice.DafeiyuVoiceRequest(self.context)
         self.social=s.DafeiyuSocial.__new__(s.DafeiyuSocial);self.social.context=self.context;self.social.db=Store(self.root/'social.db')
 
+    async def test_style_feedback_is_saved_for_the_speaker_without_changing_affection(self):
+        e=event('你的人机味好重啊')
+        await self.n.natural_delivery_context(e,ProviderRequest(system_prompt='base'))
+        self.assertEqual(self.n.interaction_store().preferences(OWNER)['length'],'short')
+        self.assertEqual(self.n.interaction_store().preferences(OWNER)['affection'],'auto')
+        self.assertEqual(self.n.interaction_store().preferences(FRIEND)['length'],'auto')
+        self.assertEqual(n.InteractionStore(self.n.store.path.with_name('interaction.db')).preferences(OWNER)['length'],'short')
+        e.send.assert_not_awaited()
+
+    async def test_identity_and_quoted_style_complaints_leave_preferences_unchanged(self):
+        for text in ('你是AI吗','他说“你的人机味好重啊”','翻译“你太像客服了”'):
+            await self.n.natural_delivery_context(event(text),ProviderRequest(system_prompt='base'))
+        self.assertEqual(self.n.interaction_store().preferences(OWNER)['length'],'auto')
+
+    async def test_emoji_praise_closes_a_questionnaire_without_changing_explicit_requests(self):
+        e=event('厉害👍');e.set_extra('jingjing_style_prepared',True)
+        reply=NS(completion_text='嘿嘿，这题我刚好会。你上课没犯困吧？',tools_call_name=[])
+        await self.n.conversational_response(e,reply)
+        self.assertEqual(reply.completion_text,'嘿嘿，这题我刚好会。')
+        for human,body,had_tool in [('厉害👍，这段API代码为什么报错？','先看HTTP状态码。方便贴出日志吗？',False),('太棒啦宝宝','已经发过去了。还要给谁发？',True),('逐字复述原文','你上课没犯困吧？',False)]:
+            self.assertEqual(g.concise_reaction(body,human,had_tool),body)
+
     async def test_natural_permission_is_persisted_for_sender_only_and_survives_reopen(self):
         self.social.db.set_profile(OWNER,{'proactive':False,'quiet_start':1380,'quiet_end':480})
         e=event('你随便什么时候都可以发信息');await self.social.controls(e)
