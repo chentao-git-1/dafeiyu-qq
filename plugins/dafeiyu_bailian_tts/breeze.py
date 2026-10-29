@@ -45,6 +45,7 @@ def normalize_wav(raw):
 
 
 class BreezeSpeech(TTSProvider):
+    synthesis_timeout=85
     def __init__(self,provider_config,provider_settings):
         super().__init__(provider_config,provider_settings)
         self.set_model(provider_config.get('model',MODEL))
@@ -64,13 +65,13 @@ class BreezeSpeech(TTSProvider):
         plan=speech_plan(text,SPEECH_CONTEXT.get()) if self.provider_config.get('expressive_style',True) else None
         instructions=INSTRUCTION+(plan['instruction'] if plan else '')
         try:
-            async with asyncio.timeout(40),self.generation_lock:
+            async with asyncio.timeout(self.synthesis_timeout),self.generation_lock:
                 # Retry TCP/TLS setup only, before any synthesis request is sent.
                 transport=httpx.AsyncHTTPTransport(local_address='0.0.0.0',retries=2,trust_env=False)
                 async with httpx.AsyncClient(trust_env=False,follow_redirects=False,transport=transport,
-                        timeout=httpx.Timeout(30,connect=5,pool=5)) as client:
+                        timeout=httpx.Timeout(75,connect=5,pool=5)) as client:
                     async with client.stream('POST',self.endpoint,
-                            headers={'xi-api-key':self.provider_config['api_key'],'Content-Type':'application/json'},
+                            headers={'xi-api-key':self.provider_config['api_key'],'Content-Type':'application/json','Accept-Encoding':'identity'},
                             params={'output_format':'wav'},json={'text':text,'model_id':MODEL,'language_code':'zh',
                                 'instructions':instructions,'voice_settings':{'guidance_scale':self.guidance}}) as response:
                         if response.status_code!=200:raise SpeechError('Breeze speech HTTP '+str(response.status_code))

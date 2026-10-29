@@ -237,5 +237,17 @@ class Native(unittest.IsolatedAsyncioTestCase):
         for args in ({'platform':'other'},{'session':False}):
             e=await self.deliver('今天有什么新发现',**args);self.tts.get_audio.assert_not_awaited();self.assertTrue(e.get_result().is_llm_result())
 
+    async def test_longer_breeze_budget_does_not_change_other_providers(self):
+        original=voice.asyncio.wait_for;timeouts=[]
+        async def wait(awaitable,timeout):
+            timeouts.append(timeout);return await original(awaitable,timeout)
+        with patch.object(voice.asyncio,'wait_for',side_effect=wait):
+            await self.deliver('今天有什么新发现')
+            self.tts.synthesis_timeout=85
+            await self.deliver('今天有什么新发现')
+            self.tts.synthesis_timeout=999
+            await self.deliver('今天有什么新发现')
+        self.assertEqual(timeouts,[45,90,45])
+
 
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -52,6 +52,7 @@ class Breeze(unittest.IsolatedAsyncioTestCase):
         request=self.requests[0];body=json.loads(request.content)
         self.assertEqual(str(request.url),'https://api.breeze.blue/v1/text-to-speech/voc_fixture123456/stream?output_format=wav')
         self.assertEqual(request.headers['xi-api-key'],self.config['api_key'])
+        self.assertEqual(request.headers['accept-encoding'],'identity')
         self.assertEqual(body['model_id'],'breeze-tts-2');self.assertEqual(body['language_code'],'zh')
         self.assertEqual(body['voice_settings'],{'guidance_scale':2});self.assertIn('保持已保存音色',body['instructions'])
         with wave.open(path,'rb') as f:self.assertEqual((f.getnchannels(),f.getsampwidth(),f.getframerate(),f.getnframes()),(1,2,24000,4800))

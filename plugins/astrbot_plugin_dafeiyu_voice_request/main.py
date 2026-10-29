@@ -118,7 +118,9 @@ class DafeiyuVoiceRequest(Star):
             provider = await self.context.get_using_tts_provider_async(event.unified_msg_origin)
             if provider is None:
                 raise RuntimeError('TTS provider unavailable')
-            path = await asyncio.wait_for(provider.get_audio(text), timeout=45)
+            budget=getattr(provider,'synthesis_timeout',None)
+            timeout=budget+5 if isinstance(budget,(int,float)) and not isinstance(budget,bool) and 45<=budget<=85 else 45
+            path = await asyncio.wait_for(provider.get_audio(text), timeout=timeout)
             if not path:
                 raise RuntimeError('TTS returned no audio')
             record = Record(file=path, url=path, text=text)
