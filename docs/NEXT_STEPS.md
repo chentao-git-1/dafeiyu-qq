@@ -1,5 +1,7 @@
 # 换电脑接手说明
 
+2026-10-30 新增语义对话实施分支 `codex/semantic-dialogue`，先读 [当前实施记录](SEMANTIC_DIALOGUE.md)。已部署的仅为新 `dafeiyu_dialogue` 0.1.1 影子观察器；旧插件适配及检索修改仍是候选代码。220 项生产镜像隔离回归通过，但模型事实／自然度验收未通过，不得直接启用 active 或宣称完整方案已完成。
+
 更新日期：2026-10-29，北京时间。仓库：<https://github.com/chentao-git-1/dafeiyu-qq>。
 
 需求见 [PLAN.md](PLAN.md)，账号配置见 [DEPLOYMENT.md](DEPLOYMENT.md)，升级与回滚见 [MIGRATION.md](MIGRATION.md)。
