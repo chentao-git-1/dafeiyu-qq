@@ -1,5 +1,7 @@
 # 格式失败与假设误写的针对性修复
 
+> 本页保留修复阶段的历史证据。后续已完成小范围生产镜像/辅助模型验证，并于 17:39 正式启用本轮模块；当前状态见 [上线记录](COGNITION_RELEASE.md)。
+
 2026-10-30，北京时间。基于 `cbd32673f13972a451848596463a365638ad1cc0`，按用户“开始，并且减少一些测试”的要求实施。本轮修改通用处理机制，沿用草稿 PR [#2](https://github.com/chentao-git-1/dafeiyu-qq/pull/2)；没有变更生产插件或配置，没有推广 active 新路径。
 
 **本轮相关检查通过，整体自然度和上线验收仍未完成。** 数值见 [cognition-repair-verification.json](cognition-repair-verification.json)。上一候选的 286 项回归、384 轮回放及服务器核验属于 [此前实施记录](COGNITION_IMPLEMENTATION.md)，不能写成本轮最终代码重跑全套的结果。
