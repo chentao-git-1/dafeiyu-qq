@@ -41,6 +41,7 @@ def without_own_block(prompt):
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_GENERATION -->.*?<!-- END_DAFEIYU_GENERATION -->', '', base, flags=re.S)
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_LEARNING_DATA -->.*?<!-- END_DAFEIYU_LEARNING_DATA -->','',base,flags=re.S)
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_SELF_THOUGHTS -->.*?<!-- END_DAFEIYU_SELF_THOUGHTS -->','',base,flags=re.S)
+    base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_GROUP_DATA -->.*?<!-- END_DAFEIYU_GROUP_DATA -->','',base,flags=re.S)
     return re.sub(r'\n?<!-- BEGIN_DAFEIYU_REQUEST_DATA -->.*?<!-- END_DAFEIYU_REQUEST_DATA -->','',base,flags=re.S)
 
 
@@ -57,6 +58,7 @@ def compose(prompt, turn, snapshot, query, *, facts=None, preferences=None, life
             picked.append(data)
             used += size
     data = {'identity': {'actor': turn.actor, 'origin': turn.origin, 'observed_at': turn.observed_at},
+            'current_human_source':{'speaker_qq':turn.actor,'text':query,'group':turn.is_group},
             'beijing_now': dt.datetime.fromtimestamp(turn.observed_at, dt.timezone(dt.timedelta(hours=8))).isoformat(),
             'memory': picked, 'unavailable_sources': list(snapshot.unavailable),
             'current_confirmed_facts': facts or {}, 'existing_interaction_settings': preferences or {},

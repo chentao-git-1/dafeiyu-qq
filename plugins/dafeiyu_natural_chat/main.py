@@ -57,20 +57,21 @@ def content_text(content):
     return ''
 
 
-@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.9.0')
+@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.10.0')
 class NaturalChat(Star):
-    dialogue_context_protocol = 3
+    dialogue_context_protocol = 4
 
     @staticmethod
     def actor_owner():return OWNER
 
     def forget_semantic(self, actor, origin, ids=None):
+        group=':GroupMessage:' in origin
         episode_ids=None if ids is None else {int(i.split(':',1)[1]) for i in ids if i.startswith('episode:')}
         exchange_ids=None if ids is None else {int(i.split(':',1)[1]) for i in ids if i.startswith('exchange:')}
         with contextlib.closing(self.store.connect()) as db, db:
             db.execute('PRAGMA secure_delete=ON')
-            rows=db.execute('SELECT id FROM episodes WHERE owner=? AND instr(origin,?)=1',
-                (actor,origin.split(':',1)[0]+':')).fetchall()
+            rows=db.execute('SELECT id FROM episodes WHERE owner=? AND '+('origin=?' if group else 'instr(origin,?)=1'),
+                (actor,origin if group else origin.split(':',1)[0]+':')).fetchall()
             chosen=[r['id'] for r in rows if episode_ids is None or r['id'] in episode_ids]
             db.executemany('DELETE FROM episodes WHERE id=?',[(n,) for n in chosen])
             db.executemany('DELETE FROM offers WHERE id=?',[(n,) for n in chosen])
@@ -78,9 +79,10 @@ class NaturalChat(Star):
         exchanges=self.exchange_store().forget_ids(actor,origin,None)
         with self.interaction_store().connect() as db:
             db.execute('PRAGMA secure_delete=ON')
-            db.execute('DELETE FROM replies WHERE qq=?',(str(actor),))
-        self.fact_store().forget(actor,None)
-        if ids is None:self.interaction_store().reset(actor)
+            db.execute('DELETE FROM replies WHERE qq=?'+(' AND origin=?' if group else ''),
+                (str(actor),origin) if group else (str(actor),))
+        self.fact_store().forget(actor,origin if group else None)
+        if ids is None and not group:self.interaction_store().reset(actor)
         self.inputs.pop((str(actor),origin),None)
         return {'episodes':len(chosen),'exchanges':exchanges}
 
@@ -264,7 +266,7 @@ class NaturalChat(Star):
         get_star=getattr(self.context,'get_registered_star',lambda name:None)
         meta=get_star('dafeiyu_dialogue');controller=getattr(meta,'star_cls',None) if meta and meta.activated else None
         semantic=bool(controller and controller.config.get('mode')=='active' and controller.feature('learning_v2')
-            and uid in {str(x) for x in controller.config.get('active_private_users',[])})
+            and (controller.config.get('all_allowed_private',False) or uid in {str(x) for x in controller.config.get('active_private_users',[])}))
         if text.endswith('恢复默认'):
             store.reset(uid)
             if semantic:

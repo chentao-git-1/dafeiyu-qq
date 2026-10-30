@@ -14,10 +14,15 @@ class TurnContext:
     message_id: str
     observed_at: float
 
+    @property
+    def is_group(self):return self.origin.startswith(self.platform+':GroupMessage:')
+
     def __post_init__(self):
-        if (not self.actor.isdigit() or self.origin != self.platform + ':FriendMessage:' + self.actor
+        private=self.origin==self.platform+':FriendMessage:'+self.actor
+        group=self.origin.startswith(self.platform+':GroupMessage:') and self.origin[len(self.platform+':GroupMessage:'):].isdigit()
+        if (not self.actor.isdigit() or not (private or group)
                 or isinstance(self.observed_at, bool) or not math.isfinite(self.observed_at)):
-            raise ValueError('Invalid private conversation identity')
+            raise ValueError('Invalid conversation identity')
 
 
 @dataclass(frozen=True)
@@ -35,6 +40,11 @@ class MemoryItem:
     status: str = ''
 
     def visible_to(self, turn):
+        if turn.is_group:
+            return (self.origin==turn.origin and (self.visibility=='group'
+                or self.visibility=='shared' and self.scope_id in (turn.platform+':shared','legacy:shared')
+                or self.visibility=='session' and self.owner==turn.actor))
+        if self.visibility=='group':return False
         if self.visibility == 'shared':
             return self.scope_id in (turn.platform + ':shared', 'legacy:shared')
         return (self.visibility == 'session' and self.owner == turn.actor

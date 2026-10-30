@@ -43,6 +43,18 @@ class MemoryCatalog:
              "((l.visibility='shared' AND instr(l.origin,?)=1) OR (l.owner=? AND l.origin=?)) "
              "ORDER BY l.updated DESC LIMIT 200", (turn.platform + ':', turn.actor, turn.origin)),
         )
+        if turn.is_group:
+            sources=(
+                ('long_term',self.long_term_path,"SELECT * FROM memories WHERE merged_into IS NULL AND session_id=? "
+                    "AND (visibility='shared' OR user_id=?) ORDER BY updated_at DESC LIMIT 200",(turn.origin,turn.actor)),
+                ('episodes',self.root/'plugin_data/dafeiyu_natural_chat/episodes.db',
+                    'SELECT * FROM episodes WHERE origin=? ORDER BY updated DESC LIMIT 200',(turn.origin,)),
+                ('exchanges',self.root/'plugin_data/dafeiyu_natural_chat/interaction.db',
+                    'SELECT * FROM exchanges WHERE origin=? AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT 100',
+                    (turn.origin,max(now-30*86400,cached_after),now)),
+                ('learned',self.root/'plugin_data/dafeiyu_dialogue/learning.db',
+                    "SELECT l.* FROM learned l JOIN learning_sources s ON s.id=l.source_id WHERE l.status='current' AND s.revoked=0 "
+                    "AND l.origin=? AND (l.visibility IN ('group','shared') OR l.owner=?) ORDER BY l.updated DESC LIMIT 200",(turn.origin,turn.actor)))
         for source, path, sql, params in sources:
             if source == 'long_term' and not self.include_long_term:
                 continue
@@ -67,7 +79,7 @@ class MemoryCatalog:
                     elif source == 'exchanges':
                         body = json.dumps({'human': row['human'], 'reply': row['reply']}, ensure_ascii=False)
                         item = MemoryItem('exchange:' + str(row['id']), row['qq'], row['origin'],
-                            'session', 'exchange', body, row['at'], 'confirmed_exchange')
+                            'group' if turn.is_group else 'session', 'exchange', body, row['at'], 'confirmed_exchange')
                     else:
                         body = json.loads(row['payload'])
                         if row['kind'] == 'event' and now - row['updated'] > 180 * 86400:
@@ -81,3 +93,8 @@ class MemoryCatalog:
             except (sqlite3.Error, KeyError, TypeError, ValueError):
                 unavailable.append(source)
         return CatalogSnapshot(tuple(items), tuple(unavailable))
+
+    def owned_group_legacy_ids(self,turn):
+        if not turn.is_group:return []
+        return [r['id'] for r in self._read(self.long_term_path,
+            'SELECT id FROM memories WHERE user_id=? AND session_id=?',(turn.actor,turn.origin))]

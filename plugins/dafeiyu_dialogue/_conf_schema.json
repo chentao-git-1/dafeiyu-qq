@@ -15,6 +15,21 @@
     "description": "相关记忆字符预算，按完整条目选择，不截断证据",
     "default": 3600
   },
+  "all_allowed_private": {
+    "type": "bool",
+    "description": "让原有准入规则已允许的所有私聊使用新链路；不改变原白名单或消息权限",
+    "default": false
+  },
+  "all_allowed_groups": {
+    "type": "bool",
+    "description": "让原有白名单已允许、真实@本机器人的群聊使用新链路；资料按群和实际发言者隔离",
+    "default": false
+  },
+  "active_group_ids": {
+    "type": "list",
+    "description": "单独选择的新链路群号；仍须通过原有群准入和真实@检查",
+    "default": []
+  },
   "response_review": {
     "type": "string",
     "description": "仅active指定私聊生效：enforce核对，audit只观察，off仅供离线对照。每轮最多两次核对；修订才追加一次独立事实检查，最多四次辅助请求，失败不发草稿。shadow不调用模型。",

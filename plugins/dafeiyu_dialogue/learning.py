@@ -119,10 +119,11 @@ class LearningStore:
 
     def current(self, owner, origin, include_events=True):
         with self.db() as db:
+            group=':GroupMessage:' in origin
             rows = db.execute("SELECT l.* FROM learned l JOIN learning_sources s ON s.id=l.source_id "
                 "WHERE l.owner=? AND l.status='current' AND s.revoked=0 AND "
-                "((l.visibility='shared' AND instr(l.origin,?)=1) OR l.origin=?) ORDER BY l.updated DESC LIMIT 200",
-                (owner,origin.split(':',1)[0]+':',origin)).fetchall()
+                "((?=0 AND l.visibility='shared' AND instr(l.origin,?)=1) OR l.origin=?) ORDER BY l.updated DESC LIMIT 200",
+                (owner,int(group),origin.split(':',1)[0]+':',origin)).fetchall()
         return [self.view(dict(row)) for row in rows if include_events or row['kind'] == 'preference']
 
     @staticmethod
@@ -152,7 +153,9 @@ class LearningStore:
             # Legacy native histories lack source lineage; invalidate their disposable AI context.
             db.execute('UPDATE context_privacy_clock SET epoch=epoch+1 WHERE id=1')
             db.execute('INSERT OR REPLACE INTO privacy_barriers VALUES(?,?)',(source['origin'].split(':',1)[0],self.clock()))
-            rows = db.execute('SELECT id,source_id FROM learned WHERE owner=?', (source['owner'],)).fetchall()
+            rows = db.execute('SELECT id,source_id FROM learned WHERE owner=?'+
+                (' AND origin=?' if ':GroupMessage:' in source['origin'] else ''),
+                (source['owner'],source['origin']) if ':GroupMessage:' in source['origin'] else (source['owner'],)).fetchall()
             ids = [r['id'] for r in rows if action == 'forget_all' or r['id'] in selected]
             for eid in ids:
                 # Remove history and quoted evidence as well as the current projection.
@@ -198,6 +201,7 @@ class LearningStore:
                     expected = offered_versions.get(item['supersedes'])
                     if (not old or old['owner'] != source['owner']
                             or (old['origin']!=source['origin'] and (old['kind']=='preference'
+                                or ':GroupMessage:' in old['origin'] or ':GroupMessage:' in source['origin']
                                 or old['origin'].split(':',1)[0]!=source['origin'].split(':',1)[0]))
                             or old['kind'] != item['kind'] or old['status'] != 'current'
                             or expected != item['expected_version'] or old['version'] != expected):
@@ -210,7 +214,7 @@ class LearningStore:
                         continue
                     eid, version = 'learned:' + digest([source['id'], index])[:24], 1
                 payload = json.dumps({k: item[k] for k in ('summary', 'condition', 'evidence', 'status', 'event_day')}, ensure_ascii=False)
-                visibility = 'session' if item['kind'] == 'preference' else 'shared'
+                visibility = 'session' if item['kind'] == 'preference' else ('group' if ':GroupMessage:' in source['origin'] else 'shared')
                 db.execute('INSERT OR REPLACE INTO learned VALUES(?,?,?,?,?,?,?,?,?,?,?)',
                     (eid, source['owner'], source['origin'], item['kind'], payload, source['id'], version,
                      'current', visibility, self.clock(), item['event_day']))

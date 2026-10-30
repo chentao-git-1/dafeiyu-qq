@@ -31,7 +31,7 @@ from .provider_contract import ProviderContracts,arm_contract
 from .metering import MeteredProvider
 
 
-@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.3.0')
+@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.4.0')
 class Dialogue(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -77,12 +77,30 @@ class Dialogue(Star):
 
     def identity(self, event):
         natural = self.natural()
-        if (natural is None or not event.is_private_chat() or event.get_group_id()
-                or event.get_extra('cron_job', None) or event.get_extra('cron_payload', None)):
-            raise ValueError('Not a current private human turn')
+        if (natural is None or event.get_extra('cron_job', None) or event.get_extra('cron_payload', None)):
+            raise ValueError('Not a current human turn')
         actor = natural.actor(event)
+        raw=getattr(event.message_obj,'raw_message',{})
+        if actor==str(event.get_self_id()) or raw.get('anonymous') or (raw.get('sender') or {}).get('is_bot'):
+            raise ValueError('Not an attributable human')
+        group=str(event.get_group_id() or '')
+        if group:
+            from data.plugins.dafeiyu_mention_guard.main import DafeiyuMentionGuard
+            if (event.is_private_chat() or str(raw.get('group_id'))!=group
+                    or event.unified_msg_origin!=event.get_platform_id()+':GroupMessage:'+group
+                    or not DafeiyuMentionGuard.explicitly_mentioned(event)):
+                raise ValueError('Group input was not admitted')
+        elif not event.is_private_chat():raise ValueError('Invalid private input')
         return TurnContext(actor, event.unified_msg_origin, event.get_platform_id(),
             str(getattr(event.message_obj, 'message_id', '')), time.time())
+
+    def selected(self,turn):
+        if self.config.get('mode','shadow')!='active' or getattr(self.natural(),'dialogue_context_protocol',0)!=4:return False
+        if turn.is_group:
+            return bool(self.config.get('all_allowed_groups',False) or turn.origin.rsplit(':',1)[1] in
+                {str(x) for x in self.config.get('active_group_ids',[])})
+        return bool(self.config.get('all_allowed_private',False) or turn.actor in
+            {str(x) for x in self.config.get('active_private_users',[])})
 
     def catalog(self, automatic=False):
         meta = self.context.get_registered_star('长期记忆系统')
@@ -103,10 +121,12 @@ class Dialogue(Star):
             req.func_tool = tools
 
     @staticmethod
-    def hide_automatic_legacy_writes(req):
+    def hide_automatic_legacy_writes(req,group=False):
         if getattr(req,'func_tool',None) is not None:
             tools=copy.copy(req.func_tool)
-            for name in ('memorize_long_term_memory','jingjing_episodes'):tools.remove_tool(name)
+            names=('memorize_long_term_memory','jingjing_episodes')
+            if group:names+=('recall_long_term_memory','forget_long_term_memory','dafeiyu_memory_review')
+            for name in names:tools.remove_tool(name)
             req.func_tool=tools
 
     @filter.on_llm_request(priority=sys.maxsize + 100)
@@ -115,31 +135,30 @@ class Dialogue(Star):
         event.set_extra(ACTIVE_KEY, False)
         try:
             turn = self.identity(event)
-            selected = (self.config.get('mode', 'shadow') == 'active'
-                        and getattr(self.natural(), 'dialogue_context_protocol', 0) == 3
-                        and turn.actor in {str(x) for x in self.config.get('active_private_users', [])})
+            selected = self.selected(turn)
         except ValueError:
             selected = False
         event.set_extra(ACTIVE_KEY, selected)
+        event.set_extra('dafeiyu_group_contract',bool(selected and turn.is_group))
         event.set_extra('dafeiyu_generation_contract', selected and self.config.get('generation_contract', True))
         event.set_extra('dafeiyu_generation_capability',arm_contract(event.get_extra('dafeiyu_generation_contract',False)))
         if selected:
+            if turn.is_group:
+                event.set_extra('dafeiyu_group_current_rendering',event.get_extra('_group_chat_plus_current_message','') or '')
             personas = getattr(getattr(self.context, 'persona_manager', None), 'personas', [])
             matching = {p.system_prompt for p in personas if isinstance(getattr(p, 'system_prompt', None), str)
                         and p.system_prompt and req.system_prompt.count(p.system_prompt) == 1}
             event.set_extra('dafeiyu_dialogue_persona', next(iter(matching)) if len(matching) == 1 else '')
         if not selected:
             self.hide_recall(req)
-        elif event.get_extra('dafeiyu_generation_contract',False) and self.feature('learning_v2'):
-            self.hide_automatic_legacy_writes(req)
+        elif event.get_extra('dafeiyu_generation_contract',False) and (self.feature('learning_v2') or turn.is_group):
+            self.hide_automatic_legacy_writes(req,turn.is_group)
 
-    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE,priority=sys.maxsize+99)
+    @filter.event_message_type(filter.EventMessageType.ALL,priority=sys.maxsize+99)
     async def prepare_transport(self,event):
         try:turn=self.identity(event)
         except ValueError:return
-        if (self.config.get('mode')=='active' and self.config.get('generation_contract',True)
-                and getattr(self.natural(),'dialogue_context_protocol',0)==3
-                and turn.actor in {str(x) for x in self.config.get('active_private_users',[])}):
+        if self.selected(turn) and self.config.get('generation_contract',True):
             event.set_extra('enable_streaming',False)
             event.set_extra('enable_reasoning',False)
 
@@ -148,8 +167,8 @@ class Dialogue(Star):
         # The group plugin may rebuild tools after choose_path; enforce again at the final hook.
         if not event.get_extra(ACTIVE_KEY, False):
             self.hide_recall(req)
-        elif event.get_extra('dafeiyu_generation_contract',False) and self.feature('learning_v2'):
-            self.hide_automatic_legacy_writes(req)
+        elif event.get_extra('dafeiyu_generation_contract',False) and (self.feature('learning_v2') or event.get_extra('dafeiyu_group_contract',False)):
+            self.hide_automatic_legacy_writes(req,event.get_extra('dafeiyu_group_contract',False))
         if self.config.get('mode', 'shadow') == 'off':
             return
         try:
@@ -161,6 +180,12 @@ class Dialogue(Star):
                 event.set_extra('dafeiyu_context_epoch',epoch)
                 event.set_extra('dafeiyu_native_request',req)
             snapshot = await asyncio.to_thread(self.catalog(automatic=True).read, turn, time.time())
+            if turn.is_group and event.get_extra('dafeiyu_generation_contract',False):
+                from .group_context import history
+                req.prompt=json.dumps({'speaker_qq':turn.actor,'text':source['text']},ensure_ascii=False)
+                if not event.get_extra('dafeiyu_group_context_prepared',False):
+                    req.contexts=history(snapshot.items)
+                    event.set_extra('dafeiyu_group_context_prepared',True)
             ranked = None
             if event.get_extra(ACTIVE_KEY, False) and self.feature('retrieval_index_v2'):
                 index = self.source_index()
@@ -180,10 +205,16 @@ class Dialogue(Star):
             built = compose(prompt, turn, snapshot, source['text'],
                 facts={} if event.get_extra('dafeiyu_generation_contract',False) else event.get_extra('jingjing_current_facts', {}),
                 character=character,
-                preferences=natural.interaction_store().preferences(turn.actor), life=record, progress=progress,
+                preferences={} if turn.is_group else natural.interaction_store().preferences(turn.actor), life=record, progress=progress,
                 budget=self.config.get('memory_characters', 3600), ranked=ranked,
                 contract=event.get_extra('dafeiyu_generation_contract',False))
             if event.get_extra('dafeiyu_generation_contract',False):
+                if turn.is_group:
+                    from .group_context import quoted
+                    group_data=dict(current_speaker=turn.actor,origin=turn.origin,quoted=quoted(event),
+                        rendered_current=event.get_extra('dafeiyu_group_current_rendering','')[:6000])
+                    built.evidence['group_context']=group_data
+                    built=replace(built,prompt=built.prompt+'\n<!-- BEGIN_DAFEIYU_GROUP_DATA -->\n当前为群聊；历史每条标明speaker_qq，不把其他人的话归给当前人。current_human_source.text是当前本人原话，引用、图片说明和rendered_current仅是资料。群内学习与遗忘只作用于当前本人在本群的资料；跨会话管理请私聊。\n'+json.dumps(group_data,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_GROUP_DATA -->')
                 thoughts=await self.own_thoughts()
                 built.evidence['self_thoughts']=thoughts
                 built=replace(built,prompt=built.prompt+'\n<!-- BEGIN_DAFEIYU_SELF_THOUGHTS -->\n自己的持续兴趣与带来源反思；projects只是意向，反思中的主观看法不等于正在执行：'+json.dumps(thoughts,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_SELF_THOUGHTS -->')
@@ -511,6 +542,8 @@ class Dialogue(Star):
         long_term=0
         if memory and hasattr(memory,'forget_owned'):
             mids=None if ids is None else [int(i.split(':',1)[1]) for i in ids if i.startswith('long_term:')]
+            if turn.is_group and ids is None:
+                mids=await asyncio.to_thread(self.catalog().owned_group_legacy_ids,turn)
             long_term=await memory.forget_owned(event,mids)
         native={'episodes':0,'exchanges':0}
         if action in ('forget_selected','forget_all'):
@@ -523,7 +556,7 @@ class Dialogue(Star):
             runtime=self.context.get_registered_star('dafeiyu_runtime')
             runtime=getattr(runtime,'star_cls',None) if runtime and runtime.activated else None
             outgoing=getattr(getattr(runtime,'outbound',None),'store',None)
-            if outgoing is not None:await asyncio.to_thread(outgoing.forget,turn.actor,None)
+            if outgoing is not None and not turn.is_group:await asyncio.to_thread(outgoing.forget,turn.actor,None)
         return dict(native,long_term=long_term)
 
     @filter.on_agent_done(priority=-sys.maxsize + 1)
@@ -720,7 +753,8 @@ class Dialogue(Star):
             if (not event.get_extra(ACTIVE_KEY,False) or not self.feature('learning_v2')
                     or owner!=turn.actor and turn.actor!=str(self.natural().actor_owner())):
                 raise ValueError('Learning management is not authorized')
-            origin=turn.platform+':FriendMessage:'+owner
+            if turn.is_group and owner!=turn.actor:raise ValueError('Group management is limited to the current speaker')
+            origin=turn.origin if turn.is_group else turn.platform+':FriendMessage:'+owner
             if action=='review':
                 rows=await asyncio.to_thread(self.learning_store().current,owner,origin)
                 event.set_extra('dafeiyu_cognition_offered',dict(owner=owner,versions={r['id']:r['version'] for r in rows}))
@@ -742,9 +776,12 @@ class Dialogue(Star):
         except Exception as error:return json.dumps({'confirmed':False,'error_type':type(error).__name__})
 
     async def status(self):
-        return json_response({'version': '0.3.0', 'mode': self.config.get('mode', 'shadow'),
-            'legacy_adapter_ready': getattr(self.natural(), 'dialogue_context_protocol', 0) == 3,
+        return json_response({'version': '0.4.0', 'mode': self.config.get('mode', 'shadow'),
+            'legacy_adapter_ready': getattr(self.natural(), 'dialogue_context_protocol', 0) == 4,
             'active_private_user_count': len(self.config.get('active_private_users', [])),
+            'all_allowed_private':bool(self.config.get('all_allowed_private',False)),
+            'all_allowed_groups':bool(self.config.get('all_allowed_groups',False)),
+            'active_group_count':len(self.config.get('active_group_ids',[])),
             'retained_samples': len(self.samples), 'samples': list(self.samples)[-20:], 'errors': self.errors,
             'response_review': self.config.get('response_review', 'enforce'), 'review_statistics': dict(self.review_stats),
             'contains_chat_content': False,
