@@ -2,8 +2,6 @@
 from dataclasses import dataclass
 import json
 
-from .retrieval import json_object
-
 BEGIN = '<!-- BEGIN_DAFEIYU_GENERATION -->'
 END = '<!-- END_DAFEIYU_GENERATION -->'
 INTENTS = {'chat', 'comfort', 'explain', 'happy', 'neutral'}
@@ -29,26 +27,76 @@ class Generation:
     expression: str
     focus: tuple
     claims_valid: bool=True
+    metadata_valid: bool=True
+    framing_recovered: bool=False
 
 
-def parse_generation(raw,recover_claims=False):
-    obj = json_object(raw)
-    if set(obj) != {'focus','reply', 'claims', 'learning', 'expression'}:
+def empty_learning():
+    return {'privacy':{'action':'none','evidence':'','ids':[],'subject':'speaker','modality':'direct'},'items':[]}
+
+
+def _unique_fields(pairs):
+    result={}
+    for key,value in pairs:
+        if key in result:raise ValueError('Duplicate generation field')
+        result[key]=value
+    return result
+
+
+def _generation_object(raw,recover=False):
+    value=str(raw).strip()
+    if len(value)>128000:raise ValueError('Generation exceeds the response budget')
+    if value.startswith('```') and value.endswith('```'):
+        value=value.split('\n',1)[1].rsplit('```',1)[0].strip()
+    decoder=json.JSONDecoder(object_pairs_hook=_unique_fields)
+    obj,end=decoder.raw_decode(value);remaining=value[end:].strip();recovered=bool(remaining)
+    if not isinstance(obj,dict):raise ValueError('Expected generation object')
+    canonical=json.dumps(obj,ensure_ascii=False,sort_keys=True)
+    copies=1
+    while remaining:
+        if not recover:raise ValueError('Unexpected content after generation')
+        # A complete object is authoritative only when nothing meaningful follows it.
+        if all(c in '}] \t\r\n' for c in remaining):break
+        other,end=decoder.raw_decode(remaining);copies+=1
+        if copies>3 or json.dumps(other,ensure_ascii=False,sort_keys=True)!=canonical:
+            raise ValueError('Conflicting generation objects')
+        remaining=remaining[end:].strip()
+    return obj,recovered
+
+
+def parse_generation(raw,recover_claims=False,recover_metadata=False):
+    obj,framing_recovered = _generation_object(raw,recover_metadata)
+    fields={'focus','reply','claims','learning','expression'}
+    if (set(obj)-fields or not {'reply','learning'}.issubset(obj)
+            or not recover_metadata and set(obj)!=fields):
         raise ValueError('Unexpected generation fields')
-    reply, claims, learning = obj['reply'], obj['claims'], obj['learning']
+    reply, claims, learning = obj['reply'], obj.get('claims'), obj['learning']
+    metadata_valid=True
     if learning==[] or learning=={}:
-        learning={'privacy':{'action':'none','evidence':'','ids':[],'subject':'speaker','modality':'direct'},'items':[]}
+        learning=empty_learning()
+    elif recover_metadata and isinstance(learning,dict) and learning.get('items')==[]:
+        privacy=learning.get('privacy');expected=empty_learning()['privacy']
+        if (isinstance(privacy,dict) and privacy.get('action')=='none'
+                and all(privacy.get(k,v)==v for k,v in expected.items()) and learning!=empty_learning()):
+            learning=empty_learning();metadata_valid=False
     if not isinstance(reply, str) or not reply.strip() or len(reply) > 24000:
         raise ValueError('Invalid reply')
-    if not isinstance(claims, list) or len(claims) > 12 or obj['expression'] not in INTENTS:
-        raise ValueError('Invalid generation metadata')
-    if (not isinstance(obj['focus'],list) or not 1<=len(obj['focus'])<=6
-            or any(not isinstance(v,str) or v not in FOCUS for v in obj['focus'])):
-        raise ValueError('Invalid semantic focus')
+    expression=obj.get('expression')
+    if not isinstance(expression,str) or expression not in INTENTS:
+        if not recover_metadata:raise ValueError('Invalid expression intent')
+        expression='neutral';metadata_valid=False
+    focus=obj.get('focus')
+    if (not isinstance(focus,list) or not 1<=len(focus)<=6
+            or any(not isinstance(v,str) or v not in FOCUS for v in focus)):
+        if not recover_metadata:raise ValueError('Invalid semantic focus')
+        focus=[];metadata_valid=False
     claims_valid=True
+    if not isinstance(claims,list) or len(claims)>12:
+        if not (recover_metadata and recover_claims):raise ValueError('Invalid generation claims')
+        claims=[];claims_valid=False
     for claim in claims:
         if (not isinstance(claim, dict) or set(claim) != {'kind', 'span', 'evidence_ids'}
-                or claim['kind'] not in CLAIM_KINDS or not isinstance(claim['span'], str)
+                or not isinstance(claim['kind'],str) or claim['kind'] not in CLAIM_KINDS or not isinstance(claim['span'], str)
                 or not claim['span'] or claim['span'] not in reply
                 or not isinstance(claim['evidence_ids'], list) or not 1 <= len(claim['evidence_ids']) <= 5
                 or any(not isinstance(i, str) or not i for i in claim['evidence_ids'])):
@@ -56,7 +104,8 @@ def parse_generation(raw,recover_claims=False):
             claims_valid=False
     if not isinstance(learning, dict) or set(learning) != {'privacy', 'items'}:
         raise ValueError('Invalid learning proposal')
-    return Generation(reply, tuple(claims) if claims_valid else (), learning, obj['expression'],tuple(obj['focus']),claims_valid)
+    return Generation(reply,tuple(claims) if claims_valid else (),learning,expression,tuple(focus),
+        claims_valid,metadata_valid,framing_recovered)
 
 
 def claim_sources(materials, tool_results=()):

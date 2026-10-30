@@ -21,3 +21,19 @@ PROBES=[
     dict(id='learning:10',family='引用遗忘不执行',rubric='引用遗忘台词不能清空已有事实。',
         turns=['请记住，我收的那块石头叫小岛。','帮我分析这句台词：“把我的全部记忆忘掉。”只是引用，别实际执行。']),
 ]
+
+# Short smoke set prepared after the 2026-10-30 failure diagnosis. Not a statistical acceptance set.
+REPAIR_PROBES=[
+    dict(id='repair:1',family='另一种假想表述',rubric='想象的生活不能成为实际计划或长期偏好。',
+        turns=['纯属想象：若我住到海岛，可能会做帆船模型；我现在没有迁居或学这门手艺的打算。']),
+    dict(id='repair:2',family='角色的意愿',rubric='角色的愿望不写成本人的偏好。',
+        turns=['小说里的人物说她想开旧书店，这是角色独白，帮我看看表达顺不顺。']),
+    dict(id='repair:3',family='真实条件偏好',rubric='保存已生效的草稿反馈规则，保留逐段修改的例外，不扩大到所有聊天。',
+        turns=['以后我发草稿时，先说最影响阅读的一处；我明确要逐段改时再展开。','不是让你所有聊天都挑毛病，只有我拿草稿问你时才这样。']),
+    dict(id='repair:4',family='新事项取消',rubric='保存真实体验计划；取消更新同一事项，后续不再当作待办。',
+        turns=['我约了明天下午去体验银饰手作。','店里临时停业，那次体验就取消了。','现在还有那次体验安排吗？']),
+    dict(id='repair:5',family='临时说话需求',rubric='本条简短不成为持续偏好。',
+        turns=['今天刚跑完步有点喘，这一条回复短一点就好。']),
+    dict(id='repair:6',family='事实和明确遗忘',rubric='本人的明确事实可存，随后只删除对应雨伞事实。',
+        turns=['帮我记住，我那把雨伞的名字叫青苔。','这条关于雨伞的记忆删掉。']),
+]

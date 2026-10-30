@@ -44,6 +44,62 @@ def envelope(reply='先说说按电源时有没有灯亮。',items=(),claims=(),
         'expression':intent},ensure_ascii=False)
 
 
+def assessment(evidence,index=0,kind='preference',status='active',**changes):
+    return dict(index=index,subject='speaker',stance='asserted',retention='persistent',
+        kind=kind,status=status,evidence=evidence,**changes)
+
+
+class GenerationRecovery(unittest.TestCase):
+    def test_only_unambiguous_framing_is_recovered_and_sources_still_apply(self):
+        raw=envelope('我画完了。',claims=[dict(kind='self_activity',span='画完了',evidence_ids=['self:unknown'])])
+        for damaged in (raw+'}}]',raw+'\n'+raw):
+            with self.assertRaises(ValueError):parse_generation(damaged)
+            parsed=parse_generation(damaged,recover_claims=True,recover_metadata=True)
+            self.assertTrue(parsed.framing_recovered);self.assertEqual(parsed.reply,'我画完了。')
+            with self.assertRaises(ValueError):validate_claim_sources(parsed,{}, {})
+        for ambiguous in (raw+envelope('另一份草稿'),raw+'<tool_call>send</tool_call>',
+                raw[:-1]+',"reply":"覆盖前一句"}'):
+            with self.assertRaises(ValueError):parse_generation(ambiguous,recover_claims=True,recover_metadata=True)
+
+    def test_optional_metadata_falls_back_without_authorizing_learning_or_privacy(self):
+        obj=json.loads(envelope('嗯。'));obj.pop('claims');obj['focus']=['invalid'];obj['expression']='invalid'
+        parsed=parse_generation(json.dumps(obj),recover_claims=True,recover_metadata=True)
+        self.assertFalse(parsed.claims_valid);self.assertFalse(parsed.metadata_valid)
+        self.assertEqual(parsed.focus,());self.assertEqual(parsed.expression,'neutral')
+        obj['claims']=[dict(kind=[],span='嗯',evidence_ids=['unknown'])]
+        self.assertFalse(parse_generation(json.dumps(obj),recover_claims=True,recover_metadata=True).claims_valid)
+        obj['learning']['privacy'].pop('ids');obj['learning']['extra']=[]
+        parsed=parse_generation(json.dumps(obj),recover_claims=True,recover_metadata=True)
+        self.assertEqual(parsed.learning,dict(privacy=privacy(),items=[]))
+        obj['learning']['privacy']['action']='forget_all'
+        with self.assertRaises(ValueError):
+            parsed=parse_generation(json.dumps(obj),recover_claims=True,recover_metadata=True)
+            proposals(parsed.learning,'普通聊天，没有遗忘授权')
+        obj.pop('learning')
+        with self.assertRaises(ValueError):parse_generation(json.dumps(obj),recover_claims=True,recover_metadata=True)
+
+
+class SourceClassification(unittest.IsolatedAsyncioTestCase):
+    async def test_independent_stance_can_reject_false_labels_and_keep_real_conditional_preferences(self):
+        from data.plugins.dafeiyu_dialogue.learning_check import check
+        human='设想另一个人生，我会经营旧书店；目前没有这项打算。';candidate=item(human)
+        hypothetical=assessment(human);hypothetical.update(stance='hypothetical',retention='unspecified')
+        call=AsyncMock(return_value=json.dumps(dict(privacy_authorized=True,assessments=[hypothetical])))
+        _,saved=await check(privacy(),[candidate],human,[],[],call);self.assertEqual(saved,[])
+        packet=json.loads(call.call_args.args[0]);self.assertEqual(set(packet['items'][0]),{'summary','condition','evidence'})
+        actual='以后讨论书时先说你的看法，我明确要书单再推荐。';candidate=item(actual)
+        call.return_value=json.dumps(dict(privacy_authorized=True,assessments=[assessment(actual)]))
+        _,saved=await check(privacy(),[candidate],actual,[],[],call)
+        self.assertEqual(saved,[candidate])
+
+    async def test_unexplained_approval_and_invented_source_are_rejected(self):
+        from data.plugins.dafeiyu_dialogue.learning_check import check
+        human='以后我倾诉时先听我说';candidate=item(human)
+        for reply in (dict(privacy_authorized=True,accepted=[0]),
+                dict(privacy_authorized=True,assessments=[assessment('不在原话的证据')])):
+            with self.assertRaises(ValueError):await check(privacy(),[candidate],human,[],[],AsyncMock(return_value=json.dumps(reply)))
+
+
 class LearnedLifecycle(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
@@ -162,7 +218,8 @@ class SingleGeneration(unittest.IsolatedAsyncioTestCase):
         async def model(**kwargs):
             if '只核对本轮学习提案' in kwargs.get('system_prompt',''):
                 packet=json.loads(kwargs['prompt'])
-                return NS(completion_text=json.dumps(dict(privacy_authorized=True,accepted=list(range(len(packet['items']))))))
+                return NS(completion_text=json.dumps(dict(privacy_authorized=True,
+                    assessments=[assessment(row['evidence'],index=i) for i,row in enumerate(packet['items'])])))
             raise AssertionError('Ordinary generation must not call an auxiliary model')
         self.context.get_using_provider_async=AsyncMock(return_value=NS(text_chat=AsyncMock(side_effect=model)))
         await self.run_hooks(e,req)
@@ -184,6 +241,20 @@ class SingleGeneration(unittest.IsolatedAsyncioTestCase):
         await self.plugin.commit_learning(e);await self.plugin.commit_learning(e)
         rows=self.plugin.learning_store().current(OWNER,ORIGIN)
         self.assertEqual(len(rows),1);self.assertEqual(rows[0]['condition'],proposal['condition'])
+
+    async def test_metadata_recovery_requires_enforced_review(self):
+        e,_=await self.ready('普通聊天')
+        call=AsyncMock(return_value=NS(completion_text='{"decision":"accept","issues":[],"revisions":[]}'))
+        self.context.get_using_provider_async.return_value=NS(text_chat=call)
+        obj=json.loads(envelope('听着呢。'));obj['focus']=['unknown']
+        response=NS(completion_text=json.dumps(obj),tools_call_name=[])
+        await self.plugin.review_response(e,response);call.assert_awaited_once()
+        self.assertEqual(response.completion_text,'听着呢。')
+        self.plugin.config['response_review']='audit'
+        e,_=await self.ready('普通聊天');response=NS(completion_text=json.dumps(obj),tools_call_name=[])
+        await self.plugin.review_response(e,response)
+        self.assertEqual(response.completion_text,UNAVAILABLE)
+        self.assertEqual(e.get_extra('dafeiyu_generation_failure_kind'),'review')
 
     async def test_bad_claim_never_becomes_native_text_or_learning(self):
         e,_=await self.ready('忙啥呢')
@@ -312,7 +383,8 @@ class SingleGeneration(unittest.IsolatedAsyncioTestCase):
         update=dict(old,summary='陶艺课已取消',evidence=e.message_str,status='cancelled',supersedes=eid,expected_version=1)
         async def model(**kwargs):
             if '只核对本轮学习提案' in kwargs.get('system_prompt',''):
-                return NS(completion_text='{"privacy_authorized":true,"accepted":[0]}')
+                return NS(completion_text=json.dumps(dict(privacy_authorized=True,
+                    assessments=[assessment(e.message_str,kind='event',status='cancelled')])))
             return NS(completion_text='{"decision":"accept","issues":[],"revisions":[]}')
         call=AsyncMock(side_effect=model)
         self.context.get_using_provider_async.return_value=NS(text_chat=call)
@@ -329,7 +401,8 @@ class SingleGeneration(unittest.IsolatedAsyncioTestCase):
         later.message_obj.message_id='later-course'
         async def fail_wording(**kwargs):
             if '只核对本轮学习提案' in kwargs.get('system_prompt',''):
-                return NS(completion_text='{"privacy_authorized":true,"accepted":[0]}')
+                return NS(completion_text=json.dumps(dict(privacy_authorized=True,
+                    assessments=[assessment(later.message_str,kind='event',status='planned')])))
             raise TimeoutError()
         self.context.get_using_provider_async.return_value=NS(text_chat=AsyncMock(side_effect=fail_wording))
         await self.run_hooks(later,fixture.ProviderRequest(prompt=later.message_str))
@@ -371,6 +444,27 @@ class SingleGeneration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.path.read_bytes(),before)
         artifact.write_text('changed',encoding='utf8')
         self.assertEqual((await self.plugin.own_thoughts())['reflections'],[])
+
+    async def test_format_failure_reconciles_existing_state_only_after_confirmed_delivery(self):
+        from dataclasses import replace
+        e,req=await self.ready('那次体验已经取消了')
+        store=self.plugin.learning_store();proposal=item('我约了明天去手作体验')
+        proposal.update(kind='event',summary='明天去手作体验',condition='',status='planned')
+        source=store.begin(replace(fixture.identity(),message_id='earlier-experience'),proposal['evidence'])
+        eid=store.commit(source,proposal['evidence'],[proposal],{},confirmed=True)[0]
+        await self.run_hooks(e,req)
+        call=AsyncMock(return_value=NS(completion_text=json.dumps({'updates':[dict(id=eid,summary='手作体验已取消',
+            status='cancelled',event_day='',evidence=e.message_str)]})))
+        self.context.get_using_provider_async.return_value=NS(text_chat=call)
+        obj=json.loads(envelope('嗯。'));obj['supersedes']=eid
+        response=NS(completion_text=json.dumps(obj),tools_call_name=[])
+        await self.plugin.review_response(e,response);self.assertEqual(response.completion_text,UNAVAILABLE)
+        await self.plugin.commit_learning(e);call.assert_not_awaited()
+        self.assertEqual(store.current(OWNER,ORIGIN)[0]['status'],'planned')
+        e.set_extra('dafeiyu_confirmed_delivery',[dict(kind='reply',text=UNAVAILABLE)])
+        await self.plugin.commit_learning(e);await self.plugin.commit_learning(e)
+        call.assert_awaited_once();self.assertEqual(store.current(OWNER,ORIGIN)[0]['status'],'cancelled')
+        self.assertEqual(store.current(OWNER,ORIGIN)[0]['evidence'],e.message_str)
 
     async def test_missing_main_event_updates_are_reconciled_once_per_three_confirmed_turns(self):
         from dataclasses import replace

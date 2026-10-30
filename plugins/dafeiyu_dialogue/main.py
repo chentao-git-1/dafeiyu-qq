@@ -378,9 +378,13 @@ class Dialogue(Star):
         if event.get_extra('dafeiyu_generation_final_text',None)==response.completion_text:return
         event.set_extra('dafeiyu_generation_valid',False)
         event.set_extra('dafeiyu_learning_valid',False)
+        stage='format'
         try:
-            generated = parse_generation(response.completion_text,recover_claims=True)
-            recover=not generated.claims_valid
+            generated = parse_generation(response.completion_text,recover_claims=True,recover_metadata=True)
+            recover=not generated.claims_valid or not generated.metadata_valid
+            event.set_extra('dafeiyu_generation_framing_recovered',generated.framing_recovered)
+            if generated.framing_recovered:self.review_stats['generation_framing_recovered']+=1
+            stage='source'
             if (self.feature('learning_v2') and event.get_extra('dafeiyu_context_epoch',None) is not None
                     and event.get_extra('dafeiyu_context_epoch')!=self.learning_store().context_epoch()):
                 raise ValueError('Conversation evidence was withdrawn')
@@ -413,6 +417,7 @@ class Dialogue(Star):
             try:validate_claim_sources(generated, offered, claim_sources(materials, tool_rows))
             except ValueError:recover=True
             human=self.natural().input_snapshot(event)['text']
+            stage='learning'
             candidates=generated.learning.get('items',[])
             if not isinstance(candidates,list) or len(candidates)>5:candidates=[]
             candidates=[i for i in candidates if isinstance(i,dict)
@@ -448,6 +453,7 @@ class Dialogue(Star):
                     raise ValueError('Privacy changed during source verification')
             pending = event.get_extra('dafeiyu_learning_source', None)
             if pending:
+                stage='privacy'
                 versions = event.get_extra('dafeiyu_learning_versions', {})
                 allowed=set(versions)|{r['id'] for r in materials['memory'] if r['owner']==turn.actor}
                 removed = await asyncio.to_thread(self.learning_store().apply_privacy, pending, privacy, allowed)
@@ -460,6 +466,7 @@ class Dialogue(Star):
                 if privacy['action']!='none':event.set_extra('dafeiyu_semantic_forgetting',True)
                 self.review_stats['privacy_removed'] += removed
             # High consequence factual claims retain semantic checking; ordinary turns use one generation.
+            stage='review'
             if recover and self.config.get('response_review','enforce')!='enforce':
                 raise ValueError('Metadata recovery requires enforced semantic review')
             if (recover or 'self' in generated.focus and 'fiction' not in generated.focus or 'action' in generated.focus
@@ -488,11 +495,14 @@ class Dialogue(Star):
             raise
         except Exception as error:
             self.review_stats['contract_failed'] += 1
+            self.review_stats['contract_failed_'+stage] += 1
+            event.set_extra('dafeiyu_generation_failure_kind',stage)
+            if stage=='format':event.set_extra('dafeiyu_learning_state_urgent',True)
             response.completion_text = UNAVAILABLE
             event.set_extra('dafeiyu_generation_final_text',UNAVAILABLE)
             if not event.get_extra('dafeiyu_learning_valid',False):event.set_extra('dafeiyu_learning_pending', [])
             event.set_extra('dafeiyu_dialogue_last_review', 'unavailable')
-            logger.warning('Dialogue generation unavailable: %s', type(error).__name__)
+            logger.warning('Dialogue generation unavailable (%s): %s',stage,type(error).__name__)
 
     async def forget_legacy(self,event,turn,privacy):
         action=privacy['action'];ids=None if action=='forget_all' else privacy['ids']
@@ -581,7 +591,7 @@ class Dialogue(Star):
             if source['id'] not in self.learning_seen:
                 self.learning_seen.append(source['id']);scope=(source['owner'],source['origin']);self.learning_ticks[scope]+=1
                 cadence=max(3,min(10,int(self.config.get('event_state_batch',3))))
-                if self.learning_ticks[scope]%cadence==0:
+                if self.learning_ticks[scope]%cadence==0 or event.get_extra('dafeiyu_learning_state_urgent',False):
                     current=await asyncio.to_thread(self.learning_store().current,source['owner'],source['origin'])
                     events=[r for r in current if r['kind']=='event' and r['status'] in ('planned','ongoing')
                         and not any(i['supersedes']==r['id'] and i['expected_version']==r['version'] for i in items)][:8]

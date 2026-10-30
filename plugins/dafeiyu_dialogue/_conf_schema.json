@@ -38,7 +38,7 @@
   },
   "event_state_batch": {
     "type": "int",
-    "description": "仅learning_v2启用且已确认回复：每3至10轮，对仍未完结的本人事项做一次小型语义状态核对；不创建新事项，计入后台调用",
+    "description": "仅learning_v2启用且已确认回复：每3至10轮核对未完结的本人事项；回复格式失败时可提前核对一次当前原话，不创建新事项，计入后台调用",
     "default": 3
   },
   "activity_policy_v2": {
