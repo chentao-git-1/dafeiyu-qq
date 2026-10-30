@@ -81,6 +81,7 @@ class LearningStore:
                 CREATE TABLE IF NOT EXISTS context_privacy_clock(id INTEGER PRIMARY KEY CHECK(id=1),epoch INTEGER);
                 INSERT OR IGNORE INTO context_privacy_clock VALUES(1,0);
                 CREATE TABLE IF NOT EXISTS context_epochs(origin TEXT PRIMARY KEY,epoch INTEGER);
+                CREATE TABLE IF NOT EXISTS privacy_barriers(platform TEXT PRIMARY KEY,at REAL);
             ''')
         self.path.chmod(0o600)
 
@@ -140,6 +141,7 @@ class LearningStore:
             row = db.execute('SELECT * FROM learning_sources WHERE id=?', (source['id'],)).fetchone()
             if not row or row['owner'] != source['owner']:
                 raise ValueError('Unknown privacy source')
+            if row['epoch']!=self._epoch(db,source['owner']):raise ValueError('Privacy source was superseded')
             if row['revoked']:
                 return 0
             epoch = self._epoch(db, source['owner']) + 1
@@ -149,6 +151,7 @@ class LearningStore:
                 return 0
             # Legacy native histories lack source lineage; invalidate their disposable AI context.
             db.execute('UPDATE context_privacy_clock SET epoch=epoch+1 WHERE id=1')
+            db.execute('INSERT OR REPLACE INTO privacy_barriers VALUES(?,?)',(source['origin'].split(':',1)[0],self.clock()))
             rows = db.execute('SELECT id,source_id FROM learned WHERE owner=?', (source['owner'],)).fetchall()
             ids = [r['id'] for r in rows if action == 'forget_all' or r['id'] in selected]
             for eid in ids:
@@ -225,11 +228,14 @@ class LearningStore:
         if not expected or len(expected)>50:raise ValueError('Select between 1 and 50 offered records')
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
+            platforms=set()
             for eid,version in expected.items():
-                row=db.execute('SELECT owner,version FROM learned WHERE id=?',(eid,)).fetchone()
+                row=db.execute('SELECT owner,version,origin FROM learned WHERE id=?',(eid,)).fetchone()
                 if not row or row['owner']!=owner or row['version']!=version:raise ValueError('Owned record changed')
+                platforms.add(row['origin'].split(':',1)[0])
             db.execute('INSERT OR REPLACE INTO learning_meta VALUES(?,?)',(owner,self._epoch(db,owner)+1))
             db.execute('UPDATE context_privacy_clock SET epoch=epoch+1 WHERE id=1')
+            for platform in platforms:db.execute('INSERT OR REPLACE INTO privacy_barriers VALUES(?,?)',(platform,self.clock()))
             for eid in expected:
                 db.execute('DELETE FROM learned_versions WHERE entity_id=?',(eid,))
                 db.execute('DELETE FROM learned WHERE id=?',(eid,))

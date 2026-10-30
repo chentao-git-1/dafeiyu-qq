@@ -20,6 +20,10 @@ class InitiativeEngine:
     def active(self,name):
         meta=self.context.get_registered_star(name)
         return getattr(meta,'star_cls',None) if meta and meta.activated else None
+
+    def semantic_controller(self):
+        controller=self.active('dafeiyu_dialogue')
+        return controller if controller and controller.owner_policy_enabled('initiative_policy_v2') else None
     def allowed(self):
         cfg=self.context.get_config(SESSION)['platform_settings']
         if SESSION not in {str(x) for x in cfg.get('id_whitelist',[])}:return False
@@ -53,6 +57,16 @@ class InitiativeEngine:
                 if not self.store.used(source['id']):yield source
         natural=self.active('dafeiyu_natural_chat')
         if not natural:return
+        controller=self.semantic_controller()
+        if controller and controller.feature('learning_v2'):
+            for row in controller.learning_store().current(OWNER,SESSION):
+                if row['kind']!='event' or row['status'] not in ('planned','ongoing') or not row['event_day']:continue
+                try:day=dt.date.fromisoformat(row['event_day'])
+                except ValueError:continue
+                if day>=today or not 0<=now-row['updated']<=48*3600:continue
+                source={'id':row['id'],'kind':'care','learned_id':row['id'],'version':row['version'],
+                    'topic':row['summary'],'day':row['event_day'],'evidence':row['evidence']}
+                if not self.store.used(source['id']) and await self.care_allowed(source['topic']):yield source
         for row in natural.store.search(owner=OWNER,limit=20):
             if row['kind']!='event' or row['phase'] not in ('planned','ongoing') or not row['event_day']:continue
             try:day=dt.date.fromisoformat(row['event_day'])
@@ -63,6 +77,12 @@ class InitiativeEngine:
             if not self.store.used(source['id']) and await self.care_allowed(source['topic']):yield source
     async def source_valid(self,source):
         if source['kind']=='care':
+            if source.get('learned_id'):
+                controller=self.semantic_controller()
+                rows=controller.learning_store().current(OWNER,SESSION) if controller else []
+                row=next((r for r in rows if r['id']==source['learned_id']),None)
+                return bool(row and row['version']==source['version'] and row['status'] in ('planned','ongoing')
+                    and await self.care_allowed(source['topic']))
             natural=self.active('dafeiyu_natural_chat')
             row=natural.store.get(source['episode_id']) if natural else None
             return bool(row and row['owner']==OWNER and row['phase'] in ('planned','ongoing') and row['updated']==source['updated']
@@ -94,6 +114,7 @@ class InitiativeEngine:
         elif source['topic'] not in body:return False
         return grounded_details(body,source,today)
     async def tick(self):
+        if self.semantic_controller():return await self.tick_semantic()
         if self.lock.locked():self.store.diagnose('skip','generation_in_progress');return
         async with self.lock:
             self.store.diagnose('check')
@@ -128,5 +149,50 @@ class InitiativeEngine:
                 self.store.finish(day,slot,'unknown','interrupted');raise
             except Exception as error:
                 self.store.finish(day,slot,'failed',type(error).__name__)
+                self.store.diagnose('error',type(error).__name__)
+            finally:self.current=None
+
+    async def tick_semantic(self):
+        if self.lock.locked():return
+        async with self.lock:
+            self.store.diagnose('check');due=self.store.due()
+            if not due or not self.store.eligible() or not self.allowed():return
+            day,slot=due;epoch=self.store.epoch();controller=self.semantic_controller()
+            if OWNER in getattr(controller,'learning_state_inflight',()):return
+            candidates=[]
+            async for candidate in self.candidates():
+                candidates.append(candidate)
+                if len(candidates)>=12:break
+            if not candidates:return
+            if not self.store.claim_evaluation(day,slot,epoch):return
+            self.current=(day,slot)
+            try:
+                from .spontaneous_policy import choose_initiative
+                from data.plugins.dafeiyu_dialogue.contracts import TurnContext
+                turn=TurnContext(OWNER,SESSION,'dafeiyu-qq','initiative:'+day+':'+str(slot),self.clock())
+                snapshot=await asyncio.to_thread(controller.catalog().read,turn,self.clock())
+                recent=[{'id':r.id,'text':r.text,'recorded_at':r.recorded_at} for r in snapshot.items
+                    if r.owner==OWNER and r.origin==SESSION and r.kind=='exchange'][:6]
+                provider=await self.context.get_using_provider_async(SESSION)
+                if provider is None:raise RuntimeError('Text provider unavailable')
+                provider=controller.metered_provider(provider,'initiative')
+                source,body=await choose_initiative(provider,candidates,recent,self.store.recent_sent(),day)
+                self.store.finish_evaluation(day,slot,'selected' if source else 'no_action')
+                if not source:return
+                async with self.plugin.lock:
+                    if (not self.allowed() or not await self.source_valid(source)
+                            or not self.store.reserve(day,slot,source['id'],source['kind'],epoch)
+                            or not self.store.begin_send(day,slot,epoch,body)):return
+                    if source['kind']=='care':
+                        self.plugin.state.setdefault('care_attempt_days',{})[OWNER]=day;self.plugin.save()
+                try:sent=await asyncio.wait_for(self.context.send_message(SESSION,MessageChain(chain=[Plain(body)])),timeout=40)
+                except Exception as error:
+                    self.store.finish(day,slot,'unknown',type(error).__name__);return
+                self.store.finish(day,slot,'sent' if sent else 'unknown','' if sent else 'send_not_confirmed')
+            except asyncio.CancelledError:
+                self.store.finish_evaluation(day,slot,'unknown')
+                self.store.finish(day,slot,'unknown','interrupted');raise
+            except Exception as error:
+                self.store.finish_evaluation(day,slot,'failed');self.store.finish(day,slot,'failed',type(error).__name__)
                 self.store.diagnose('error',type(error).__name__)
             finally:self.current=None

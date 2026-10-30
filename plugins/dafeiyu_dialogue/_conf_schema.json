@@ -36,6 +36,11 @@
     "description": "仅active会话维护可重建、有版本的来源索引；仅保存摘要与词项散列，更新与遗忘同步核对原库",
     "default": true
   },
+  "event_state_batch": {
+    "type": "int",
+    "description": "仅learning_v2启用且已确认回复：每3至10轮，对仍未完结的本人事项做一次小型语义状态核对；不创建新事项，计入后台调用",
+    "default": 3
+  },
   "activity_policy_v2": {
     "type": "bool",
     "description": "仅主人active灰度：按持续项目和来源选择自主活动，允许不行动；沿用每天一次与费用边界",

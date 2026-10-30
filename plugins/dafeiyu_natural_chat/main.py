@@ -75,12 +75,10 @@ class NaturalChat(Star):
             db.executemany('DELETE FROM episodes WHERE id=?',[(n,) for n in chosen])
             db.executemany('DELETE FROM offers WHERE id=?',[(n,) for n in chosen])
         # Old caches cannot identify every derived reply, so purge the owner's container.
-        with self.exchange_store().connect() as db:
-            db.execute('PRAGMA secure_delete=ON')
-            exchanges=db.execute('DELETE FROM exchanges').rowcount
+        exchanges=self.exchange_store().forget_ids(actor,origin,None)
         with self.interaction_store().connect() as db:
             db.execute('PRAGMA secure_delete=ON')
-            db.execute('DELETE FROM replies')
+            db.execute('DELETE FROM replies WHERE qq=?',(str(actor),))
         self.fact_store().forget(actor,None)
         if ids is None:self.interaction_store().reset(actor)
         self.inputs.pop((str(actor),origin),None)
@@ -486,8 +484,10 @@ class NaturalChat(Star):
         text=reply_text(receipts)
         if not text:return
         mid = str(getattr(event.message_obj, 'message_id', '') or '')
-        self.interaction_store().record_reply(uid, event.unified_msg_origin, mid, text)
-        self.exchange_store().record(uid,event.unified_msg_origin,mid,self.input_snapshot(event)['text'],text,append=True)
+        raw=getattr(event.message_obj,'raw_message',{}) or {};stamp=raw.get('time')
+        observed=stamp if type(stamp) in (int,float) and 0<stamp<=time.time()+300 else None
+        self.interaction_store().record_reply(uid, event.unified_msg_origin, mid, text,observed_at=observed)
+        self.exchange_store().record(uid,event.unified_msg_origin,mid,self.input_snapshot(event)['text'],text,append=True,observed_at=observed)
         event.set_extra('jingjing_receipts_seen',len(receipts))
 
     @filter.on_llm_tool_respond(priority=-sys.maxsize)

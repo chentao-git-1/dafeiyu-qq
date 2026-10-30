@@ -5,7 +5,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
-from .interaction import SENSITIVE
+from .interaction import SENSITIVE,privacy_time
 from .state import forbidden
 from .retrieval import rank, TZ
 import datetime
@@ -69,7 +69,8 @@ class ExchangeStore:
     def cleanup_status(self):
         with self.connect() as db:row=db.execute('SELECT at,removed FROM exchange_cleanup WHERE id=1').fetchone()
         return {'last_cleanup_at':row['at'] if row else None,'last_cleanup_removed':row['removed'] if row else 0}
-    def record(self,qq,origin,mid,human,reply,append=False):
+    def record(self,qq,origin,mid,human,reply,append=False,observed_at=None):
+        if observed_at is not None and observed_at<privacy_time(self.path,origin):return False
         self.prune()
         if (not mid or not human.strip() or not reply.strip() or len(human)>1200 or len(reply)>1200
                 or SENSITIVE.search(human+'\n'+reply) or '```' in human+reply or forbidden(human)
@@ -94,7 +95,7 @@ class ExchangeStore:
         self.prune()
         with self.connect() as db:
             rows=db.execute('SELECT * FROM exchanges WHERE qq=? AND origin=? AND at>=? ORDER BY at DESC LIMIT 100',
-                (str(qq),str(origin),self.clock()-30*86400)).fetchall()
+                (str(qq),str(origin),max(self.clock()-30*86400,privacy_time(self.path,origin)))).fetchall()
         return rank(rows,query,self.clock(),terms,SPECIAL,exclude,diagnostics)
     def forget(self,qq,origin,query='',latest=False):
         with self.connect() as db:

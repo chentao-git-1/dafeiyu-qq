@@ -19,7 +19,8 @@ class InitiativeStore:
                 CREATE TABLE IF NOT EXISTS days(day TEXT PRIMARY KEY,morning REAL,evening REAL);
                 CREATE TABLE IF NOT EXISTS attempts(day TEXT,slot INTEGER,source TEXT UNIQUE,kind TEXT,
                     status TEXT,at REAL,body TEXT,error TEXT,PRIMARY KEY(day,slot));
-                CREATE TABLE IF NOT EXISTS incoming(mid TEXT PRIMARY KEY,at REAL);''')
+                CREATE TABLE IF NOT EXISTS incoming(mid TEXT PRIMARY KEY,at REAL);
+                CREATE TABLE IF NOT EXISTS evaluations(day TEXT,slot INTEGER,epoch INTEGER,status TEXT,at REAL,PRIMARY KEY(day,slot));''')
             for key,value in {'activated_at':clock(),'last_activity':clock(),'last_push':0,'pending_at':0,'epoch':0}.items():
                 db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)',(key,json.dumps(value)))
             db.execute("UPDATE attempts SET status='unknown',error='interrupted' WHERE status IN ('generating','sending')")
@@ -83,6 +84,22 @@ class InitiativeStore:
             try:db.execute('INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?)',(day,slot,source,kind,'generating',now,None,None))
             except sqlite3.IntegrityError:return False
         return True
+
+    def claim_evaluation(self,day,slot,epoch):
+        now=self.clock()
+        if slot not in (0,1) or day!=self.day(now) or now>=self.edges(day,slot)[1]:return False
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if self.get(db,'epoch')!=epoch or not self._eligible(db,now):return False
+            return db.execute('INSERT OR IGNORE INTO evaluations VALUES(?,?,?,?,?)',
+                (day,slot,epoch,'started',now)).rowcount==1
+
+    def finish_evaluation(self,day,slot,status):
+        with self.connect() as db:db.execute('UPDATE evaluations SET status=? WHERE day=? AND slot=?',(status,day,slot))
+
+    def recent_sent(self):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute("SELECT source,body,at FROM attempts WHERE status='sent' ORDER BY at DESC LIMIT 4")]
     def begin_send(self,day,slot,epoch,body):
         now=self.clock()
         with self.connect() as db:

@@ -21,7 +21,7 @@ from dialogue_scenarios import scenarios
 
 
 async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda value:None,
-                   variants=('baseline','candidate'), split='dev'):
+                   variants=('baseline','candidate'), split='dev',candidate_config=None):
     import data.plugins
     data.plugins.__path__=[str(ROOT/'plugins'),*list(data.plugins.__path__)]
     natural=importlib.import_module('data.plugins.dafeiyu_natural_chat.main')
@@ -32,6 +32,7 @@ async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda
     from astrbot.core.platform.message_type import MessageType
     from astrbot.core.platform.platform_metadata import PlatformMetadata
     from astrbot.core.message.components import Plain
+    from astrbot.core.agent.message import Message
     owner,bot='7000000001','7000000002'
     seed=(ROOT/'persona/live.md').read_text(encoding='utf-8')
     if split not in ('dev','hidden'):raise ValueError('Invalid scenario split')
@@ -60,10 +61,12 @@ async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda
                     n=natural.NaturalChat(context)
                 context.get_registered_star=lambda name:NS(activated=True,star_cls=n) if name=='dafeiyu_natural_chat' else None
                 with patch.object(dialogue,'get_astrbot_data_path',return_value=tmp):
-                    d=dialogue.Dialogue(context,{'mode':'active' if variant=='candidate' else 'off','active_private_users':[owner]})
+                    d=dialogue.Dialogue(context,{'mode':'active' if variant=='candidate' else 'off','active_private_users':[owner],
+                        **(candidate_config or {'generation_contract':True,'learning_v2':True,'retrieval_index_v2':True})})
                 history=[];turns=[]
                 result['variants'][variant]=turns
                 for index,human in enumerate(case['turns']):
+                    turn_started=time.perf_counter()
                     auxiliary_start=len(auxiliary)
                     msg=AstrBotMessage();msg.type=MessageType.FRIEND_MESSAGE;msg.self_id=bot;msg.session_id=owner
                     msg.group_id='';msg.message_id=variant+str(index);msg.sender=MessageMember(owner,'爸爸')
@@ -78,13 +81,24 @@ async def evaluate(call, case_ids, progress=lambda value:None, checkpoint=lambda
                     await n.conversational_response(e,response);await n.ground_current_facts(e,response)
                     await d.review_response(e,response)
                     delivered=response.completion_text
+                    native=NS(messages=[Message.model_validate(m) for m in [*req.contexts,
+                        {'role':'user','content':human},{'role':'assistant','content':raw['text']} ]])
+                    await n.save_grounded_reply(e,native,response)
+                    await d.save_native_context(e,native,response)
                     # Simulated confirmation writes only this variant's temporary exchange DB.
                     e.set_extra('dafeiyu_confirmed_delivery',[{'kind':'reply','text':delivered,'at':time.time()}])
                     await n.remember_delivered_reply(e)
-                    history.extend([{'role':'user','content':human},{'role':'assistant','content':delivered}])
+                    await d.commit_learning(e)
+                    history=[m.model_dump() for m in native.messages]
                     turns.append({'human':human,'raw':raw['text'],'delivered':delivered,
                         'elapsed_ms':raw.get('elapsed_ms'),'usage':raw.get('usage'),
+                        'turn_wall_ms':round((time.perf_counter()-turn_started)*1000,2),
                         'review':e.get_extra('dafeiyu_dialogue_last_review','inactive'),
+                        'learning_pending':e.get_extra('dafeiyu_learning_pending',[]),
+                        'learning_counts':d._learning.counts() if d._learning is not None else None,
+                        'expression':e.get_extra('jingjing_expression_intent',None),
+                        'focus':e.get_extra('dafeiyu_semantic_focus',[]),
+                        'privacy_action':e.get_extra('dafeiyu_privacy_action','none'),
                         'auxiliary':copy.deepcopy(auxiliary[auxiliary_start:]),
                         'postprocessor_changed':raw['text']!=delivered,'prompt_characters':len(req.system_prompt)})
                     progress({'case':key,'variant':variant,'turn':index+1})

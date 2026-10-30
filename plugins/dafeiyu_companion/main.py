@@ -50,7 +50,7 @@ def social_can_notify(uid):
         return True
 
 
-@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.3.0')
+@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.4.0')
 class Companion(Star):
     def __init__(self,context:Context):
         super().__init__(context)

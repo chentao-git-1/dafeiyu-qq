@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 
 from .contracts import CatalogSnapshot, MemoryItem
+from .privacy_cache import privacy_cutoff
 
 
 class MemoryCatalog:
@@ -25,6 +26,7 @@ class MemoryCatalog:
 
     def read(self, turn, now):
         items, unavailable = [], []
+        cached_after=privacy_cutoff(self.root/'plugin_data/dafeiyu_dialogue/learning.db',turn.origin)
         sources = (
             ('long_term', self.long_term_path,
              "SELECT * FROM memories WHERE merged_into IS NULL AND visibility='shared' "
@@ -34,7 +36,7 @@ class MemoryCatalog:
              'SELECT * FROM episodes ORDER BY updated DESC LIMIT 200', ()),
             ('exchanges', self.root / 'plugin_data/dafeiyu_natural_chat/interaction.db',
              'SELECT * FROM exchanges WHERE qq=? AND origin=? AND at BETWEEN ? AND ? '
-             'ORDER BY at DESC LIMIT 100', (turn.actor, turn.origin, now - 30 * 86400, now)),
+             'ORDER BY at DESC LIMIT 100', (turn.actor, turn.origin, max(now-30*86400,cached_after), now)),
             ('learned', self.root / 'plugin_data/dafeiyu_dialogue/learning.db',
              "SELECT l.* FROM learned l JOIN learning_sources s ON s.id=l.source_id "
              "WHERE l.status='current' AND s.revoked=0 AND "

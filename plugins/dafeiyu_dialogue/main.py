@@ -43,6 +43,7 @@ class Dialogue(Star):
         self._learning = None
         self._index = None
         self.provider_contracts=ProviderContracts()
+        self.learning_ticks=Counter();self.learning_seen=deque(maxlen=512);self.learning_state_inflight=set()
         context.register_web_api('/dafeiyu_dialogue/status', self.status, ['GET'], '统一对话资料数值状态（无正文）')
 
     def natural(self):
@@ -212,7 +213,7 @@ class Dialogue(Star):
                             ordered=[r for r in rows if r['kind']=='preference'][:8]+[r for r in rows if r['kind']!='preference'][:8]
                             learned=[];used=0
                             for row in ordered:
-                                projection={k:row[k] for k in ('id','owner','origin','kind','version','summary','condition','status','event_day','updated')}
+                                projection={k:row[k] for k in ('id','owner','origin','kind','version','summary','condition','evidence','status','event_day','updated')}
                                 size=len(json.dumps(projection,ensure_ascii=False))
                                 if used+size<=3600:learned.append(projection);used+=size
                             event.set_extra('dafeiyu_learning_source', pending)
@@ -374,6 +375,9 @@ class Dialogue(Star):
                 response.completion_text = UNAVAILABLE
 
     async def finalize_generation(self, event, response):
+        if event.get_extra('dafeiyu_generation_final_text',None)==response.completion_text:return
+        event.set_extra('dafeiyu_generation_valid',False)
+        event.set_extra('dafeiyu_learning_valid',False)
         try:
             generated = parse_generation(response.completion_text,recover_claims=True)
             recover=not generated.claims_valid
@@ -409,12 +413,39 @@ class Dialogue(Star):
             try:validate_claim_sources(generated, offered, claim_sources(materials, tool_rows))
             except ValueError:recover=True
             human=self.natural().input_snapshot(event)['text']
+            candidates=generated.learning.get('items',[])
+            if not isinstance(candidates,list) or len(candidates)>5:candidates=[]
+            candidates=[i for i in candidates if isinstance(i,dict)
+                and (i.get('subject'),i.get('modality'),i.get('retention'))==('speaker','direct','persistent')]
             try:privacy,items=proposals(generated.learning,human)
             except ValueError:
                 privacy,items=proposals({'privacy':generated.learning['privacy'],'items':[]},human)
                 recover=True
                 self.review_stats['learning_proposals_rejected']+=1
                 event.get_extra('dafeiyu_dialogue_evidence',{})['learning_proposals_rejected']=True
+            if not self.feature('learning_v2') or event.get_extra('dafeiyu_learning_source',None) is None:
+                if candidates or privacy['action']!='none':
+                    recover=True;event.get_extra('dafeiyu_dialogue_evidence',{})['learning_proposals_rejected']=True
+                privacy=dict(action='none',evidence='',ids=[],subject='speaker',modality='direct');items=[];candidates=[]
+            if candidates or privacy['action']!='none':
+                from .learning_check import check
+                from data.plugins.dafeiyu_natural_chat.main import content_text
+                old_privacy,old_items=privacy,candidates
+                history=[content_text(m.get('content')) for m in event.get_extra('dafeiyu_dialogue_history',[])
+                    if m.get('role')=='user'][-2:]
+                try:
+                    privacy,items=await check(privacy,candidates,human,history,materials.get('learned_context',[]),
+                        lambda prompt,policy:self.provider_call(event,prompt,policy,'learning_check'))
+                except Exception as error:
+                    privacy=dict(action='none',evidence='',ids=[],subject='speaker',modality='direct');items=[]
+                    self.review_stats['learning_check_failed']+=1
+                    logger.warning('Learning source check unavailable: %s',type(error).__name__)
+                if privacy!=old_privacy or len(items)!=len(old_items):
+                    recover=True
+                    event.get_extra('dafeiyu_dialogue_evidence',{})['learning_proposals_rejected']=True
+                    if privacy!=old_privacy:event.get_extra('dafeiyu_dialogue_evidence',{})['learning_control_rejected']=True
+                if event.get_extra('dafeiyu_context_epoch',None)!=await asyncio.to_thread(self.learning_store().context_epoch):
+                    raise ValueError('Privacy changed during source verification')
             pending = event.get_extra('dafeiyu_learning_source', None)
             if pending:
                 versions = event.get_extra('dafeiyu_learning_versions', {})
@@ -425,6 +456,7 @@ class Dialogue(Star):
                     event.set_extra('dafeiyu_privacy_receipt',dict(legacy,learned=removed))
                     event.set_extra('dafeiyu_privacy_action',privacy['action'])
                 event.set_extra('dafeiyu_learning_pending', items if privacy['action'] == 'none' else [])
+                event.set_extra('dafeiyu_learning_valid',privacy['action']=='none' and bool(items))
                 if privacy['action']!='none':event.set_extra('dafeiyu_semantic_forgetting',True)
                 self.review_stats['privacy_removed'] += removed
             # High consequence factual claims retain semantic checking; ordinary turns use one generation.
@@ -441,6 +473,7 @@ class Dialogue(Star):
             sent=list(dict.fromkeys(r['text'] for r in confirmed if r.get('kind')=='reply' and r.get('text')))
             if sent:body='\n'.join(sent)
             response.completion_text = body
+            event.set_extra('dafeiyu_generation_final_text',body)
             event.set_extra('dafeiyu_generation_valid', True)
             event.set_extra('dafeiyu_dialogue_last_review', 'contract')
             event.set_extra('dafeiyu_semantic_focus',list(generated.focus))
@@ -456,7 +489,8 @@ class Dialogue(Star):
         except Exception as error:
             self.review_stats['contract_failed'] += 1
             response.completion_text = UNAVAILABLE
-            event.set_extra('dafeiyu_learning_pending', [])
+            event.set_extra('dafeiyu_generation_final_text',UNAVAILABLE)
+            if not event.get_extra('dafeiyu_learning_valid',False):event.set_extra('dafeiyu_learning_pending', [])
             event.set_extra('dafeiyu_dialogue_last_review', 'unavailable')
             logger.warning('Dialogue generation unavailable: %s', type(error).__name__)
 
@@ -532,19 +566,44 @@ class Dialogue(Star):
 
     @filter.after_message_sent(priority=-sys.maxsize + 1)
     async def commit_learning(self, event):
-        if not event.get_extra('dafeiyu_generation_valid', False) or not self.feature('learning_v2'):
+        if (not self.feature('learning_v2') or not event.get_extra(ACTIVE_KEY,False)
+                or event.get_extra('dafeiyu_generation_final_text',None) is None):
             return
         source = event.get_extra('dafeiyu_learning_source', None)
         items = event.get_extra('dafeiyu_learning_pending', [])
         receipts = event.get_extra('dafeiyu_confirmed_delivery', [])
-        if not source or not items or not any(r.get('kind') == 'reply' and r.get('text') for r in receipts):
+        if not source or not any(r.get('kind') == 'reply' and r.get('text') for r in receipts):
             return
         try:
             if event.get_extra('dafeiyu_semantic_forgetting',False):return
             if event.get_extra('dafeiyu_context_epoch',None)!=await asyncio.to_thread(self.learning_store().context_epoch):return
+            versions=dict(event.get_extra('dafeiyu_learning_versions',{}))
+            if source['id'] not in self.learning_seen:
+                self.learning_seen.append(source['id']);scope=(source['owner'],source['origin']);self.learning_ticks[scope]+=1
+                cadence=max(3,min(10,int(self.config.get('event_state_batch',3))))
+                if self.learning_ticks[scope]%cadence==0:
+                    current=await asyncio.to_thread(self.learning_store().current,source['owner'],source['origin'])
+                    events=[r for r in current if r['kind']=='event' and r['status'] in ('planned','ongoing')
+                        and not any(i['supersedes']==r['id'] and i['expected_version']==r['version'] for i in items)][:8]
+                    if events:
+                        from .event_state import updates
+                        self.learning_state_inflight.add(source['owner'])
+                        try:
+                            from data.plugins.dafeiyu_natural_chat.main import content_text
+                            history=[content_text(m.get('content')) for m in event.get_extra('dafeiyu_dialogue_history',[])
+                                if m.get('role')=='user'][-2:]
+                            extra=await updates(events,self.natural().input_snapshot(event)['text'],history,
+                                lambda prompt,policy:self.provider_call(event,prompt,policy,'learning_state'))
+                            versions.update({r['id']:r['version'] for r in events})
+                            items=[*items,*extra][:5]
+                        except Exception as error:
+                            self.review_stats['learning_state_failed']+=1
+                            logger.warning('Event state batch unavailable: %s',type(error).__name__)
+                        finally:self.learning_state_inflight.discard(source['owner'])
+            if event.get_extra('dafeiyu_context_epoch',None)!=await asyncio.to_thread(self.learning_store().context_epoch):return
             saved = await asyncio.to_thread(self.learning_store().commit, source,
                 self.natural().input_snapshot(event)['text'], items,
-                event.get_extra('dafeiyu_learning_versions', {}), confirmed=True)
+                versions, confirmed=True)
             self.review_stats['learned_entities'] += len(saved)
         except Exception as error:
             self.review_stats['learning_failed'] += 1
@@ -679,7 +738,7 @@ class Dialogue(Star):
             'retained_samples': len(self.samples), 'samples': list(self.samples)[-20:], 'errors': self.errors,
             'response_review': self.config.get('response_review', 'enforce'), 'review_statistics': dict(self.review_stats),
             'contains_chat_content': False,
-            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative')),
+            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative','learning_state')),
             'extra_qq_sends': 0,
             'source_databases_read_only': self.config.get('mode', 'shadow') != 'active',
             'learning_created': self._learning is not None,

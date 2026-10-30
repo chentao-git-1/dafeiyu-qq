@@ -1,5 +1,7 @@
 """Trusted relationship cues and task-local speech style selection."""
 from contextvars import ContextVar
+import hashlib
+import json
 
 SPEECH_CONTEXT = ContextVar('jingjing_speech_context', default=None)
 FAMILY = {'7000000001': ('dad', '爸爸'), '7000000011': ('family', '猛叔叔'),
@@ -46,6 +48,18 @@ def speech_plan(text, context=None):
         relation = '本次对熟悉的朋友说话，亲切放松，可以有自然笑意，保持朋友之间的分寸。'
     else:
         relation = '本次对普通朋友说话，自然友善、清楚柔和，减少撒娇，不使用过分亲密的腔调。'
+    if context.get('semantic_generation'):
+        spec=context.get('expression') or {}
+        actual=hashlib.sha256(json.dumps({'text':text},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+        mood=spec.get('intent','neutral') if spec.get('text_hash')==actual else 'neutral'
+        deliveries={
+            'chat':'自然放松，语速接近日常聊天，轻重和停顿随内容变化。',
+            'comfort':'轻柔平稳，语速稍慢，停顿舒缓，不强装开心。',
+            'explain':'吐字清楚，语速适中，按句意停顿，温和认真。',
+            'happy':'轻快明亮，带自然笑意，不过分夸张。',
+            'neutral':'平稳自然地朗读最终文字，不额外添加情绪或话语。'}
+        if mood not in deliveries:mood='neutral'
+        return {'mood':mood,'relationship':profile['role'],'instruction':relation+deliveries[mood]}
     # Use only fixed style strings; incoming text never becomes an instruction.
     support = ('难过', '难受', '不开心', '心情不好', '好累', '压力大', '失落', '辛苦', '慢慢来', '歇一会', '不用勉强', '别着急')
     explain = ('为什么', '怎么做', '如何', '解释', '步骤', '设置', '教程', '操作', '原因是', '具体来说', '首先')
