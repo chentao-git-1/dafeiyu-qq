@@ -240,7 +240,7 @@ class DafeiyuRuntime(Star):
                 "progress_after_seconds": self.replies.progress_after,
                 "send_timeout_seconds": self.replies.send_timeout,
                 "progress_notice_cooldown_seconds": self.replies.progress_cooldown,
-                "version": "0.3.3",
+                "version": "0.3.4",
                 "outbound_history": self.outbound.status(),
                 "session_wait_diagnostics": session_lock_manager.acquire_lock is getattr(self, 'session_lock_wrapper', None),
                 "reply_diagnostics": {'enabled': True, 'retained_turns': self.diagnostics.status()['retained_turns'], 'contains_chat_content': False},
@@ -314,6 +314,8 @@ class DafeiyuRuntime(Star):
         row = rows[0]
         when = datetime.datetime.fromtimestamp(row['at'],datetime.timezone(datetime.timedelta(hours=8))).strftime('%m-%d %H:%M')
         lines = ['最近一轮（北京时间{}，{}）：{:.2f}秒，结果：{}'.format(when,'群聊' if row['scope']=='group' else '私聊',row['total_ms'] / 1000,row['outcome'])]
+        content_labels={'accepted':'已通过内容检查','recovered':'经结构恢复后通过','unavailable':'生成或核对失败，已使用兜底','untracked':'旧记录未统计内容检查'}
+        lines.append('内容：'+content_labels.get(row.get('content_status'),'未统计')+('；阶段：'+row['generation_failure'] if row.get('generation_failure') else ''))
         labels = {'preparation':'准备', 'session_wait':'会话排队', 'first_response':'模型首个完整响应', 'history':'聊天记录', 'memory':'片段回忆', 'schedule':'日程', 'agent':'主模型与工具', 'tools':'工具', 'vision':'图片识别', 'tts':'语音合成', 'send':'发送'}
         lines.append('；'.join('{}{:.2f}秒'.format(labels[k], v / 1000) for k, v in row['phases_ms'].items()))
         for source, label in (('main','主模型'), ('vision','图片识别')):

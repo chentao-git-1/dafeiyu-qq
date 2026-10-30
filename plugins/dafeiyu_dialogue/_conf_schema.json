@@ -1,13 +1,13 @@
 {
   "mode": {
     "type": "string",
-    "description": "off关闭、shadow只读观察、active启用指定私聊；推广须通过阶段验收",
+    "description": "off关闭、shadow只读观察、active按所选范围启用；仍受原有准入限制",
     "default": "shadow",
     "options": ["off", "shadow", "active"]
   },
   "active_private_users": {
     "type": "list",
-    "description": "新路径的私聊QQ列表；还须通过原有真实身份和白名单校验，群聊不启用",
+    "description": "显式选择的新路径私聊QQ列表；还须通过原有真实身份和白名单校验",
     "default": []
   },
   "memory_characters": {
@@ -32,13 +32,13 @@
   },
   "response_review": {
     "type": "string",
-    "description": "仅active指定私聊生效：enforce核对，audit只观察，off仅供离线对照。每轮最多两次核对；修订才追加一次独立事实检查，最多四次辅助请求，失败不发草稿。shadow不调用模型。",
+    "description": "active会话：enforce核对，audit只观察，off仅供离线对照。最多两次逻辑核对，修订追加独立检查；结构恢复全轮合计至多一次，核对与验证沿用12秒/8秒预算，主格式恢复最多10秒。最终失败不发草稿。shadow不调用模型。",
     "default": "enforce",
     "options": ["enforce", "audit", "off"]
   },
   "generation_contract": {
     "type": "bool",
-    "description": "active私聊使用单次主生成，统一回复、证据引用、学习候选和语音意图；关闭仅供旧版离线对照",
+    "description": "active会话通常使用一次主生成；结构失败可有界恢复一次，统一回复、证据引用、学习候选和语音意图",
     "default": true
   },
   "learning_v2": {

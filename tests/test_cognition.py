@@ -458,6 +458,7 @@ class SingleGeneration(unittest.IsolatedAsyncioTestCase):
         self.context.get_using_provider_async.return_value=NS(text_chat=call)
         obj=json.loads(envelope('嗯。'));obj['supersedes']=eid
         response=NS(completion_text=json.dumps(obj),tools_call_name=[])
+        e.set_extra('dafeiyu_recovery_attempts',1)  # Exercise state reconciliation after recovery is exhausted.
         await self.plugin.review_response(e,response);self.assertEqual(response.completion_text,UNAVAILABLE)
         await self.plugin.commit_learning(e);call.assert_not_awaited()
         self.assertEqual(store.current(OWNER,ORIGIN)[0]['status'],'planned')

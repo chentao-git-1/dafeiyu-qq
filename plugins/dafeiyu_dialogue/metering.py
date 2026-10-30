@@ -14,7 +14,7 @@ class MeteredProvider:
         started=time.perf_counter();token=None
         if self.structured:
             kwargs['system_prompt']=str(kwargs.get('system_prompt') or '')+'\n'+STRUCTURED_MARKER
-            kwargs['request_max_retries']=0
+            kwargs['request_max_retries']=1
             token=STRUCTURED.set(True)
         try:
             response=await self.provider.text_chat(**kwargs)

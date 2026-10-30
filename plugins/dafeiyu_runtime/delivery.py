@@ -9,9 +9,12 @@ def receipts(event):
     return event.get_extra(RECEIPTS_KEY, []) or []
 
 
-def append_receipt(event, text, kind='reply'):
+def append_receipt(event, text, kind='reply',media_types=()):
     confirmed = list(receipts(event))
-    confirmed.append({'kind': kind, 'text': text, 'at': time.time()})
+    row={'kind': kind, 'text': text, 'at': time.time()}
+    media=sorted({value for value in media_types if value in ('image','audio')})
+    if media:row['media_types']=media
+    confirmed.append(row)
     event.set_extra(RECEIPTS_KEY, confirmed[-128:])
     if kind == 'reply' and event.get_extra('dafeiyu_activity_input', None):
         try:

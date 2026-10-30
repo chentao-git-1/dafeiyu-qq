@@ -155,16 +155,17 @@ class InitiativeEngine:
     async def tick_semantic(self):
         if self.lock.locked():return
         async with self.lock:
-            self.store.diagnose('check');due=self.store.due()
-            if not due or not self.store.eligible() or not self.allowed():return
-            day,slot=due;epoch=self.store.epoch();controller=self.semantic_controller()
+            await asyncio.to_thread(self.store.diagnose,'check')
+            due=await asyncio.to_thread(self.store.due)
+            if not due or not await asyncio.to_thread(self.store.eligible) or not self.allowed():return
+            day,slot=due;epoch=await asyncio.to_thread(self.store.epoch);controller=self.semantic_controller()
             if OWNER in getattr(controller,'learning_state_inflight',()):return
             candidates=[]
             async for candidate in self.candidates():
                 candidates.append(candidate)
                 if len(candidates)>=12:break
             if not candidates:return
-            if not self.store.claim_evaluation(day,slot,epoch):return
+            if not await asyncio.to_thread(self.store.claim_evaluation,day,slot,epoch):return
             self.current=(day,slot)
             try:
                 from .spontaneous_policy import choose_initiative
@@ -176,23 +177,25 @@ class InitiativeEngine:
                 provider=await self.context.get_using_provider_async(SESSION)
                 if provider is None:raise RuntimeError('Text provider unavailable')
                 provider=controller.metered_provider(provider,'initiative')
-                source,body=await choose_initiative(provider,candidates,recent,self.store.recent_sent(),day)
-                self.store.finish_evaluation(day,slot,'selected' if source else 'no_action')
+                previous=await asyncio.to_thread(self.store.recent_sent)
+                source,body=await choose_initiative(provider,candidates,recent,previous,day)
+                await asyncio.to_thread(self.store.finish_evaluation,day,slot,'selected' if source else 'no_action')
                 if not source:return
                 async with self.plugin.lock:
                     if (not self.allowed() or not await self.source_valid(source)
-                            or not self.store.reserve(day,slot,source['id'],source['kind'],epoch)
-                            or not self.store.begin_send(day,slot,epoch,body)):return
+                            or not await asyncio.to_thread(self.store.reserve,day,slot,source['id'],source['kind'],epoch)
+                            or not await asyncio.to_thread(self.store.begin_send,day,slot,epoch,body)):return
                     if source['kind']=='care':
                         self.plugin.state.setdefault('care_attempt_days',{})[OWNER]=day;self.plugin.save()
                 try:sent=await asyncio.wait_for(self.context.send_message(SESSION,MessageChain(chain=[Plain(body)])),timeout=40)
                 except Exception as error:
-                    self.store.finish(day,slot,'unknown',type(error).__name__);return
-                self.store.finish(day,slot,'sent' if sent else 'unknown','' if sent else 'send_not_confirmed')
+                    await asyncio.to_thread(self.store.finish,day,slot,'unknown',type(error).__name__);return
+                await asyncio.to_thread(self.store.finish,day,slot,'sent' if sent else 'unknown','' if sent else 'send_not_confirmed')
             except asyncio.CancelledError:
-                self.store.finish_evaluation(day,slot,'unknown')
-                self.store.finish(day,slot,'unknown','interrupted');raise
+                await asyncio.to_thread(self.store.finish_evaluation,day,slot,'unknown')
+                await asyncio.to_thread(self.store.finish,day,slot,'unknown','interrupted');raise
             except Exception as error:
-                self.store.finish_evaluation(day,slot,'failed');self.store.finish(day,slot,'failed',type(error).__name__)
-                self.store.diagnose('error',type(error).__name__)
+                await asyncio.to_thread(self.store.finish_evaluation,day,slot,'failed')
+                await asyncio.to_thread(self.store.finish,day,slot,'failed',type(error).__name__)
+                await asyncio.to_thread(self.store.diagnose,'error',type(error).__name__)
             finally:self.current=None

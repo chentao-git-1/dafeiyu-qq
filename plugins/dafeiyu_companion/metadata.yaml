@@ -1,5 +1,5 @@
 name: dafeiyu_companion
 display_name: 鲸鲸提醒与约定回访
 desc: QQ私信管理持久定时提醒与低频约定回访，复用AstrBot原生定时引擎
-version: 0.4.0
+version: 0.4.1
 author: Local

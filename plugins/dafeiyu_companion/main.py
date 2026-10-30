@@ -50,7 +50,7 @@ def social_can_notify(uid):
         return True
 
 
-@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.4.0')
+@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.4.1')
 class Companion(Star):
     def __init__(self,context:Context):
         super().__init__(context)
@@ -130,7 +130,7 @@ class Companion(Star):
     async def status(self):
         jobs=await self.context.cron_manager.list_jobs()
         ours=[j for j in jobs if (j.payload or {}).get('dafeiyu_companion')]
-        return json_response({**self.initiative.status(),'version':'0.3.0','spontaneous_owner_only':True,
+        return json_response({**self.initiative.status(),'version':'0.4.1','spontaneous_owner_only':True,
             'initiative_loop_running':self.initiative_task is not None and not self.initiative_task.done(),
             'native_scheduler':True,'schedule_awareness':'read_only_current_private_session','active_reminders':sum((j.payload or {}).get('dafeiyu_kind')=='reminder' for j in ours),
             'active_followups':sum((j.payload or {}).get('dafeiyu_kind')=='followup' for j in ours),

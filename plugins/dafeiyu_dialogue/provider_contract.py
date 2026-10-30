@@ -73,7 +73,7 @@ class ProviderContracts:
         @functools.wraps(chat)
         async def text_chat(*args,**kwargs):
             own=contract_request(kwargs)
-            if own:kwargs['request_max_retries']=0
+            if own:kwargs['request_max_retries']=1
             result=await chat(*args,**kwargs)
             if own:
                 if getattr(result,'tools_call_name',None):result.completion_text=''
