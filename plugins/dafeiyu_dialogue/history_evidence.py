@@ -5,7 +5,7 @@ import json
 
 def historical_tools(history,budget=7000,limit=4):
     calls={};rows=[];seen=set()
-    for message in history:
+    for message in list(history)[-14:]:
         if not isinstance(message,dict):continue
         if message.get('role')=='assistant':
             for call in message.get('tool_calls',[]) or []:

@@ -83,7 +83,7 @@ class RecentDialogueRepair(unittest.IsolatedAsyncioTestCase):
         async def model(**kwargs):return NS(completion_text=next(answers))
         call=AsyncMock(side_effect=model);self.context.get_using_provider_async.return_value=NS(text_chat=call)
         obj=json.loads(base.envelope('那条评论在28号的动态下。',claims=[dict(kind='memory',span='28号',evidence_ids=[source])]))
-        obj['focus']=['social'];response=NS(completion_text=json.dumps(obj),tools_call_name=[])
+        obj['focus']=['social'];obj['claims']=[];response=NS(completion_text=json.dumps(obj),tools_call_name=[])
         await self.plugin.review_response(e,response)
         self.assertEqual(response.completion_text,'那条评论在29号的动态下。');self.assertTrue(e.get_extra('dafeiyu_generation_valid'))
         self.assertEqual(call.await_count,3);self.assertEqual(e.get_extra('dafeiyu_recovery_attempts'),1)

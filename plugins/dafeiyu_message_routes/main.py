@@ -210,7 +210,7 @@ class MessageRoutes(Star):
             platform = self.context.get_platform("aiocqhttp")
             if platform is not None and platform.meta().id == PLATFORM:
                 await self.private_history.prepare(event, request, contacts, platform.bot)
-        self.audit.update(group_count=len(groups),contact_count=len(contacts),jiang_alias='亲友丁' in contacts.get('7000000014',{}).get('aliases',[]))
+        self.audit.update(group_count=len(groups),contact_count=len(contacts))
         if not groups and not contacts:
             request.system_prompt += '\n本轮未取得QQ联系人目录，不能据此断言未加好友、未加群或权限不足；需要发送时如实说明目录暂不可用。'
             return
@@ -252,7 +252,7 @@ class MessageRoutes(Star):
         if not self.is_owner_message(event):return
         prompt=request.system_prompt or ''
         self.audit.update(private_directory_in_final_prompt='【当前真实好友且在私信白名单的联系人目录】' in prompt,
-            jiang_route_in_final_prompt=PLATFORM+':FriendMessage:7000000014' in prompt,
+            private_routes_in_final_prompt=sum(PLATFORM+':FriendMessage:'+qq in prompt for qq in event.get_extra('dafeiyu_history_contacts',{})),
             send_tool_available=bool(request.func_tool and request.func_tool.get_tool('send_message_to_user')),
             private_history_tool_available=bool(request.func_tool and request.func_tool.get_tool("dafeiyu_private_history")))
 

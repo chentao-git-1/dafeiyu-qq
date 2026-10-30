@@ -518,7 +518,7 @@ class Dialogue(Star):
                 raise ValueError('Metadata recovery requires enforced semantic review')
             if (recover or 'self' in generated.focus and 'fiction' not in generated.focus or 'action' in generated.focus
                     or generated.claims or tool_rows
-                    or materials.get('historical_tool_results') and set(generated.focus)&{'help','feedback'}):
+                    or materials.get('historical_tool_results')):
                 checked = await self.reviewed(event, [generated.reply], event.unified_msg_origin)
                 body = checked.segments[0]
                 if recover:self.review_stats['metadata_recovered']+=1
