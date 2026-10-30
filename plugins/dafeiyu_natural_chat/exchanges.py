@@ -111,6 +111,18 @@ class ExchangeStore:
         spec=forget_spec(text)
         if spec is None:return 0
         return self.forget(qq,None if spec['across'] else origin,spec['query'],latest=spec['mode']=='latest')
+
+    def forget_ids(self,qq,origin,numbers=None):
+        with self.connect() as db:
+            db.execute('PRAGMA secure_delete=ON')
+            rows=db.execute('SELECT id,qq,origin,message_id FROM exchanges WHERE qq=? AND instr(origin,?)=1',
+                (str(qq),origin.split(':',1)[0]+':')).fetchall()
+            chosen=[r for r in rows if numbers is None or r['id'] in set(numbers)]
+            db.executemany('DELETE FROM exchanges WHERE id=?',[(r['id'],) for r in chosen])
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='replies'").fetchone():
+                db.executemany('DELETE FROM replies WHERE qq=? AND origin=? AND message_id=?',
+                    [(r['qq'],r['origin'],r['message_id']) for r in chosen])
+            return len(chosen)
     def count(self):
         self.prune()
         with self.connect() as db:return db.execute('SELECT count(*) FROM exchanges').fetchone()[0]

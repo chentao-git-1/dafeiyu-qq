@@ -8,6 +8,7 @@ from collections import OrderedDict
 import hashlib
 import math
 import time
+import json
 from typing import Any
 
 from .database import MemoryDatabase
@@ -27,12 +28,14 @@ class MemoryRetriever:
         candidate_pool: int = 300,
         recency_half_life_days: float = 14.0,
         embedding=None,
+        embedding_version=None,
     ) -> None:
         self.db = db
         self.manager = manager
         self._candidate_pool = max(50, candidate_pool)
         self._half_life = max(0.5, recency_half_life_days) * 86400.0
         self.embedding = embedding
+        self.embedding_version=embedding_version or (lambda:'unversioned')
         self._vectors = OrderedDict()
 
     # ------------------------------------------------------------------ scoring
@@ -92,13 +95,16 @@ class MemoryRetriever:
             return []
         if self.embedding:
             try:
+                version=self.embedding_version()
                 query_vector = await asyncio.wait_for(self.embedding(query), timeout=3)
-                if query_vector:
-                    candidates = await asyncio.wait_for(self.attach_vectors(candidates, query_vector), timeout=8)
+                if query_vector and version==self.embedding_version():
+                    candidates = await asyncio.wait_for(self.attach_vectors(candidates, query_vector,version), timeout=8)
             except Exception:
                 pass  # Literal retrieval remains available without a vector provider.
             # A source can be corrected or forgotten while the provider is awaited.
             current = {str(m['id']):m for m in await getter(user_id, limit=self._candidate_pool)}
+            live={self.vector_key(str(m.get('content','')),self.embedding_version()) for m in current.values()}
+            self._vectors=OrderedDict((k,v) for k,v in self._vectors.items() if k in live)
             candidates = [m for m in candidates if str(m['id']) in current
                           and all(current[str(m['id'])].get(k)==v for k,v in m.items() if not k.startswith('_semantic_'))]
         scored: list[tuple[float, dict[str, Any]]] = []
@@ -122,21 +128,23 @@ class MemoryRetriever:
     # ----------------------------------------------------- embedding (optional)
 
     async def attach_vectors(
-        self, memories: list[dict[str, Any]], query_vector: list[float]
+        self, memories: list[dict[str, Any]], query_vector: list[float], version=None
     ) -> list[dict[str, Any]]:
         """Embed only already visible candidates; cache vectors by content hash, not bodies."""
         if not self.embedding or not valid_vector(query_vector):
             return memories
+        version=self.embedding_version() if version is None else version
         now = time.monotonic()
         self._vectors = OrderedDict((k,v) for k,v in self._vectors.items() if now-v[0]<1800)
         semaphore = asyncio.Semaphore(3)
 
         async def attach(memory):
             text = str(memory.get('content',''))
-            key = hashlib.sha256(text.encode()).hexdigest()
+            key = self.vector_key(text,version)
             async with semaphore:
                 cached = self._vectors.get(key)
                 vector = cached[1] if cached else await self.embedding(text)
+                if version!=self.embedding_version():return memory
                 if not valid_vector(vector) or len(vector) != len(query_vector):
                     return memory
                 self._vectors[key] = (now, vector)
@@ -149,6 +157,10 @@ class MemoryRetriever:
         # A bounded optional enhancement; use explicit recall for a broader semantic search.
         enhanced=await asyncio.gather(*(attach(m) for m in memories[:16]))
         return enhanced + memories[16:]
+
+    @staticmethod
+    def vector_key(text,version):
+        return hashlib.sha256(json.dumps([version,text],ensure_ascii=False).encode()).hexdigest()
 
 
 def valid_vector(value):

@@ -20,5 +20,35 @@
     "description": "仅active指定私聊生效：enforce核对，audit只观察，off仅供离线对照。每轮最多两次核对；修订才追加一次独立事实检查，最多四次辅助请求，失败不发草稿。shadow不调用模型。",
     "default": "enforce",
     "options": ["enforce", "audit", "off"]
+  },
+  "generation_contract": {
+    "type": "bool",
+    "description": "active私聊使用单次主生成，统一回复、证据引用、学习候选和语音意图；关闭仅供旧版离线对照",
+    "default": true
+  },
+  "learning_v2": {
+    "type": "bool",
+    "description": "仅active私聊：有来源、有版本、确认送达后写入的语义偏好和任意事件；默认待验收开启",
+    "default": false
+  },
+  "retrieval_index_v2": {
+    "type": "bool",
+    "description": "仅active会话维护可重建、有版本的来源索引；仅保存摘要与词项散列，更新与遗忘同步核对原库",
+    "default": true
+  },
+  "activity_policy_v2": {
+    "type": "bool",
+    "description": "仅主人active灰度：按持续项目和来源选择自主活动，允许不行动；沿用每天一次与费用边界",
+    "default": false
+  },
+  "initiative_policy_v2": {
+    "type": "bool",
+    "description": "仅主人active灰度：结合真实近期互动，选择允许的分享或不发送；沿用原时窗、配额和回执",
+    "default": false
+  },
+  "voice_intent_v2": {
+    "type": "bool",
+    "description": "仅active私聊：语音继承主生成的有限表达意图并绑定最终文本；音色、概率和预算不变",
+    "default": false
   }
 }

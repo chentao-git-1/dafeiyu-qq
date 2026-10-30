@@ -1,5 +1,7 @@
 """Replace only a uniquely matched operator persona; retain its identity and tool policies."""
 import re
+import json
+import copy
 
 
 STYLE = '''像熟人自然发QQ，回应眼前这件事，有自己的具体判断，也可以说完就停。认真问题按需要讲清楚，追问要有实际想核对的信息。
@@ -27,8 +29,44 @@ def compact_persona(persona):
     return persona[:first].replace(LEGACY_STYLE, STYLE, 1) + body
 
 
-def replace_persona(prompt, known_persona):
+def semantic_persona(persona):
+    if any(persona.count('<!-- BEGIN_'+name+' -->')!=1 for name in (
+            'DAFEIYU_FAMILY_ROLE','DAFEIYU_MEMORY_SCOPE','JINGJING_OWN_LIFE')) or LEGACY_STYLE not in persona:
+        return persona
+    first=persona.find('<!-- BEGIN_')
+    identity='\n'.join(persona[:first].splitlines()[:2])
+    names=('DAFEIYU_FAMILY_ROLE','DAFEIYU_COMPANION','DAFEIYU_FRIEND_GATE')
+    capabilities=[];tail=persona[first:]
+    for name in names:
+        pattern=r'<!-- BEGIN_'+name+r' -->(.*?)<!-- END_'+name+r' -->'
+        found=re.search(pattern,tail,re.S)
+        if found:capabilities.append({'scope':name,'rules':found[1].strip()});tail=re.sub(pattern,'',tail,flags=re.S)
+    for name in ('DAFEIYU_MEMORY_SCOPE','JINGJING_NATURAL_COMPANY','JINGJING_OWN_LIFE','DAFEIYU_QZONE','JINGJING_OWN_SPACE_READ'):
+        tail=re.sub(r'<!-- BEGIN_'+name+r' -->.*?<!-- END_'+name+r' -->','',tail,flags=re.S)
+    core='''自然、亲近、有自己的判断，按眼前内容回应，不用采访或服务邀请撑场。表达反馈直接体现在下一句话里；关心跟随实际处境，不替人定情绪或动机。
+你是AI，没有现实身体生活轨迹。数字阅读和作品要有真实记录，想法与创作可以自由发展；兴趣和角色外观不是已经做过事情的证明。没有工作记录可以谈当下想法，不编正忙着什么，也不向人报告后台核验。
+当前明确更正优先，条件偏好按情境生效。普通人只改删本人资料，爸爸按原权限管理；共享事实保留归属，成对私聊片段不跨人，资料不自动公开。忘记记忆不等于删除QQ原记录。'''
+    core+='\n排查时保留不确定性，不凭单个现象断定根因。操作缺关键信息就问必要问题，先确认安全范围内的步骤，不擅自破坏现有资料。'
+    return identity+'\n'+core+'\n原操作员设定的关系、动作许可与工具规则仍有效；其中正文/配图格式只约束相应工具内容，不改变最终聊天的JSON协议：\n'+json.dumps(capabilities,ensure_ascii=False)+'\n'+tail.strip()
+
+
+def attach_tool_contracts(req,known_persona):
+    if not known_persona or semantic_persona(known_persona)==known_persona or req.func_tool is None:return
+    tools=copy.copy(req.func_tool);tools.tools=[copy.copy(t) for t in req.func_tool.tools]
+    scopes={'dafeiyu_qzone_publish':'DAFEIYU_QZONE','dafeiyu_qzone_draft':'DAFEIYU_QZONE',
+        'dafeiyu_qzone_read_own':'JINGJING_OWN_SPACE_READ'}
+    for tool in tools.tools:
+        name=scopes.get(tool.name)
+        if not name:continue
+        found=re.search(r'<!-- BEGIN_'+name+r' -->(.*?)<!-- END_'+name+r' -->',known_persona,re.S)
+        if found:
+            marker='\n[DAFEIYU_OPERATOR_CONTRACT]\n'
+            tool.description=str(tool.description or '').split(marker,1)[0]+marker+found[1].strip()
+    req.func_tool=tools
+
+
+def replace_persona(prompt, known_persona, contract=False):
     if not known_persona or prompt.count(known_persona) != 1:
         return prompt, False
-    compact = compact_persona(known_persona)
+    compact = semantic_persona(known_persona) if contract else compact_persona(known_persona)
     return prompt.replace(known_persona, compact, 1), compact != known_persona

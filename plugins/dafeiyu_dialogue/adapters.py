@@ -35,6 +35,11 @@ class MemoryCatalog:
             ('exchanges', self.root / 'plugin_data/dafeiyu_natural_chat/interaction.db',
              'SELECT * FROM exchanges WHERE qq=? AND origin=? AND at BETWEEN ? AND ? '
              'ORDER BY at DESC LIMIT 100', (turn.actor, turn.origin, now - 30 * 86400, now)),
+            ('learned', self.root / 'plugin_data/dafeiyu_dialogue/learning.db',
+             "SELECT l.* FROM learned l JOIN learning_sources s ON s.id=l.source_id "
+             "WHERE l.status='current' AND s.revoked=0 AND "
+             "((l.visibility='shared' AND instr(l.origin,?)=1) OR (l.owner=? AND l.origin=?)) "
+             "ORDER BY l.updated DESC LIMIT 200", (turn.platform + ':', turn.actor, turn.origin)),
         )
         for source, path, sql, params in sources:
             if source == 'long_term' and not self.include_long_term:
@@ -57,10 +62,18 @@ class MemoryCatalog:
                         item = MemoryItem('episode:' + str(row['id']), row['owner'], row['origin'],
                             'shared', row['kind'], body, row['updated'], 'human_evidence',
                             turn.platform + ':shared', status=row['phase'])
-                    else:
+                    elif source == 'exchanges':
                         body = json.dumps({'human': row['human'], 'reply': row['reply']}, ensure_ascii=False)
                         item = MemoryItem('exchange:' + str(row['id']), row['qq'], row['origin'],
                             'session', 'exchange', body, row['at'], 'confirmed_exchange')
+                    else:
+                        body = json.loads(row['payload'])
+                        if row['kind'] == 'event' and now - row['updated'] > 180 * 86400:
+                            continue
+                        body['version'] = row['version']
+                        item = MemoryItem(row['id'], row['owner'], row['origin'], row['visibility'], row['kind'],
+                            json.dumps(body, ensure_ascii=False), row['updated'], 'versioned_human_evidence',
+                            turn.platform + ':shared' if row['visibility'] == 'shared' else '', status=body['status'])
                     if item.visible_to(turn) and 0 < item.recorded_at <= now + 5 and len(item.text) <= 3000:
                         items.append(item)
             except (sqlite3.Error, KeyError, TypeError, ValueError):

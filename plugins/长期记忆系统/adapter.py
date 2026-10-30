@@ -182,6 +182,12 @@ class AstrBotAdapter:
 
     # --------------------------------------------------------------- embedding
 
+    def embedding_version(self):
+        provider_id=str(self.config.get('embedding_provider_id','') or '').strip()
+        provider=self.context.get_provider_by_id(provider_id) if provider_id else None
+        model=provider.get_model() if provider and callable(getattr(provider,'get_model',None)) else ''
+        return provider_id+'|'+str(model)
+
     async def get_embedding(self, text: str) -> list[float] | None:
         """Optional AstrBot EmbeddingProvider.get_embedding; disabled means no calls."""
         if not self.config.get("embedding_enable", False):

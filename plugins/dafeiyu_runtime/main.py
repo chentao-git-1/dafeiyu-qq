@@ -36,6 +36,7 @@ from .diagnostics import CURRENT, KEY, Journal, Turn, active, phase, request_met
 from .private_outbound import PrivateOutbound
 
 WRITES = {
+    "dafeiyu_cognition",
     "dafeiyu_draw",
     "dafeiyu_sing",
     "dafeiyu_qzone_publish",
@@ -239,7 +240,7 @@ class DafeiyuRuntime(Star):
                 "progress_after_seconds": self.replies.progress_after,
                 "send_timeout_seconds": self.replies.send_timeout,
                 "progress_notice_cooldown_seconds": self.replies.progress_cooldown,
-                "version": "0.3.2",
+                "version": "0.3.3",
                 "outbound_history": self.outbound.status(),
                 "session_wait_diagnostics": session_lock_manager.acquire_lock is getattr(self, 'session_lock_wrapper', None),
                 "reply_diagnostics": {'enabled': True, 'retained_turns': self.diagnostics.status()['retained_turns'], 'contains_chat_content': False},

@@ -67,6 +67,9 @@ class QualityDatabaseMixin:
         if not await self._editable(memory_id):
             raise ValueError('不能修改其他人的记忆')
         async with self._lock:
+            await self.assert_generation()
+            current=await (await self._conn.execute('SELECT id FROM memories WHERE id=?',(memory_id,))).fetchone()
+            if current is None:raise ValueError('Source record no longer exists')
             await self.preserve_origin(memory_id, record)
             await self._conn.commit()
         return memory_id, False
@@ -77,6 +80,7 @@ class QualityDatabaseMixin:
             raise ValueError('不能提交其他人的记忆冲突')
         digest = hashlib.sha256((str(old['id'])+'|'+candidate).encode()).hexdigest()
         async with self._lock:
+            await self.assert_generation()
             await self._conn.execute('INSERT OR IGNORE INTO memory_conflicts(user_id,old_id,candidate,evidence,session_id,digest,created_at) VALUES (?,?,?,?,?,?,?)',
                 (str(old['user_id']),old['id'],candidate,evidence,session_id,digest,now_ts()))
             await self._conn.commit()

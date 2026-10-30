@@ -245,7 +245,7 @@ class NativeHooks(unittest.IsolatedAsyncioTestCase):
             self.natural=natural.NaturalChat(self.context)
         self.context.get_registered_star=lambda name:NS(activated=True,star_cls=self.natural) if name=='dafeiyu_natural_chat' else None
         with patch('data.plugins.dafeiyu_dialogue.main.get_astrbot_data_path',return_value=str(self.root)):
-            self.plugin=Dialogue(self.context,{'mode':'active','active_private_users':[OWNER]})
+            self.plugin=Dialogue(self.context,{'mode':'active','active_private_users':[OWNER],'generation_contract':False})
 
     async def asyncTearDown(self):
         gc.collect();self.tmp.cleanup()

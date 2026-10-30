@@ -6,11 +6,13 @@ from .database import MemoryDatabase, VALID_TYPES
 from .scope import current_scope, requested_visibility, scope_from_values, owner_name, origin_kind, MEMORY_ADMIN, using_scope
 from .utils import now_ts, parse_tags
 from .quality import QualityDatabaseMixin
+from .provenance import expected_revision, StaleSource
 
 class ScopedMemoryDatabase(QualityDatabaseMixin, MemoryDatabase):
     async def initialize(self):
         await super().initialize()
         async with self._lock:
+            await self._conn.execute('PRAGMA secure_delete=ON')
             cursor=await self._conn.execute('PRAGMA table_info(memories)')
             names={row[1] for row in await cursor.fetchall()}
             for name,definition in (('visibility',"TEXT NOT NULL DEFAULT ''"),('scope_id',"TEXT NOT NULL DEFAULT ''"),
@@ -29,6 +31,27 @@ class ScopedMemoryDatabase(QualityDatabaseMixin, MemoryDatabase):
                 AFTER DELETE ON memories BEGIN
                 DELETE FROM memory_history WHERE memory_id=OLD.id; END''')
             await self.initialize_quality()
+            await self._conn.execute('CREATE TABLE IF NOT EXISTS memory_revision(id INTEGER PRIMARY KEY,version INTEGER NOT NULL)')
+            await self._conn.execute('INSERT OR IGNORE INTO memory_revision VALUES(1,0)')
+            await self._conn.commit()
+
+    async def revision(self):
+        async with self._lock:
+            row=await (await self._conn.execute('SELECT version FROM memory_revision WHERE id=1')).fetchone()
+            return int(row[0])
+
+    async def assert_generation(self):
+        expected=expected_revision.get()
+        if expected is not None and expected[0]==self._db_path:
+            row=await (await self._conn.execute('SELECT version FROM memory_revision WHERE id=1')).fetchone()
+            if row is None or int(row[0])!=expected[1]:raise StaleSource('Source was withdrawn or corrected')
+
+    async def bump_revision(self):
+        await self._conn.execute('UPDATE memory_revision SET version=version+1 WHERE id=1')
+
+    async def withdraw_pending(self):
+        async with self._lock:
+            await self.bump_revision()
             await self._conn.commit()
 
     @staticmethod
@@ -65,6 +88,7 @@ class ScopedMemoryDatabase(QualityDatabaseMixin, MemoryDatabase):
         display_name=owner_name(user_id,scope.sender_name if scope else '')
         source_kind=origin_kind(session_id,scope.kind if scope else '')
         async with self._lock:
+            await self.assert_generation()
             cursor=await self._conn.execute('SELECT id FROM memories WHERE merged_into IS NULL AND user_id=? AND content=? AND visibility=? AND scope_id=? LIMIT 1',
                 (str(user_id),content,visibility,key))
             previous=await cursor.fetchone()
@@ -97,21 +121,33 @@ class ScopedMemoryDatabase(QualityDatabaseMixin, MemoryDatabase):
 
     async def delete_memory(self,memory_id):
         if not await self._editable(memory_id):return False
-        return await super().delete_memory(memory_id)
+        async with self._lock:
+            await self.bump_revision()
+            cursor=await self._conn.execute('DELETE FROM memories WHERE id=?',(int(memory_id),))
+            await self._conn.commit()
+            return cursor.rowcount>0
 
     async def clear(self,user_id,session_id=None):
         scope=current_scope.get()
-        if scope is None:return await super().clear(user_id,session_id)
-        if str(user_id)!=scope.user_id:return 0
+        if scope is not None and str(user_id)!=scope.user_id:return 0
         async with self._lock:
-            cursor=await self._conn.execute('DELETE FROM memories WHERE user_id=? AND visibility=? AND scope_id=?',
-                (scope.user_id,'shared',scope.platform+':shared'))
+            await self.bump_revision()
+            if scope is not None:
+                cursor=await self._conn.execute('DELETE FROM memories WHERE user_id=? AND visibility=? AND scope_id=?',
+                    (scope.user_id,'shared',scope.platform+':shared'))
+            else:
+                sql='DELETE FROM memories WHERE user_id=?'+(' AND session_id=?' if session_id else '')
+                cursor=await self._conn.execute(sql,(str(user_id),session_id) if session_id else (str(user_id),))
             await self._conn.commit()
             return cursor.rowcount
 
     async def clear_all(self):
         if current_scope.get() is not None:raise ValueError('聊天中不能清空全体用户记忆')
-        return await super().clear_all()
+        async with self._lock:
+            await self.bump_revision()
+            cursor=await self._conn.execute('DELETE FROM memories')
+            await self._conn.commit()
+            return cursor.rowcount
 
     async def import_memories(self,records):
         scope=current_scope.get()
@@ -131,6 +167,11 @@ class ScopedMemoryDatabase(QualityDatabaseMixin, MemoryDatabase):
         record=await self.get(int(memory_id))
         if not record or not await self._editable(memory_id):raise ValueError('只能更正自己的记忆；管理员可管理全体记忆')
         async with self._lock:
+            await self.assert_generation()
+            await self.bump_revision()
+            current=await (await self._conn.execute('SELECT * FROM memories WHERE id=?',(int(memory_id),))).fetchone()
+            if current is None:raise ValueError('Memory no longer exists')
+            record=self._to_dict(current)
             await self._archive(record,'correct')
             await self._conn.execute('UPDATE memories SET content=?,updated_at=? WHERE id=?',(content,now_ts(),int(memory_id)))
             await self._conn.commit()

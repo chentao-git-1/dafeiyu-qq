@@ -57,9 +57,34 @@ def content_text(content):
     return ''
 
 
-@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.8.0')
+@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.9.0')
 class NaturalChat(Star):
-    dialogue_context_protocol = 2
+    dialogue_context_protocol = 3
+
+    @staticmethod
+    def actor_owner():return OWNER
+
+    def forget_semantic(self, actor, origin, ids=None):
+        episode_ids=None if ids is None else {int(i.split(':',1)[1]) for i in ids if i.startswith('episode:')}
+        exchange_ids=None if ids is None else {int(i.split(':',1)[1]) for i in ids if i.startswith('exchange:')}
+        with contextlib.closing(self.store.connect()) as db, db:
+            db.execute('PRAGMA secure_delete=ON')
+            rows=db.execute('SELECT id FROM episodes WHERE owner=? AND instr(origin,?)=1',
+                (actor,origin.split(':',1)[0]+':')).fetchall()
+            chosen=[r['id'] for r in rows if episode_ids is None or r['id'] in episode_ids]
+            db.executemany('DELETE FROM episodes WHERE id=?',[(n,) for n in chosen])
+            db.executemany('DELETE FROM offers WHERE id=?',[(n,) for n in chosen])
+        # Old caches cannot identify every derived reply, so purge the owner's container.
+        with self.exchange_store().connect() as db:
+            db.execute('PRAGMA secure_delete=ON')
+            exchanges=db.execute('DELETE FROM exchanges').rowcount
+        with self.interaction_store().connect() as db:
+            db.execute('PRAGMA secure_delete=ON')
+            db.execute('DELETE FROM replies')
+        self.fact_store().forget(actor,None)
+        if ids is None:self.interaction_store().reset(actor)
+        self.inputs.pop((str(actor),origin),None)
+        return {'episodes':len(chosen),'exchanges':exchanges}
 
     def dialogue_character(self):
         # Operator lore is creative material, never proof of physical or completed activity.
@@ -238,9 +263,20 @@ class NaturalChat(Star):
         if text not in ('相处设置', '相处设置 恢复默认'):
             return
         store = self.interaction_store()
+        get_star=getattr(self.context,'get_registered_star',lambda name:None)
+        meta=get_star('dafeiyu_dialogue');controller=getattr(meta,'star_cls',None) if meta and meta.activated else None
+        semantic=bool(controller and controller.config.get('mode')=='active' and controller.feature('learning_v2')
+            and uid in {str(x) for x in controller.config.get('active_private_users',[])})
         if text.endswith('恢复默认'):
             store.reset(uid)
-        await event.send(MessageChain(chain=[Plain(settings_text(store.preferences(uid)))]))
+            if semantic:
+                await asyncio.to_thread(controller.learning_store().reset_preferences,uid)
+                await asyncio.to_thread(self.exchange_store().forget_ids,uid,event.unified_msg_origin,None)
+        message=settings_text(store.preferences(uid))
+        if semantic:
+            learned=await asyncio.to_thread(controller.learning_store().current,uid,event.unified_msg_origin,False)
+            if learned:message+='\n语义学习的情境偏好：\n'+'\n'.join(r['summary']+'；适用条件：'+(r['condition'] or '未限定') for r in learned[:12])
+        await event.send(MessageChain(chain=[Plain(message)]))
         event.stop_event()
 
     @filter.on_llm_request(priority=-1000001)
@@ -250,7 +286,7 @@ class NaturalChat(Star):
         except ValueError:
             return
         source = self.input_snapshot(event)
-        if not event.get_extra('jingjing_facts_prepared',False):
+        if not event.get_extra('jingjing_facts_prepared',False) and not event.get_extra('dafeiyu_generation_contract',False):
             forgetting=forget_spec(source['text'])
             if forgetting:
                 self.fact_store().forget(uid,None if forgetting.get('across') else event.unified_msg_origin)
@@ -258,7 +294,7 @@ class NaturalChat(Star):
                 self.fact_store().observe(uid,event.unified_msg_origin,str(getattr(event.message_obj,'message_id','')),source['text'])
             event.set_extra('jingjing_facts_prepared',True)
         event.set_extra('jingjing_current_facts',self.fact_store().current(uid,event.unified_msg_origin))
-        if not event.get_extra('jingjing_forget_processed',False):
+        if not event.get_extra('jingjing_forget_processed',False) and not event.get_extra('dafeiyu_generation_contract',False):
             removed=self.memory_coordinator().forget_turn(uid,event.unified_msg_origin,source['text'])
             event.set_extra('jingjing_forget_processed',True)
             event.set_extra('jingjing_forgotten_pairs',removed)
@@ -394,6 +430,7 @@ class NaturalChat(Star):
 
     @filter.on_llm_response(priority=sys.maxsize-100)
     async def ground_current_facts(self,event,response):
+        if event.get_extra('dafeiyu_generation_contract',False):return
         if not event.get_extra('jingjing_style_prepared',False):return
         text=str(getattr(response,'completion_text','') or '')
         if not text:return
@@ -436,6 +473,8 @@ class NaturalChat(Star):
 
     @filter.after_message_sent()
     async def remember_delivered_reply(self, event):
+        if event.get_extra('dafeiyu_semantic_forgetting',False):return
+        if event.get_extra('dafeiyu_generation_contract',False) and not event.get_extra('dafeiyu_generation_valid',False):return
         if not event.get_extra('jingjing_style_prepared', False):
             return
         try:
@@ -633,6 +672,7 @@ class NaturalChat(Star):
 
     @filter.on_decorating_result(priority=sys.maxsize-30)
     async def prevent_unconfirmed_memory_claim(self,event):
+        if event.get_extra('dafeiyu_generation_valid',False):return
         try:self.actor(event)
         except ValueError:return
         source=str(event.message_str or '')
