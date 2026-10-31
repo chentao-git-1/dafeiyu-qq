@@ -11,6 +11,7 @@ from .memory_manager import MemoryManager
 from .quality import MemoryConflict
 from .prompts import EXTRACT_SYSTEM_PROMPT
 from .utils import clamp, parse_tags, safe_json_loads
+from .provenance import expected_revision, StaleSource
 
 logger = logging.getLogger("memory_system.extractor")
 
@@ -100,6 +101,8 @@ class MemoryExtractor:
         try:
             if not user_text or len(user_text.strip()) < self._min_len:
                 return []
+            database=getattr(self.manager,'db',None)
+            revision=await database.revision() if hasattr(database,'revision') else None
             raw = await self._llm(
                 self._build_user_prompt(user_text, assistant_text),
                 EXTRACT_SYSTEM_PROMPT,
@@ -110,11 +113,15 @@ class MemoryExtractor:
                 if item["evidence"] not in user_text:
                     continue
                 try:
-                    mid, created = await self.manager.memorize(
-                        user_id=user_id, content=item["content"], memory_type=item["type"],
-                        tags=item["tags"], importance=item["importance"], session_id=session_id,
-                        source="auto", evidence=item['evidence'])
-                except MemoryConflict:
+                    token=expected_revision.set((self.manager.db._db_path,revision)) if revision is not None else None
+                    try:
+                        mid, created = await self.manager.memorize(
+                            user_id=user_id, content=item["content"], memory_type=item["type"],
+                            tags=item["tags"], importance=item["importance"], session_id=session_id,
+                            source="auto", evidence=item['evidence'])
+                    finally:
+                        if token is not None:expected_revision.reset(token)
+                except (MemoryConflict,StaleSource):
                     continue
                 if created:
                     stored.append({**item, "id": mid})

@@ -21,6 +21,7 @@ from .drawing import DrawingError, generate
 from .presentation import drawing_error_text, http_status, TECHNICAL as TECHNICAL_ERROR_QUERY, ErrorContext
 import json
 from .intent import IntentContext, continue_prompt
+from .works import WorkHistory
 
 
 class DafeiyuDraw(Star):
@@ -33,6 +34,13 @@ class DafeiyuDraw(Star):
         self.image_dir = Path(StarTools.get_data_dir()) / "images"
         self.image_dir.mkdir(parents=True, exist_ok=True)
         self.image_dir.chmod(0o700)
+        self.works=WorkHistory(self.image_dir)
+
+    def conversation_works(self, actor, origin):
+        return self.works.recent(actor,origin)
+
+    def forget_works(self, actor, origin):
+        return self.works.forget(actor,origin)
 
     def _allowed(self, event):
         if event.get_platform_name() != "aiocqhttp":
@@ -170,6 +178,9 @@ class DafeiyuDraw(Star):
                 self.last[event.unified_msg_origin] = now
                 while len(self.last) > 128:
                     del self.last[next(iter(self.last))]
+                work_epoch=None
+                try:work_epoch=await asyncio.to_thread(self.works.begin,str(event.get_sender_id()),event.unified_msg_origin)
+                except Exception as error:logger.warning('Drawing work scope unavailable: %s',type(error).__name__)
                 await event.send(MessageChain(chain=[Plain("画着呢，等一会儿。")]))
                 phase = 'generating'
                 raw, suffix, dimensions = await generate(
@@ -196,6 +207,11 @@ class DafeiyuDraw(Star):
                 phase = 'sending'
                 await event.send(MessageChain(chain=chain))
                 phase = 'sent'
+                try:
+                    if work_epoch is not None:
+                        await asyncio.to_thread(self.works.record,str(event.get_sender_id()),event.unified_msg_origin,path,prompt,work_epoch)
+                except Exception as error:
+                    logger.warning('Drawing work history unavailable: %s',type(error).__name__)
                 logger.info(
                     "Drawing sent: width=%s height=%s bytes=%s",
                     dimensions[0],

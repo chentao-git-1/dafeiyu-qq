@@ -35,7 +35,7 @@ def social_can_notify(uid):
         return True
 
 
-@register('dafeiyu_message_routes', 'Local', 'QQ目标映射与有据可查的私聊状态', '0.1.9')
+@register('dafeiyu_message_routes', 'Local', 'QQ目标映射与有据可查的私聊状态', '0.2.0')
 class MessageRoutes(Star):
     def __init__(self, context):
         super().__init__(context)
@@ -56,7 +56,7 @@ class MessageRoutes(Star):
         groups=await self.directory(event)
         return json_response({'groups':groups,'contacts':contacts,'last_request':self.audit,
             "private_history":dict(self.private_history.stats, enabled=True, owner_private_only=True,
-                source="NapCat.get_friend_msg_history",version="0.1.9")})
+                source="NapCat.get_friend_msg_history",version="0.2.0")})
 
     @staticmethod
     def cross_voice_request(text, groups, contexts, contacts=None):
@@ -206,11 +206,11 @@ class MessageRoutes(Star):
             return
         groups = await self.directory(event)
         contacts = await self.private_directory(event)
-        if self.is_owner_private_message(event):
+        if self.is_owner_private_message(event) and not event.get_extra('dafeiyu_generation_contract',False):
             platform = self.context.get_platform("aiocqhttp")
             if platform is not None and platform.meta().id == PLATFORM:
                 await self.private_history.prepare(event, request, contacts, platform.bot)
-        self.audit.update(group_count=len(groups),contact_count=len(contacts),jiang_alias='亲友丁' in contacts.get('7000000014',{}).get('aliases',[]))
+        self.audit.update(group_count=len(groups),contact_count=len(contacts))
         if not groups and not contacts:
             request.system_prompt += '\n本轮未取得QQ联系人目录，不能据此断言未加好友、未加群或权限不足；需要发送时如实说明目录暂不可用。'
             return
@@ -252,7 +252,7 @@ class MessageRoutes(Star):
         if not self.is_owner_message(event):return
         prompt=request.system_prompt or ''
         self.audit.update(private_directory_in_final_prompt='【当前真实好友且在私信白名单的联系人目录】' in prompt,
-            jiang_route_in_final_prompt=PLATFORM+':FriendMessage:7000000014' in prompt,
+            private_routes_in_final_prompt=sum(PLATFORM+':FriendMessage:'+qq in prompt for qq in event.get_extra('dafeiyu_history_contacts',{})),
             send_tool_available=bool(request.func_tool and request.func_tool.get_tool('send_message_to_user')),
             private_history_tool_available=bool(request.func_tool and request.func_tool.get_tool("dafeiyu_private_history")))
 
@@ -283,7 +283,8 @@ class MessageRoutes(Star):
 
     @filter.on_decorating_result(priority=sys.maxsize-40)
     async def ground_private_status(self, event):
-        if not self.is_owner_private_message(event) or event.is_stopped():
+        if (not self.is_owner_private_message(event) or event.is_stopped()
+                or event.get_extra('dafeiyu_generation_contract',False)):
             return
         result = event.get_result()
         if not result or not result.is_llm_result():
@@ -302,7 +303,8 @@ class MessageRoutes(Star):
     @filter.on_using_llm_tool(priority=sys.maxsize-20)
     async def ground_owner_tool_message(self, event, tool, arguments):
         if (not self.is_owner_private_message(event) or getattr(tool,"name","") != "send_message_to_user"
-                or not isinstance(arguments,dict) or arguments.get("session") != event.unified_msg_origin):
+                or not isinstance(arguments,dict) or arguments.get("session") != event.unified_msg_origin
+                or event.get_extra('dafeiyu_generation_contract',False)):
             return
         messages = arguments.get("messages", [])
         text = text_content(messages)

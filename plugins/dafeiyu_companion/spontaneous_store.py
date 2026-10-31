@@ -8,7 +8,9 @@ import sqlite3
 import time
 
 TZ=dt.timezone(dt.timedelta(hours=8))
-WINDOWS=((10,0,12,0),(18,0,20,30))
+DAILY_RANGE=(0,4)
+ACTIVE_HOURS=(9,21)
+COOLDOWN_SECONDS=(90*60,4*3600)
 
 class InitiativeStore:
     def __init__(self,path,clock=time.time,rng=None):
@@ -19,9 +21,12 @@ class InitiativeStore:
                 CREATE TABLE IF NOT EXISTS days(day TEXT PRIMARY KEY,morning REAL,evening REAL);
                 CREATE TABLE IF NOT EXISTS attempts(day TEXT,slot INTEGER,source TEXT UNIQUE,kind TEXT,
                     status TEXT,at REAL,body TEXT,error TEXT,PRIMARY KEY(day,slot));
-                CREATE TABLE IF NOT EXISTS incoming(mid TEXT PRIMARY KEY,at REAL);''')
+                CREATE TABLE IF NOT EXISTS incoming(mid TEXT PRIMARY KEY,at REAL);
+                CREATE TABLE IF NOT EXISTS evaluations(day TEXT,slot INTEGER,epoch INTEGER,status TEXT,at REAL,PRIMARY KEY(day,slot));
+                CREATE TABLE IF NOT EXISTS random_days(day TEXT PRIMARY KEY,budget INTEGER,opportunities TEXT,created REAL);''')
             for key,value in {'activated_at':clock(),'last_activity':clock(),'last_push':0,'pending_at':0,'epoch':0}.items():
                 db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)',(key,json.dumps(value)))
+            db.execute('INSERT OR IGNORE INTO meta VALUES (?,?)',('next_push_at',json.dumps(self.get(db,'last_push')+14400 if self.get(db,'last_push') else 0)))
             db.execute("UPDATE attempts SET status='unknown',error='interrupted' WHERE status IN ('generating','sending')")
         self.path.chmod(0o600)
     @contextmanager
@@ -39,32 +44,51 @@ class InitiativeStore:
     @staticmethod
     def day(now):return dt.datetime.fromtimestamp(now,TZ).date().isoformat()
     @staticmethod
-    def edges(day,slot):
-        date=dt.date.fromisoformat(day);a,b,c,d=WINDOWS[slot]
-        return (dt.datetime.combine(date,dt.time(a,b),TZ).timestamp(),dt.datetime.combine(date,dt.time(c,d),TZ).timestamp())
+    def edges(day):
+        date=dt.date.fromisoformat(day)
+        return tuple(dt.datetime.combine(date,dt.time(hour),TZ).timestamp() for hour in ACTIVE_HOURS)
+
+    @staticmethod
+    def decode_plan(row):
+        return {'day':row['day'],'budget':row['budget'],'opportunities':json.loads(row['opportunities'])}
+
+    def _plan(self,db,now):
+        day=self.day(now);row=db.execute('SELECT * FROM random_days WHERE day=?',(day,)).fetchone()
+        if row:return self.decode_plan(row)
+        start,end=self.edges(day);start=max(start,now+120)
+        budget=self.rng.randint(*DAILY_RANGE) if end-start>=60 else 0
+        opportunities=[]
+        for slot in range(budget):
+            left=start+(end-start)*slot/budget;right=start+(end-start)*(slot+1)/budget
+            at=min(self.rng.uniform(left,right),right-0.001)
+            opportunities.append({'slot':slot,'at':at,'until':min(at+45*60,end)})
+        db.execute('INSERT OR IGNORE INTO random_days VALUES(?,?,?,?)',
+            (day,budget,json.dumps(opportunities),now))
+        return self.decode_plan(db.execute('SELECT * FROM random_days WHERE day=?',(day,)).fetchone())
+
     def plan(self,now=None):
-        now=self.clock() if now is None else now;day=self.day(now)
+        now=self.clock() if now is None else now
         with self.connect() as db:
-            row=db.execute('SELECT * FROM days WHERE day=?',(day,)).fetchone()
-            if row:return dict(row)
-            slots=[]
-            for slot in range(2):
-                start,end=self.edges(day,slot);start=max(start,now+120)
-                slots.append(self.rng.uniform(start,end) if start<end else -1)
-            db.execute('INSERT OR IGNORE INTO days VALUES (?,?,?)',(day,*slots))
-            return dict(db.execute('SELECT * FROM days WHERE day=?',(day,)).fetchone())
+            db.execute('BEGIN IMMEDIATE')
+            return self._plan(db,now)
+
+    def _slot_ready(self,db,day,slot,now):
+        if type(slot) is not int or day!=self.day(now):return False
+        plan=self._plan(db,now)
+        return any(item['slot']==slot and item['at']<=now<item['until'] for item in plan['opportunities'])
+
     def due(self,now=None):
         now=self.clock() if now is None else now;plan=self.plan(now)
         with self.connect() as db:
-            used={r[0] for r in db.execute('SELECT slot FROM attempts WHERE day=?',(plan['day'],))}
-        for slot,name in enumerate(('morning','evening')):
-            if slot not in used and plan[name]>0 and plan[name]<=now<self.edges(plan['day'],slot)[1]:return (plan['day'],slot)
+            used={r[0] for r in db.execute('SELECT slot FROM attempts WHERE day=? UNION SELECT slot FROM evaluations WHERE day=?',(plan['day'],plan['day']))}
+        for item in plan['opportunities']:
+            if item['slot'] not in used and item['at']<=now<item['until']:return (plan['day'],item['slot'])
         return None
     def _automatic_care_ready(self,db,now):
-        return not self.get(db,'pending_at') and now-self.get(db,'last_push')>=14400
+        return not self.get(db,'pending_at') and now>=self.get(db,'next_push_at')
     def _eligible(self,db,now):
         return (self._automatic_care_ready(db,now) and now-self.get(db,'last_activity')>=3600
-            and db.execute('SELECT count(*) FROM attempts WHERE day=?',(self.day(now),)).fetchone()[0]<2)
+            and db.execute('SELECT count(*) FROM attempts WHERE day=?',(self.day(now),)).fetchone()[0]<self._plan(db,now)['budget'])
     def eligible(self):
         with self.connect() as db:return self._eligible(db,self.clock())
     def epoch(self):
@@ -73,16 +97,29 @@ class InitiativeStore:
         with self.connect() as db:return db.execute('SELECT 1 FROM attempts WHERE source=?',(source,)).fetchone() is not None
     def reserve(self,day,slot,source,kind,epoch):
         now=self.clock()
-        if slot not in (0,1) or day!=self.day(now):return False
-        plan=self.plan(now);when=plan[('morning','evening')[slot]]
-        if not 0<when<=now<self.edges(day,slot)[1]:return False
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            if day!=self.day(now) or not self._eligible(db,now) or self.get(db,'epoch')!=epoch:return False
+            if not self._slot_ready(db,day,slot,now) or not self._eligible(db,now) or self.get(db,'epoch')!=epoch:return False
             if kind=='care' and db.execute("SELECT 1 FROM attempts WHERE day=? AND kind='care'",(day,)).fetchone():return False
             try:db.execute('INSERT INTO attempts VALUES (?,?,?,?,?,?,?,?)',(day,slot,source,kind,'generating',now,None,None))
             except sqlite3.IntegrityError:return False
         return True
+
+    def claim_evaluation(self,day,slot,epoch):
+        now=self.clock()
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if (not self._slot_ready(db,day,slot,now) or self.get(db,'epoch')!=epoch or not self._eligible(db,now)
+                    or db.execute('SELECT 1 FROM attempts WHERE day=? AND slot=?',(day,slot)).fetchone()):return False
+            return db.execute('INSERT OR IGNORE INTO evaluations VALUES(?,?,?,?,?)',
+                (day,slot,epoch,'started',now)).rowcount==1
+
+    def finish_evaluation(self,day,slot,status):
+        with self.connect() as db:db.execute('UPDATE evaluations SET status=? WHERE day=? AND slot=?',(status,day,slot))
+
+    def recent_sent(self):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute("SELECT source,body,at FROM attempts WHERE status='sent' ORDER BY at DESC LIMIT 4")]
     def begin_send(self,day,slot,epoch,body):
         now=self.clock()
         with self.connect() as db:
@@ -90,10 +127,11 @@ class InitiativeStore:
             row=db.execute('SELECT status FROM attempts WHERE day=? AND slot=?',(day,slot)).fetchone()
             # Reservation already counts toward the daily cap, so this check is
             # intentionally separate from _eligible().
-            if (day!=self.day(now) or now>=self.edges(day,slot)[1] or not row or row[0]!='generating' or self.get(db,'epoch')!=epoch
+            if (not self._slot_ready(db,day,slot,now) or not row or row[0]!='generating' or self.get(db,'epoch')!=epoch
                     or not self._automatic_care_ready(db,now) or now-self.get(db,'last_activity')<3600):return False
             db.execute("UPDATE attempts SET status='sending',body=? WHERE day=? AND slot=?",(body,day,slot))
             self.set(db,'pending_at',now);self.set(db,'last_activity',now);self.set(db,'last_push',now)
+            self.set(db,'next_push_at',now+self.rng.uniform(*COOLDOWN_SECONDS))
         return True
     def finish(self,day,slot,status,error=''):
         with self.connect() as db:db.execute('UPDATE attempts SET status=?,error=? WHERE day=? AND slot=?',(status,error[:100],day,slot))
@@ -119,6 +157,7 @@ class InitiativeStore:
             db.execute('BEGIN IMMEDIATE')
             if not self._automatic_care_ready(db,now):return False
             self.set(db,'pending_at',now);self.set(db,'last_activity',now);self.set(db,'last_push',now)
+            self.set(db,'next_push_at',now+self.rng.uniform(*COOLDOWN_SECONDS))
         return True
     def diagnose(self,kind,reason=''):
         with self.connect() as db:
@@ -135,8 +174,12 @@ class InitiativeStore:
             sent=db.execute("SELECT count(*) FROM attempts WHERE day=? AND status='sent'",(day,)).fetchone()[0]
             attempted=db.execute('SELECT count(*) FROM attempts WHERE day=?',(day,)).fetchone()[0]
             last=db.execute('SELECT status,error FROM attempts ORDER BY at DESC LIMIT 1').fetchone()
-            return {'spontaneous_enabled':True,'daily_limit':2,'sent_today':sent,'attempts_today':attempted,
-                'awaiting_reply':bool(self.get(db,'pending_at')),'windows_beijing':['10:00-12:00','18:00-20:30'],
+            plan=db.execute('SELECT budget,opportunities FROM random_days WHERE day=?',(day,)).fetchone()
+            return {'spontaneous_enabled':True,'frequency_mode':'random_daily','daily_limit_range':list(DAILY_RANGE),
+                'daily_limit':plan['budget'] if plan else None,'sent_today':sent,'attempts_today':attempted,
+                'awaiting_reply':bool(self.get(db,'pending_at')),'windows_beijing':['09:00-21:00'],
+                'cooldown_minutes_range':[int(n/60) for n in COOLDOWN_SECONDS],
+                'next_push_allowed_at':self.get(db,'next_push_at'),
                 'last_check_at':self.get(db,'last_check_at'),'last_skip_reason':self.get(db,'last_skip_reason'),'last_skip_at':self.get(db,'last_skip_at'),
                 'skip_count':self.get(db,'skip_count'),'last_error_type':self.get(db,'last_error_type'),
                 'last_error_at':self.get(db,'last_error_at'),'error_count':self.get(db,'error_count'),

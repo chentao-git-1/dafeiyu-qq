@@ -270,18 +270,19 @@ class Native(unittest.IsolatedAsyncioTestCase):
 
     async def test_short_ack_text_and_explicit_voice_override(self):
         e=await self.deliver('嗯嗯');self.tts.get_audio.assert_not_awaited()
-        self.assertEqual(sum(isinstance(x,Plain) for x in e.get_result().chain),1)
+        self.assertEqual(sum(isinstance(x,Plain) for x in e.get_result().chain),2)
         await self.deliver('请用语音说晚安');self.assertEqual(self.tts.get_audio.await_count,1)
 
     async def test_configured_probability_zero_and_text_preference_disable_auto_voice(self):
         await self.deliver('今天有什么新发现',probability=0);self.tts.get_audio.assert_not_awaited()
         await self.deliver('今天有什么新发现',profile='text');self.tts.get_audio.assert_not_awaited()
 
-    async def test_synthesis_failure_keeps_single_text_without_native_retry(self):
+    async def test_synthesis_failure_keeps_model_text_without_native_retry(self):
         e=await self.deliver('今天有什么新发现',failure=True)
-        self.assertEqual(self.tts.get_audio.await_count,1);self.assertFalse(e.get_result().is_llm_result())
+        self.assertEqual(self.tts.get_audio.await_count,1);self.assertTrue(e.get_result().is_llm_result())
         self.assertEqual(sum(isinstance(x,Record) for x in e.get_result().chain),0)
-        self.assertEqual(sum(isinstance(x,Plain) for x in e.get_result().chain),1)
+        self.assertEqual(sum(isinstance(x,Plain) for x in e.get_result().chain),2)
+        self.assertTrue(e.get_extra('_dafeiyu_skip_native_tts'))
 
     async def test_other_bot_and_session_tts_off_keep_native_scope(self):
         for args in ({'platform':'other'},{'session':False}):

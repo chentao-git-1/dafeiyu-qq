@@ -19,6 +19,8 @@ METRICS = {'recall_candidates', 'recall_selected', 'recall_time_filter', 'recall
            'prompt_characters', 'context_messages', 'context_characters', 'extra_characters'}
 CALLS = {'agent_runs', 'reported_agent_runs', 'vision', 'tts', 'tools', 'tts_characters'}
 OUTCOMES = {'reply', 'partial', 'timeout', 'delivery_failed', 'notice', 'no_reply', 'cancelled'}
+CONTENT_STATES={'untracked','accepted','recovered','unavailable'}
+GENERATION_STAGES={'format','source','learning','privacy','review','context'}
 
 
 def number(value):
@@ -173,8 +175,14 @@ class Turn:
                    'partial' if state.get('delivery_failed') and state.get('final_sends') else
                    'delivery_failed' if state.get('delivery_failed') else
                    'reply' if any(r.get('kind') == 'reply' for r in receipts) else 'notice' if receipts else 'no_reply')
+        failure=event.get_extra('dafeiyu_generation_failure_kind',None)
+        attempts=1 if event.get_extra('dafeiyu_recovery_attempts',0) else 0
+        content=('unavailable' if failure in GENERATION_STAGES else
+            'recovered' if event.get_extra('dafeiyu_generation_valid',False) and attempts else
+            'accepted' if event.get_extra('dafeiyu_generation_valid',False) else 'untracked')
         return {'trace_id': self.trace_id, 'at': self.at, 'scope': self.scope, 'session_hash': self.session,
                 'message_id': self.message_id, 'outcome': outcome, 'total_ms': round(max(0, now - self.started) * 1000, 2),
+                'content_status':content,'generation_failure':failure if failure in GENERATION_STAGES else None,'recovery_attempts':attempts,
                 'phases_ms': {k: round(v, 2) for k, v in self.phases.items()},
                 'reported_tokens': self.usage, 'calls': self.calls.copy(), 'failures': self.failures.copy(), 'metrics': self.metrics.copy()}
 
@@ -188,6 +196,9 @@ def clean_row(row):
     if row.get('scope') not in ('private', 'group') or not re.fullmatch(r'[a-f0-9]{16}', str(row.get('session_hash', ''))):
         return None
     result = {k: row[k] for k in ('trace_id', 'at', 'scope', 'session_hash', 'outcome', 'total_ms')}
+    result['content_status']=row.get('content_status') if row.get('content_status') in CONTENT_STATES else 'untracked'
+    result['generation_failure']=row.get('generation_failure') if row.get('generation_failure') in GENERATION_STAGES else None
+    result['recovery_attempts']=1 if row.get('recovery_attempts')==1 else 0
     mid = str(row.get('message_id', ''))
     result['message_id'] = mid if re.fullmatch(r'-?\d{1,24}', mid) else ''
     for key, allowed in (('phases_ms', PHASES), ('failures', PHASES), ('metrics', METRICS), ('calls', CALLS)):

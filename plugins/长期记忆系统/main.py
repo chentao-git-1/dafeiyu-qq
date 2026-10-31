@@ -56,7 +56,7 @@ PLUGIN_ID = "astrbot_plugin_memory_system"  # 数据目录等使用的稳定英�
     name="长期记忆系统",
     author=AUTHOR,
     desc="为机器人提供跨会话的长期记忆：自动提取、相关检索、上下文注入、历史压缩、LLM 记忆工具与可视化面板",
-    version="1.4.0",
+    version="1.5.0",
     repo="https://github.com/Zxin-Pro/astrbot_plugin_memory_system",
 )
 class MemorySystemPlugin(Star):
@@ -93,6 +93,8 @@ class MemorySystemPlugin(Star):
             self.db,
             self.manager,
             candidate_pool=int(self.config.get("candidate_pool", 300)),
+            embedding=self.adapter.get_embedding if self.config.get('embedding_enable',False) else None,
+            embedding_version=self.adapter.embedding_version,
         )
         llm_caller = self.adapter.make_llm_caller()
         self.manager.quality = MemoryQuality(self.db, llm_caller)
@@ -278,7 +280,7 @@ class MemorySystemPlugin(Star):
 
             # 1) 上下文自动压缩
             contexts = list(getattr(req, "contexts", None) or [])
-            if contexts and self.config.get("auto_compress", True):
+            if contexts and self.config.get("auto_compress", True) and not event.get_extra('dafeiyu_generation_contract',False):
                 new_contexts, _summary = await self.compressor.compress(
                     user_id, session_id, contexts, force=False
                 )
@@ -286,7 +288,7 @@ class MemorySystemPlugin(Star):
                     req.contexts = new_contexts
 
             # 2) 记忆包注入（追加到 system_prompt 末尾，不覆盖人格设定）
-            if self.config.get("auto_recall", True):
+            if self.config.get("auto_recall", True) and not event.get_extra('dafeiyu_dialogue_v2',False):
                 pack = await self.injector.build_pack(user_id, query)
                 if pack:
                     req.system_prompt = f"{req.system_prompt}\n\n{pack}".strip()
@@ -307,6 +309,8 @@ class MemorySystemPlugin(Star):
     @scoped_event
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse) -> None:
         """LLM 响应后：自动记忆提取（后台任务，不阻塞回复发送）。"""
+        if event.get_extra('dafeiyu_generation_contract', False):
+            return  # Main generation owns source-bound proposals; never extract the raw JSON or double-write.
         if not self._enabled() or self.extractor is None:
             return
         raw = getattr(event.message_obj, 'raw_message', None)
@@ -442,6 +446,20 @@ class MemorySystemPlugin(Star):
             return f"记忆删除失败: {e}"
 
     # ------------------------------------------------------------------ 管理命令
+
+    @scoped_event
+    async def forget_owned(self, event, ids=None):
+        """Internal semantic-forgetting adapter; identity and shared scope remain native."""
+        if self.db is None:return 0
+        uid=self.adapter.get_user_id(event)
+        if ids is None:return await self.db.clear(uid)
+        removed=0
+        await self.db.withdraw_pending()
+        for mid in ids:
+            row=await self.db.get(int(mid))
+            if row and str(row['user_id'])==uid:
+                removed+=int(await self.db.delete_memory(int(mid)))
+        return removed
 
     @filter.command("记忆")
     @scoped_event
