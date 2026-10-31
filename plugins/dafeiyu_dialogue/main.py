@@ -31,7 +31,7 @@ from .provider_contract import ProviderContracts,arm_contract
 from .metering import MeteredProvider
 
 
-@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.4.2')
+@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.4.3')
 class Dialogue(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -527,7 +527,8 @@ class Dialogue(Star):
             stage='review'
             if recover and self.config.get('response_review','enforce')!='enforce':
                 raise ValueError('Metadata recovery requires enforced semantic review')
-            if (recover or 'self' in generated.focus or 'action' in generated.focus or len(generated.reply)>120
+            if (recover or 'self' in generated.focus or 'action' in generated.focus or len(generated.reply)>80
+                    or '\n\n' in generated.reply
                     or generated.claims or tool_rows
                     or materials.get('historical_tool_results')):
                 checked = await self.reviewed(event, [generated.reply], event.unified_msg_origin)
@@ -836,7 +837,7 @@ class Dialogue(Star):
         except Exception as error:return json.dumps({'confirmed':False,'error_type':type(error).__name__})
 
     async def status(self):
-        return json_response({'version': '0.4.2', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.4.3', 'mode': self.config.get('mode', 'shadow'),
             'legacy_adapter_ready': getattr(self.natural(), 'dialogue_context_protocol', 0) == 4,
             'active_private_user_count': len(self.config.get('active_private_users', [])),
             'all_allowed_private':bool(self.config.get('all_allowed_private',False)),
