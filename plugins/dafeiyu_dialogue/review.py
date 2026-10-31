@@ -38,6 +38,7 @@ VERIFY_POLICY+='\n历史工具结果只支持过去那次查得的事实；逐�
 DELIVERY_POLICY='\nmaterials.delivery_receipts来自本轮实际发送确认，media_types说明图片或音频已发出；不能在已有图片发送确认时笼统断言没有发出任何图片。它只证明相应媒介发送，不证明任意图片内容、搜索结果、生成任务或对方已读；具体作品仍对应实际工具结果，不把无关表情图片当作目标作品完成。'
 POLICY+=DELIVERY_POLICY
 VERIFY_POLICY+=DELIVERY_POLICY
+POLICY+='\nmaterials.rejected_revision若存在，包含上次改写未通过独立事实核对的逐字片段。只修正这些存疑事实及其必要上下文，保留有依据的回答、主观看法和当前构思；不要以核对流程说明或笼统拒绝替代回答。必须依据当前材料重新判断，不把上次草稿当事实来源。'
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,12 @@ class ReviewResult:
     segments: tuple[str, ...]
     decision: str
     issue_kinds: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    supported: bool
+    violations: tuple[dict, ...] = ()
 
 
 def parse_review(raw, segments):
@@ -98,14 +105,14 @@ async def structured_result(call,packet,policy,parse,timeout):
     return await asyncio.wait_for(run(),timeout=timeout)
 
 
-def parse_verification(raw,segments):
+def parse_verification_report(raw,segments):
     obj=json_object(raw)
     if set(obj)!={'supported','violations'} or type(obj['supported']) is not bool or not isinstance(obj['violations'],list):
         raise ValueError('Invalid verification')
     violations=obj['violations']
     if obj['supported']:
         if violations:raise ValueError('Contradictory verification')
-        return True
+        return VerificationResult(True)
     if not violations or len(violations)>12:raise ValueError('Missing verification evidence')
     for row in violations:
         if not isinstance(row,dict) or set(row)!={'segment_id','span'}:
@@ -114,13 +121,18 @@ def parse_verification(raw,segments):
         if (type(index) is not int or not 0<=index<len(segments) or not isinstance(span,str)
                 or not span or span not in segments[index]):
             raise ValueError('Verification must quote exact revision')
-    return False
+    return VerificationResult(False,tuple(violations))
 
 
-async def verify_revision(segments, materials, call, *, human='', history=(), tool_results=(), timeout=8):
+def parse_verification(raw,segments):
+    return parse_verification_report(raw,segments).supported
+
+
+async def verify_revision(segments, materials, call, *, human='', history=(), tool_results=(), timeout=8,report=False):
     packet={'human':human,'history':list(history),'materials':materials,'tool_results':list(tool_results),
         'segments':[{'segment_id':i,'text':text} for i,text in enumerate(segments)]}
-    return await structured_result(call,packet,VERIFY_POLICY,lambda raw:parse_verification(raw,segments),timeout)
+    result=await structured_result(call,packet,VERIFY_POLICY,lambda raw:parse_verification_report(raw,segments),timeout)
+    return result if report else result.supported
 
 
 async def review(segments, materials, call, *, human='', history=(), tool_results=(), audience='', timeout=12):

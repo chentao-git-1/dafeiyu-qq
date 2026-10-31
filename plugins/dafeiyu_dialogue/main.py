@@ -31,7 +31,7 @@ from .provider_contract import ProviderContracts,arm_contract
 from .metering import MeteredProvider
 
 
-@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.4.3')
+@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.4.4')
 class Dialogue(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -49,6 +49,8 @@ class Dialogue(Star):
     def natural(self):
         meta = self.context.get_registered_star('dafeiyu_natural_chat')
         return getattr(meta, 'star_cls', None) if meta and meta.activated else None
+
+    async def initialize(self):self.provider_contracts.install_runner()
 
     async def terminate(self):self.provider_contracts.close()
 
@@ -132,6 +134,7 @@ class Dialogue(Star):
     @filter.on_llm_request(priority=sys.maxsize + 100)
     async def choose_path(self, event, req):
         # Fail closed and avoid changing tools shared with the framework registry.
+        req._dafeiyu_generation_binding=None
         event.set_extra(ACTIVE_KEY, False)
         try:
             turn = self.identity(event)
@@ -262,6 +265,7 @@ class Dialogue(Star):
                     event.set_extra('dafeiyu_claim_sources',sources)
                     req.system_prompt = request_contract(req.system_prompt, sources, learning_enabled,
                         nonce=event.get_extra('dafeiyu_generation_capability',''))
+                    self.provider_contracts.bind_request(req,event.get_extra('dafeiyu_generation_capability'))
                 # Final fact/receipt guards and confirmed-delivery recording remain active.
         except asyncio.CancelledError:
             raise
@@ -384,12 +388,25 @@ class Dialogue(Star):
             human=self.natural().input_snapshot(event)['text'], history=history, tool_results=tools, audience=audience)
         if result.decision == 'revise':
             self.review_stats['revision_checks'] += 1
-            supported = await verify_revision(result.segments, evidence,
+            verified = await verify_revision(result.segments, evidence,
                 lambda prompt, policy: self.provider_call(event, prompt, policy, 'verification'),
-                human=self.natural().input_snapshot(event)['text'], history=history, tool_results=tools)
-            if not supported:
+                human=self.natural().input_snapshot(event)['text'], history=history, tool_results=tools,report=True)
+            if not verified.supported:
                 self.review_stats['revision_rejected'] += 1
-                raise ValueError('Rewritten facts were not supported')
+                if event.get_extra('dafeiyu_dialogue_review_calls',0)>=2:
+                    raise ValueError('Rewritten facts were not supported')
+                event.set_extra('dafeiyu_dialogue_review_calls',calls+2)
+                self.review_stats['revision_repair_attempts']+=1
+                repair_materials=dict(evidence,rejected_revision={'violations':list(verified.violations)})
+                result=await review(result.segments,repair_materials,
+                    lambda prompt,policy:self.provider_call(event,prompt,policy,'review'),
+                    human=self.natural().input_snapshot(event)['text'],history=history,tool_results=tools,audience=audience)
+                self.review_stats['revision_checks']+=1
+                supported=await verify_revision(result.segments,evidence,
+                    lambda prompt,policy:self.provider_call(event,prompt,policy,'verification'),
+                    human=self.natural().input_snapshot(event)['text'],history=history,tool_results=tools)
+                if not supported:raise ValueError('Rewritten facts were not supported after bounded repair')
+                self.review_stats['revision_repaired']+=1
         after_completed, after_progress = await self.own_activity()
         after_self=self_state(after_completed, after_progress, [] if cross_session else await self.conversation_works(event))
         if after_self != evidence['verified_self']:
@@ -586,11 +603,16 @@ class Dialogue(Star):
             self.review_stats['contract_failed_'+stage] += 1
             event.set_extra('dafeiyu_generation_failure_kind',stage)
             if stage=='format':event.set_extra('dafeiyu_learning_state_urgent',True)
-            response.completion_text = UNAVAILABLE
-            event.set_extra('dafeiyu_generation_final_text',UNAVAILABLE)
+            delivered=any(r.get('kind')=='reply' and (r.get('text') or r.get('media_types'))
+                for r in event.get_extra('dafeiyu_confirmed_delivery',[]))
+            response.completion_text = '' if delivered else UNAVAILABLE
+            event.set_extra('dafeiyu_generation_final_text',response.completion_text)
+            event.set_extra('dafeiyu_generation_delivery_only',delivered)
+            if delivered:self.review_stats['delivered_tail_suppressed']+=1
             if not event.get_extra('dafeiyu_learning_valid',False):event.set_extra('dafeiyu_learning_pending', [])
             event.set_extra('dafeiyu_dialogue_last_review', 'unavailable')
-            logger.warning('Dialogue generation unavailable (%s): %s',stage,type(error).__name__)
+            self.review_stats['contract_failed_'+stage+'_'+type(error).__name__]+=1
+            logger.warning('Dialogue generation unavailable (%s): %s; delivered_tail_suppressed=%s',stage,type(error).__name__,delivered)
 
     async def forget_legacy(self,event,turn,privacy):
         action=privacy['action'];ids=None if action=='forget_all' else privacy['ids']
@@ -625,6 +647,9 @@ class Dialogue(Star):
         if not event.get_extra('dafeiyu_generation_contract',False):return
         event.set_extra('dafeiyu_native_context',run_context)
         event.set_extra('dafeiyu_native_expected_text',str(getattr(response,'completion_text','') or ''))
+        if event.get_extra('dafeiyu_generation_delivery_only',False) and run_context.messages:
+            last=run_context.messages[-1]
+            if getattr(last,'role',None)=='assistant' and not getattr(last,'tool_calls',None):last._no_save=True
         if not self.feature('learning_v2'):return
         epoch=await asyncio.to_thread(self.learning_store().context_epoch)
         action=event.get_extra('dafeiyu_privacy_action','none')
@@ -837,7 +862,8 @@ class Dialogue(Star):
         except Exception as error:return json.dumps({'confirmed':False,'error_type':type(error).__name__})
 
     async def status(self):
-        return json_response({'version': '0.4.3', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.4.4', 'mode': self.config.get('mode', 'shadow'),
+            'native_context_adapter_installed':self.provider_contracts.runner_adapter is not None,
             'legacy_adapter_ready': getattr(self.natural(), 'dialogue_context_protocol', 0) == 4,
             'active_private_user_count': len(self.config.get('active_private_users', [])),
             'all_allowed_private':bool(self.config.get('all_allowed_private',False)),

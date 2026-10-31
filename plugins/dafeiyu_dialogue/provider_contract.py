@@ -3,6 +3,7 @@ import functools
 import inspect
 import json
 import re
+import copy
 from contextvars import ContextVar
 import uuid
 
@@ -17,6 +18,16 @@ class WireMessages(list):
     _dafeiyu_protocol_projected=True
 
 
+class NativeContexts(list):
+    """Capability attached by the owned runner, never inferred from chat text."""
+    def __init__(self,messages,nonce):
+        super().__init__(messages);self.nonce=nonce
+
+    def __copy__(self):return list(self)
+
+    def __deepcopy__(self,memo):return copy.deepcopy(list(self),memo)
+
+
 def arm_contract(enabled):
     nonce=uuid.uuid4().hex if enabled else None
     CURRENT.set(nonce)
@@ -24,9 +35,14 @@ def arm_contract(enabled):
 
 
 def contract_request(kwargs):
-    prompt=str(kwargs.get('system_prompt') or '')
-    nonce=CURRENT.get()
-    return bool(nonce and MARKER in prompt and '<!-- DAFEIYU_CAP:'+nonce+' -->' in prompt)
+    contexts=kwargs.get('contexts')
+    if isinstance(contexts,NativeContexts):
+        nonce=contexts.nonce
+        prompts=[m.get('content') if isinstance(m,dict) else getattr(m,'content',None)
+            for m in contexts if (m.get('role') if isinstance(m,dict) else getattr(m,'role',None))=='system']
+    else:
+        nonce=CURRENT.get();prompts=[kwargs.get('system_prompt')]
+    return bool(nonce and any(isinstance(p,str) and MARKER in p and '<!-- DAFEIYU_CAP:'+nonce+' -->' in p for p in prompts))
 
 
 def constrain_payload(payload,allow_contract=False,allow_structured=False):
@@ -55,13 +71,11 @@ def constrain_payload(payload,allow_contract=False,allow_structured=False):
 def isolate_background(payload):
     # A summarizer can copy the current system message into contexts. That does
     # not make it a chat generation, nor authorize the chat's JSON instructions.
-    nonce=CURRENT.get()
-    if not nonce:return
     messages=list(payload.get('messages',[]));changed=False
     for index,message in enumerate(messages):
         body=message.get('content')
         if (message.get('role')!='system' or not isinstance(body,str)
-                or '<!-- DAFEIYU_CAP:'+nonce+' -->' not in body):continue
+                or MARKER not in body or not re.search(r'<!-- DAFEIYU_CAP:[a-f0-9]{32} -->',body)):continue
         for name in ('GENERATION','REQUEST_DATA'):
             body=re.sub(r'\n?<!-- BEGIN_DAFEIYU_'+name+r' -->.*?<!-- END_DAFEIYU_'+name+r' -->','',body,flags=re.S)
         messages[index]=dict(message,content=body);changed=True
@@ -69,7 +83,27 @@ def isolate_background(payload):
 
 
 class ProviderContracts:
-    def __init__(self):self.installed=[]
+    def __init__(self):self.installed=[];self.runner_adapter=None
+
+    def install_runner(self):
+        if self.runner_adapter is None:
+            from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+            original=ToolLoopAgentRunner._sanitize_contexts_for_provider
+            owner=self
+            @functools.wraps(original)
+            def contexts(runner,messages):
+                result=original(runner,messages)
+                binding=getattr(runner.req,'_dafeiyu_generation_binding',None)
+                if binding and binding[0] is owner:
+                    owner.install(runner.provider)
+                    return NativeContexts(result,binding[1])
+                return result
+            ToolLoopAgentRunner._sanitize_contexts_for_provider=contexts
+            self.runner_adapter=(ToolLoopAgentRunner,original,contexts)
+
+    def bind_request(self,request,nonce):
+        self.install_runner()
+        request._dafeiyu_generation_binding=(self,nonce)
 
     def install(self,provider):
         if provider is None:return False
@@ -122,6 +156,10 @@ class ProviderContracts:
         return True
 
     def close(self):
+        if self.runner_adapter is not None:
+            runner,original,wrapper=self.runner_adapter
+            if runner._sanitize_contexts_for_provider is wrapper:runner._sanitize_contexts_for_provider=original
+            self.runner_adapter=None
         for provider,originals,wrappers in self.installed:
             for name,original in originals.items():
                 if getattr(provider,name,None) is wrappers[name]:setattr(provider,name,original)
