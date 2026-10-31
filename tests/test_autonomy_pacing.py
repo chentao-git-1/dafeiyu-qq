@@ -138,6 +138,25 @@ class AutonomousActivity(unittest.IsolatedAsyncioTestCase):
             store.set_enabled(False);self.assertFalse((await engine.advance(opportunity=True))['advanced'])
             provider.assert_not_awaited()
 
+    async def test_failed_reading_can_choose_one_original_work_without_repeating_the_search(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store=LifeStore(Path(tmp))
+            first=dict(kind='reading',project_id='',expected_version=0,title='光的细节',question='叶子为什么透亮',source_ids=['operator:seed'],reason='想查一件事')
+            second=dict(kind='writing',project_id='',expected_version=0,title='光的比喻',question='用原创文字表达透亮的感觉',source_ids=['operator:seed'],reason='缺少可核验文章，转为创作，不冒充知识')
+            work=dict(note='光落进一滴水里，像一扇很小的窗。窗里没有房间，只有慢慢变亮的天。',thought='可以用小窗来写透亮的感觉。',story='窗台的小芽照着一滴水，影子很淡。',evidence='',
+                reflection=dict(insight='小窗是一个可以继续发展的比喻',evidence='像一扇很小的窗',next_question='换成月光会怎样',status='active'))
+            model=AsyncMock(side_effect=[NS(completion_text=json.dumps(obj)) for obj in (first,second,work)])
+            ctrl=NS(owner_policy_enabled=lambda flag:True,natural=lambda:NS(actor_owner=lambda:f.OWNER),metered_provider=lambda p,*a:p)
+            engine=LifeEngine(store,NS(get_registered_star=lambda name:NS(activated=True,star_cls=ctrl),get_using_provider_async=AsyncMock(return_value=NS(text_chat=model))))
+            engine.reading=AsyncMock(side_effect=ValueError('No unread primary source available'))
+            with self.assertRaises(ValueError):await engine.advance(bootstrap=True)
+            result=await engine.advance(bootstrap=True)
+            self.assertTrue(result['advanced']);self.assertEqual(result['kind'],'writing');self.assertEqual(result['adapted_from'],'reading')
+            self.assertEqual(store.count(),1);self.assertEqual(len(store.verified_records()),1)
+            self.assertEqual(len(SelfJournal(Path(tmp)).view()['reflections']),1)
+            await engine.advance(bootstrap=True)
+            engine.reading.assert_awaited_once();self.assertEqual(model.await_count,3)
+
 
 class ReplyPacing(unittest.IsolatedAsyncioTestCase):
     asyncSetUp=f.NativeHooks.asyncSetUp

@@ -145,12 +145,13 @@ def parse_choice(raw, packet):
     return choice
 
 
-async def choose_activity(provider, journal, records, allowed_kinds):
+async def choose_activity(provider, journal, records, allowed_kinds, availability=None):
     from data.plugins.dafeiyu_natural_chat.self_profile import self_profile
     from data.plugins.dafeiyu_dialogue.review import structured_result
     packet = {'operator_seed': {'id':'operator:seed','profile':self_profile()}, 'self_state': journal.view(),
         'recent_works': [{k: r[k] for k in ('id', 'day', 'kind', 'note', 'thought', 'source')} for r in records],
         'allowed_kinds': list(allowed_kinds), 'max_activities_today': 1}
+    if availability:packet['availability']=availability
     async def call(prompt,policy):
         response=await provider.text_chat(prompt=prompt,system_prompt=policy,contexts=[],func_tool=None,request_max_retries=1)
         return response.completion_text

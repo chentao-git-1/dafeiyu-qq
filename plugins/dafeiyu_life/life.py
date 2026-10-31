@@ -107,9 +107,12 @@ class LifeStore:
         with self.db() as c:
             c.execute('INSERT OR IGNORE INTO runs(day,run_at,status,updated) VALUES(?,?,?,?)',(day.isoformat(),when,'pending',now))
             return dict(c.execute('SELECT * FROM runs WHERE day=?',(day.isoformat(),)).fetchone())
-    def claim(self,day,kind,now=None):
+    def claim(self,day,kind,now=None,failed_at=None):
         now=time.time() if now is None else now
         with self.db() as c:
+            if failed_at is not None:
+                return c.execute("UPDATE runs SET status='started',kind=?,error=NULL,updated=? WHERE day=? AND status='failed' AND kind='reading' AND updated=?",
+                    (kind,now,day,failed_at)).rowcount==1
             return c.execute("UPDATE runs SET status='started',kind=?,updated=? WHERE day=? AND status='pending'",(kind,now,day)).rowcount==1
     def records(self,limit=7):
         with self.db() as c:
@@ -166,7 +169,7 @@ class LifeStore:
         works=self.root/'works'
         if works.exists():
             for p in works.iterdir():
-                if p.is_file() and str(p.relative_to(self.root)) not in keep:p.unlink()
+                if p.is_file() and p.relative_to(self.root).as_posix() not in keep:p.unlink()
 
 
 class LifeEngine:
@@ -223,37 +226,49 @@ class LifeEngine:
     async def advance(self,bootstrap=False,opportunity=False):
         async with self.lock:
             plan=self.store.schedule();now=time.time()
-            if not self.store.enabled() or plan['status']!='pending':return {'advanced':False,'status':plan['status']}
+            if not self.store.enabled():return {'advanced':False,'status':plan['status']}
             index=self.store.count();kind=ACTIVITIES[index%7]
             controller = getattr(self.context,'get_registered_star',lambda name:None)('dafeiyu_dialogue')
             controller = getattr(controller,'star_cls',None) if controller and controller.activated else None
             semantic = bool(controller and controller.owner_policy_enabled('activity_policy_v2'))
+            # One alternative within the same failed daily slot, never another
+            # search/drawing attempt or an overwrite of an unconfirmed artifact.
+            adapting=bool(semantic and plan['status']=='failed' and plan['kind']=='reading'
+                and not any((self.store.root/'works'/(plan['day']+suffix)).exists() for suffix in ('.json','.jpg')))
+            if plan['status']!='pending' and not adapting:return {'advanced':False,'status':plan['status']}
             if opportunity and not semantic:return {'advanced':False,'status':'autonomy_not_enabled'}
             if not bootstrap and (not 9<=dt.datetime.fromtimestamp(now,TZ).hour<21
-                    or now<plan['run_at'] and not opportunity):return {'advanced':False,'status':'waiting'}
+                    or now<plan['run_at'] and not (opportunity or adapting)):return {'advanced':False,'status':'waiting'}
             choice=project=journal=None
             if semantic:
                 from .planning import SelfJournal, choose_activity
                 journal=SelfJournal(self.store.root)
+                if adapting and not journal.decision(plan['day']):return {'advanced':False,'status':'failed_without_semantic_choice'}
                 # Persist the evaluation slot before any model call; a tick never becomes a retry loop.
-                if journal.decision(plan['day']):return {'advanced':False,'status':'decision_already_used'}
-                if not journal.reserve_choice(plan['day'],{'kind':'pending'}):return {'advanced':False,'status':'decision_already_used'}
+                decision_day=plan['day']+(':adaptation' if adapting else '')
+                if journal.decision(decision_day):return {'advanced':False,'status':'decision_already_used'}
+                if not journal.reserve_choice(decision_day,{'kind':'pending'}):return {'advanced':False,'status':'decision_already_used'}
                 try:
                     provider=await self.context.get_using_provider_async('dafeiyu-qq:FriendMessage:'+str(controller.natural().actor_owner()))
                     if provider is None:raise RuntimeError('Text provider unavailable')
                     provider=controller.metered_provider(provider,'activity')
-                    allowed=['reading','writing']
-                    if index>=6 and not any(r['kind']=='drawing' for r in self.store.records(6)):allowed.append('drawing')
-                    choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed)
-                    journal.save_choice(plan['day'],choice)
+                    allowed=['writing'] if adapting else ['reading','writing']
+                    if not adapting and index>=6 and not any(r['kind']=='drawing' for r in self.store.records(6)):allowed.append('drawing')
+                    if adapting:
+                        choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed,
+                            availability={'prior_choice':journal.decision(plan['day']), 'failed_stage':'reading',
+                                'error_type':plan['error'],'reading':'no_verified_completed_reading',
+                                'instruction':'这次阅读未能完成，不再搜索。可以沿自己的兴趣改做一段原创文字或none；不宣称已读过文章，不把猜测写成知识。仍是当天同一次活动。'})
+                    else:choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed)
+                    journal.save_choice(decision_day,choice)
                 except asyncio.CancelledError:raise
                 except Exception as error:
                     self.store.fail(plan['day'],error);raise
                 kind=choice['kind']
                 if kind=='none':
-                    with self.store.db() as db:db.execute("UPDATE runs SET status='skipped',kind='none',updated=? WHERE day=? AND status='pending'",(time.time(),plan['day']))
+                    with self.store.db() as db:db.execute("UPDATE runs SET status='skipped',kind='none',updated=? WHERE day=? AND status=?",(time.time(),plan['day'],plan['status']))
                     return {'advanced':False,'status':'chose_no_activity'}
-            if not self.store.claim(plan['day'],kind):return {'advanced':False,'status':'claimed'}
+            if not self.store.claim(plan['day'],kind,failed_at=plan['updated'] if adapting else None):return {'advanced':False,'status':'claimed'}
             try:
                 previous=self.store.verified_records(3) if semantic else self.store.records(3);source={};art=None
                 if semantic:project=journal.begin_project(choice)
@@ -311,7 +326,8 @@ class LifeEngine:
                 self.store.finish(plan['day'],record)
                 if semantic:journal.integrate(record,generated.get('reflection'),project)
                 self.store.cleanup()
-                return {'advanced':True,'day':plan['day'],'kind':kind,'artifact_verified':True,'project':record['project'],'stage':record['stage']}
+                return {'advanced':True,'day':plan['day'],'kind':kind,'artifact_verified':True,'project':record['project'],'stage':record['stage'],
+                    'adapted_from':'reading' if adapting else None}
             except asyncio.CancelledError:
                 # A crash/termination leaves a claimed run for reconciliation, never repeats it automatically.
                 raise
