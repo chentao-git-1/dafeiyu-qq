@@ -9,6 +9,7 @@ import time
 
 
 POLICY = '''为AI角色选择一次自己的数字活动。输入仅含操作员种子偏好、真实作品、带来源反思和持续项目，不含人的私聊。结合尚未解决的问题、已做过什么和现在可用的材料，选择继续项目、开一个有理由的新方向，或者暂不行动。不要按次数轮播、随机抽签或为了“有生活”硬凑。
+operator_seed.id也是明确可引用的兴趣来源；尚无作品或项目时，可以从自己的兴趣提出一个具体问题，开始原创文字或受控阅读，不必先有成品才允许创作。创作构思不要求外部事实证据；阅读问题会交给工具查证，不提前编知识或网址。已有项目值得继续时接着推进，不重复建立同一个方向。none仍然是允许的真实选择，不把没有历史成品误解成无法自主开始。
 只输出JSON：{"kind":"reading|writing|drawing|none","project_id":"已有项目编号或空串","expected_version":0,"title":"项目标题","question":"这次具体想弄清或表达什么","source_ids":["实际提供的来源编号"],"reason":"简短依据"}。新项目expected_version为0；继续原项目保留其编号和版本。none时其他文字可为空，source_ids为空。阅读只给研究问题，不生成网址；工具会受控搜索和核验。绘画只有allowed_kinds允许才选择。没有合适材料、没有想推进的事或预算不足可none。不得把未执行的选择说成已完成，不生成联系、发布、改权限或花费的新授权。'''
 
 
@@ -146,9 +147,11 @@ def parse_choice(raw, packet):
 
 async def choose_activity(provider, journal, records, allowed_kinds):
     from data.plugins.dafeiyu_natural_chat.self_profile import self_profile
-    packet = {'operator_seed': self_profile(), 'self_state': journal.view(),
+    from data.plugins.dafeiyu_dialogue.review import structured_result
+    packet = {'operator_seed': {'id':'operator:seed','profile':self_profile()}, 'self_state': journal.view(),
         'recent_works': [{k: r[k] for k in ('id', 'day', 'kind', 'note', 'thought', 'source')} for r in records],
         'allowed_kinds': list(allowed_kinds), 'max_activities_today': 1}
-    response = await asyncio.wait_for(provider.text_chat(prompt=json.dumps(packet, ensure_ascii=False),
-        system_prompt=POLICY, contexts=[], func_tool=None, request_max_retries=0), timeout=25)
-    return parse_choice(response.completion_text, packet)
+    async def call(prompt,policy):
+        response=await provider.text_chat(prompt=prompt,system_prompt=policy,contexts=[],func_tool=None,request_max_retries=1)
+        return response.completion_text
+    return await structured_result(call,packet,POLICY,lambda raw:parse_choice(raw,packet),25)

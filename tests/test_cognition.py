@@ -596,7 +596,7 @@ class NativeProviderContracts(unittest.IsolatedAsyncioTestCase):
         own,foreign=await asyncio.gather(request(True),request(False))
         self.assertEqual(own.payload['response_format'],{'type':'json_object'})
         self.assertEqual(json.loads(own.payload['messages'][1]['content'])['reply'],'实际已发送文字')
-        self.assertEqual(own.retries,0);self.assertEqual(foreign.retries,4)
+        self.assertEqual(own.retries,1);self.assertEqual(foreign.retries,4)
         self.assertNotIn('response_format',foreign.payload)
 
     async def test_stream_does_not_expose_json_deltas_and_tool_arguments_survive(self):

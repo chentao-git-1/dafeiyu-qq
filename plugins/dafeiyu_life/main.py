@@ -16,7 +16,7 @@ from .life import TZ, LifeEngine, LifeStore
 from .topic_context import relevant as relevant_life, world_profile
 
 
-@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.3.0")
+@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.3.1")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -34,6 +34,7 @@ class JingjingLife(Star):
             ["POST"],
             "首次建立鲸鲸自己的手帐",
         )
+        context.register_web_api('/dafeiyu_life/opportunity', self.opportunity, ['POST'], '在原有日常额度内评估一次自主活动')
 
     async def initialize(self):
         self.task = asyncio.create_task(self.loop())
@@ -79,6 +80,9 @@ class JingjingLife(Star):
         if self.store.count():
             return json_response({"advanced": False, "status": "already_initialized"})
         return json_response(await self.engine.advance(bootstrap=True))
+
+    async def opportunity(self):
+        return json_response(await self.engine.advance(opportunity=True))
 
     async def status(self):
         plan = self.store.schedule()
@@ -148,14 +152,25 @@ class JingjingLife(Star):
 
     @filter.llm_tool(name="jingjing_life")
     async def life_tool(self, event, action: str = "status", query: str = "") -> str:
-        """回忆鲸鲸自己的真实阅读、原创手帐和明确属于虚构故事的海边小屋；可按用户要求展示真实插画。
+        """查询或自主推进鲸鲸自己的数字兴趣项目；不必等用户逐项指定要做什么。
+
+        develop会根据已有作品和反思选择阅读、写作或允许的绘画，也可以不做。
+        它与定时日常共用每天一次额度，只在09:00到21:00执行；不创建额外提醒或发送消息。
+        只在爸爸私聊可主动评估，适合确有想推进的兴趣时使用，不在问候和每轮聊天中反复调用。
+        作品资料不含联系人私聊，query只用于recall，不把当前对方的话写进公开日常。
+        只有工具确认完成才说做过，未执行就只谈自己的想法。展示已有插画仍需用户明确要求。
 
         Args:
-            action(string): status近况、recall回忆自己的旧手帐、show_work按用户明确要求发一张已经存在的插画
+            action(string): develop在原有额度内自行选择推进数字项目，status近况，recall查旧手帐，show_work按用户明确要求发已有插画
             query(string): recall的主题或日期关键词，不提供文件路径；没有关键词返回最近五项
         """
         try:
-            self.actor(event)
+            uid=self.actor(event)
+            if action=='develop':
+                if uid!='7000000001' or not event.is_private_chat():return '这个会话只读取已有日常。'
+                result=await self.engine.advance(opportunity=True)
+                if result.get('advanced'):result['completed_work']=self.public_context()
+                return json.dumps(result,ensure_ascii=False)
             records = self.store.records(60)
             if action == "show_work":
                 if not re.search(r"看|发|展示|给我|作品|插画", event.message_str or ""):

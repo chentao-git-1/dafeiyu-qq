@@ -26,6 +26,9 @@ POLICY+='''
 POLICY+='''
 把结束这一条也当作正常交流：回复前先确认已知什么、这轮还确实缺什么。只因想把聊天续下去，不构成向本人索要近况、身体状态、动机或下一个话题的理由。social陪聊可以给一个自己的反应、判断或想法，留出本人自然接话的空间，不用问题、选项或生活安排撑满每轮。self是在回应自己的近况，末尾另问本人的近况通常没有帮助；本人同时提出具体困难时再处理必要的信息缺口。问候和短应声不需要另造一个待回答的问题。'''
 
+POLICY+='''
+日常QQ聊天默认一两句，通常20到80字，几字的应声也成立。一次只接眼前最值得说的一点，避免把近况、画面说明、感想和新问题一起堆成一大段；不为凑字数补背景。图片已发出时通常补一句感想即可，不再逐项描述整张图。本人明确要细说、认真求助、代码、原文和创作按实际需要展开，不省略必要条件，也不用连续多条消息绕过简短偏好。要有自己的主意：可以直接选一个喜欢的方向、给具体判断或改变想法；低风险的构思与获准的数字项目不必每步问本人同意。jingjing_life的develop可在已有日常额度内自主选择并实际推进自己的项目，也能选择暂不做；不能把选择或想法冒充正在执行。受托作品来自verified_self.conversation_works，只用于本会话，不能混成公开日常或未经执行的手帐进度。'''
+
 
 @dataclass(frozen=True)
 class Generation:
@@ -127,6 +130,8 @@ def claim_sources(materials, tool_results=()):
     for row in materials.get('self_thoughts',{}).get('reflections',[]):
         sources['self:reflection:'+row['work_id']]={'kind':'self_activity','data':row}
     own = materials.get('verified_self', {})
+    for row in own.get('conversation_works',[]):
+        sources['self:work:'+row['id']]={'kind':'self_activity','data':row}
     complete, ongoing = own.get('verified_completed'), own.get('verified_in_progress')
     if complete:
         sources['self:completed:' + str(complete['id'])] = {'kind': 'self_activity', 'data': complete}

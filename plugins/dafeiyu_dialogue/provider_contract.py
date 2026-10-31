@@ -2,6 +2,7 @@
 import functools
 import inspect
 import json
+import re
 from contextvars import ContextVar
 import uuid
 
@@ -9,6 +10,7 @@ MARKER='<!-- BEGIN_DAFEIYU_GENERATION -->'
 STRUCTURED_MARKER='<!-- DAFEIYU_STRUCTURED_TASK -->'
 CURRENT=ContextVar('dafeiyu_generation_capability',default=None)
 STRUCTURED=ContextVar('dafeiyu_structured_task',default=False)
+WIRE_SCOPE=ContextVar('dafeiyu_wire_scope',default=(False,False))
 
 
 class WireMessages(list):
@@ -50,6 +52,22 @@ def constrain_payload(payload,allow_contract=False,allow_structured=False):
         messages[index]=wire
 
 
+def isolate_background(payload):
+    # A summarizer can copy the current system message into contexts. That does
+    # not make it a chat generation, nor authorize the chat's JSON instructions.
+    nonce=CURRENT.get()
+    if not nonce:return
+    messages=list(payload.get('messages',[]));changed=False
+    for index,message in enumerate(messages):
+        body=message.get('content')
+        if (message.get('role')!='system' or not isinstance(body,str)
+                or '<!-- DAFEIYU_CAP:'+nonce+' -->' not in body):continue
+        for name in ('GENERATION','REQUEST_DATA'):
+            body=re.sub(r'\n?<!-- BEGIN_DAFEIYU_'+name+r' -->.*?<!-- END_DAFEIYU_'+name+r' -->','',body,flags=re.S)
+        messages[index]=dict(message,content=body);changed=True
+    if changed:payload['messages']=messages
+
+
 class ProviderContracts:
     def __init__(self):self.installed=[]
 
@@ -65,16 +83,18 @@ class ProviderContracts:
         @functools.wraps(convert)
         def convert_payload(payload):
             convert(payload)
-            systems=[m.get('content','') for m in payload.get('messages',[]) if m.get('role')=='system' and isinstance(m.get('content'),str)]
-            own=any(contract_request({'system_prompt':s}) for s in systems)
-            structured=STRUCTURED.get() and any(STRUCTURED_MARKER in s for s in systems)
+            own,structured=WIRE_SCOPE.get()
+            if not own:isolate_background(payload)
             constrain_payload(payload,own,structured)
 
         @functools.wraps(chat)
         async def text_chat(*args,**kwargs):
             own=contract_request(kwargs)
             if own:kwargs['request_max_retries']=1
-            result=await chat(*args,**kwargs)
+            structured=bool(STRUCTURED.get() and STRUCTURED_MARKER in str(kwargs.get('system_prompt') or ''))
+            token=WIRE_SCOPE.set((own,structured))
+            try:result=await chat(*args,**kwargs)
+            finally:WIRE_SCOPE.reset(token)
             if own:
                 if getattr(result,'tools_call_name',None):result.completion_text=''
             return result
@@ -91,7 +111,10 @@ class ProviderContracts:
                     result.is_chunk=False
                     yield result
                     return
-                async for chunk in stream(*args,**kwargs):yield chunk
+                token=WIRE_SCOPE.set((False,False))
+                try:
+                    async for chunk in stream(*args,**kwargs):yield chunk
+                finally:WIRE_SCOPE.reset(token)
             wrappers['text_chat_stream']=text_chat_stream
         for name,method in wrappers.items():setattr(provider,name,method)
         provider._dafeiyu_generation_json_owner=self

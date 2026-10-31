@@ -31,7 +31,7 @@ from .provider_contract import ProviderContracts,arm_contract
 from .metering import MeteredProvider
 
 
-@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.4.1')
+@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.4.2')
 class Dialogue(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -207,6 +207,7 @@ class Dialogue(Star):
                 facts={} if event.get_extra('dafeiyu_generation_contract',False) else event.get_extra('jingjing_current_facts', {}),
                 character=character,
                 preferences={} if turn.is_group else natural.interaction_store().preferences(turn.actor), life=record, progress=progress,
+                works=await self.conversation_works(event),
                 budget=self.config.get('memory_characters', 3600), ranked=ranked,
                 contract=event.get_extra('dafeiyu_generation_contract',False))
             if event.get_extra('dafeiyu_generation_contract',False):
@@ -325,6 +326,14 @@ class Dialogue(Star):
             except (OSError,sqlite3.Error,KeyError,ValueError,TypeError):return {}
         return await asyncio.to_thread(read)
 
+    async def conversation_works(self,event):
+        meta=self.context.get_registered_star('astrbot_plugin_dafeiyu_draw')
+        drawing=getattr(meta,'star_cls',None) if meta and meta.activated else None
+        if drawing is None or not callable(getattr(drawing,'conversation_works',None)):return []
+        turn=self.identity(event)
+        try:return await asyncio.to_thread(drawing.conversation_works,turn.actor,turn.origin)
+        except (OSError,ValueError,sqlite3.Error):return []
+
     async def provider_call(self, event, prompt, policy, purpose):
         if SCHEMA_RETRY in policy:
             if event.get_extra('dafeiyu_recovery_attempts',0):raise ValueError('Per-turn recovery budget exhausted')
@@ -351,12 +360,13 @@ class Dialogue(Star):
         existing = {row.id: row.data() for row in current.items if row.visible_to(turn)}
         evidence['memory'] = [row for row in evidence.get('memory', []) if existing.get(row.get('id')) == row]
         completed, progress = await self.own_activity()
-        evidence['verified_self'] = self_state(completed, progress)
+        evidence['verified_self'] = self_state(completed, progress, await self.conversation_works(event))
         evidence['self_thoughts']=await self.own_thoughts()
         cross_session = audience and audience != event.unified_msg_origin
         if cross_session:
             evidence['memory'] = [row for row in evidence.get('memory', []) if row.get('visibility') == 'shared']
             evidence['historical_tool_results']=[]
+            evidence['verified_self']['conversation_works']=[]
         history = event.get_extra('dafeiyu_dialogue_history', [])
         tools = event.get_extra('dafeiyu_dialogue_tool_evidence', [])
         packet = {'segments': segments, 'evidence': evidence, 'history': history, 'tools': tools, 'audience': audience}
@@ -381,7 +391,8 @@ class Dialogue(Star):
                 self.review_stats['revision_rejected'] += 1
                 raise ValueError('Rewritten facts were not supported')
         after_completed, after_progress = await self.own_activity()
-        if self_state(after_completed, after_progress) != evidence['verified_self']:
+        after_self=self_state(after_completed, after_progress, [] if cross_session else await self.conversation_works(event))
+        if after_self != evidence['verified_self']:
             raise ValueError('Activity evidence changed during review')
         if await self.own_thoughts()!=evidence['self_thoughts']:raise ValueError('Reflection evidence changed during review')
         if (review_epoch is not None and review_epoch!=await asyncio.to_thread(self.learning_store().context_epoch)):
@@ -455,7 +466,7 @@ class Dialogue(Star):
                     kept.append(row)
                 materials['learned_context']=kept
             complete, running = await self.own_activity()
-            materials['verified_self'] = self_state(complete, running)
+            materials['verified_self'] = self_state(complete, running, await self.conversation_works(event))
             materials['self_thoughts']=await self.own_thoughts()
             tool_rows = event.get_extra('dafeiyu_dialogue_tool_evidence', [])
             offered = dict(event.get_extra('dafeiyu_claim_sources', {}))
@@ -516,7 +527,7 @@ class Dialogue(Star):
             stage='review'
             if recover and self.config.get('response_review','enforce')!='enforce':
                 raise ValueError('Metadata recovery requires enforced semantic review')
-            if (recover or 'self' in generated.focus and 'fiction' not in generated.focus or 'action' in generated.focus
+            if (recover or 'self' in generated.focus or 'action' in generated.focus or len(generated.reply)>120
                     or generated.claims or tool_rows
                     or materials.get('historical_tool_results')):
                 checked = await self.reviewed(event, [generated.reply], event.unified_msg_origin)
@@ -582,6 +593,10 @@ class Dialogue(Star):
 
     async def forget_legacy(self,event,turn,privacy):
         action=privacy['action'];ids=None if action=='forget_all' else privacy['ids']
+        meta=self.context.get_registered_star('astrbot_plugin_dafeiyu_draw')
+        drawing=getattr(meta,'star_cls',None) if meta and meta.activated else None
+        if drawing and callable(getattr(drawing,'forget_works',None)):
+            await asyncio.to_thread(drawing.forget_works,turn.actor,turn.origin)
         meta=self.context.get_registered_star('长期记忆系统')
         memory=getattr(meta,'star_cls',None) if meta and meta.activated else None
         long_term=0
@@ -821,7 +836,7 @@ class Dialogue(Star):
         except Exception as error:return json.dumps({'confirmed':False,'error_type':type(error).__name__})
 
     async def status(self):
-        return json_response({'version': '0.4.1', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.4.2', 'mode': self.config.get('mode', 'shadow'),
             'legacy_adapter_ready': getattr(self.natural(), 'dialogue_context_protocol', 0) == 4,
             'active_private_user_count': len(self.config.get('active_private_users', [])),
             'all_allowed_private':bool(self.config.get('all_allowed_private',False)),

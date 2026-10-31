@@ -130,7 +130,7 @@ class LifeStore:
     def finish(self,day,record):
         with self.db() as c:c.execute("UPDATE runs SET status='completed',record=?,updated=? WHERE day=? AND status='started'",(json.dumps(record,ensure_ascii=False),time.time(),day))
     def fail(self,day,error):
-        with self.db() as c:c.execute("UPDATE runs SET status='failed',error=?,updated=? WHERE day=? AND status='started'",(type(error).__name__,time.time(),day))
+        with self.db() as c:c.execute("UPDATE runs SET status='failed',error=?,updated=? WHERE day=? AND status IN ('pending','started')",(type(error).__name__,time.time(),day))
     def public_context(self):
         for record in self.records(1):
             try:
@@ -220,15 +220,17 @@ class LifeEngine:
             if not 8<=len(evidence)<=45 or evidence not in source['body']:raise ValueError('Reading lacks exact source evidence')
         obj['story']='在我的海边小屋故事里，'+obj['story'].removeprefix('在我的海边小屋故事里，')
         return obj
-    async def advance(self,bootstrap=False):
+    async def advance(self,bootstrap=False,opportunity=False):
         async with self.lock:
             plan=self.store.schedule();now=time.time()
             if not self.store.enabled() or plan['status']!='pending':return {'advanced':False,'status':plan['status']}
-            if not bootstrap and (now<plan['run_at'] or not 9<=dt.datetime.now(TZ).hour<21):return {'advanced':False,'status':'waiting'}
             index=self.store.count();kind=ACTIVITIES[index%7]
             controller = getattr(self.context,'get_registered_star',lambda name:None)('dafeiyu_dialogue')
             controller = getattr(controller,'star_cls',None) if controller and controller.activated else None
             semantic = bool(controller and controller.owner_policy_enabled('activity_policy_v2'))
+            if opportunity and not semantic:return {'advanced':False,'status':'autonomy_not_enabled'}
+            if not bootstrap and (not 9<=dt.datetime.fromtimestamp(now,TZ).hour<21
+                    or now<plan['run_at'] and not opportunity):return {'advanced':False,'status':'waiting'}
             choice=project=journal=None
             if semantic:
                 from .planning import SelfJournal, choose_activity
@@ -236,13 +238,17 @@ class LifeEngine:
                 # Persist the evaluation slot before any model call; a tick never becomes a retry loop.
                 if journal.decision(plan['day']):return {'advanced':False,'status':'decision_already_used'}
                 if not journal.reserve_choice(plan['day'],{'kind':'pending'}):return {'advanced':False,'status':'decision_already_used'}
-                provider=await self.context.get_using_provider_async('dafeiyu-qq:FriendMessage:'+str(controller.natural().actor_owner()))
-                if provider is None:raise RuntimeError('Text provider unavailable')
-                provider=controller.metered_provider(provider,'activity')
-                allowed=['reading','writing']
-                if index>=6 and not any(r['kind']=='drawing' for r in self.store.records(6)):allowed.append('drawing')
-                choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed)
-                journal.save_choice(plan['day'],choice)
+                try:
+                    provider=await self.context.get_using_provider_async('dafeiyu-qq:FriendMessage:'+str(controller.natural().actor_owner()))
+                    if provider is None:raise RuntimeError('Text provider unavailable')
+                    provider=controller.metered_provider(provider,'activity')
+                    allowed=['reading','writing']
+                    if index>=6 and not any(r['kind']=='drawing' for r in self.store.records(6)):allowed.append('drawing')
+                    choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed)
+                    journal.save_choice(plan['day'],choice)
+                except asyncio.CancelledError:raise
+                except Exception as error:
+                    self.store.fail(plan['day'],error);raise
                 kind=choice['kind']
                 if kind=='none':
                     with self.store.db() as db:db.execute("UPDATE runs SET status='skipped',kind='none',updated=? WHERE day=? AND status='pending'",(time.time(),plan['day']))
@@ -252,9 +258,9 @@ class LifeEngine:
                 previous=self.store.verified_records(3) if semantic else self.store.records(3);source={};art=None
                 if semantic:project=journal.begin_project(choice)
                 if kind=='reading':source=await self.reading(choice['question'] if semantic else '')
-                scene_title,scene=SCENES[index%7]
                 if semantic:scene_title,scene=project['title'],choice['question']
-                else:provider=self.context.get_provider_by_id('deepseek-flash')
+                else:
+                    scene_title,scene=SCENES[index%7];provider=self.context.get_provider_by_id('deepseek-flash')
                 if provider is None:raise RuntimeError('Text provider unavailable')
                 if kind=='drawing':
                     meta=self.context.get_registered_star('astrbot_plugin_dafeiyu_draw')
@@ -273,8 +279,10 @@ class LifeEngine:
                 if semantic:
                     prompt+='\n本次持续项目与带来源的已有反思：'+json.dumps({'choice':choice,'state':journal.view()},ensure_ascii=False)
                     prompt+='\n在JSON中另加reflection对象，键insight（本次发现，主观看法不当成外部事实）、evidence（逐字摘自本次note）、next_question（接着想弄清的问题或空串）、status（active或completed）。不读取联系人的私聊，不按活动次数固定推剧情。'
+                policy='你是哦鲸鲸，自称鲸鲸，温柔可爱、好奇、有自己的主意。只为自己做数字手帐，不读取或编造任何真实联系人和私聊。阅读理解仅依据给出的文章，不把推测写成科学事实；thought可以有真实的阅读感受。小屋、盆栽和布置全部属于虚构故事，保持和前次连续。只输出JSON，键note、thought、story、evidence'
+                policy+=('、reflection，reflection必须符合本次项目要求。' if semantic else '。')+'不输出其他文字。'
                 response=await asyncio.wait_for(provider.text_chat(prompt=prompt,contexts=[],func_tool=None,
-                    system_prompt='你是哦鲸鲸，自称鲸鲸，温柔可爱、好奇、有自己的主意。只为自己做数字手帐，不读取或编造任何真实联系人和私聊。阅读理解仅依据给出的文章，不把推测写成科学事实；thought可以有真实的阅读感受。小屋、盆栽和布置全部属于虚构故事，保持和前次连续。只输出JSON，键note、thought、story、evidence；不输出其他文字。',request_max_retries=1),timeout=45)
+                    system_prompt=policy,request_max_retries=1),timeout=45)
                 if semantic:
                     from .planning import validate_reflection
                     try:
