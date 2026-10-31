@@ -533,7 +533,8 @@ class InitiativeAndVoice(unittest.TestCase):
         import datetime as dt
         now=dt.datetime(2026,10,30,11,tzinfo=dt.timezone(dt.timedelta(hours=8))).timestamp()
         with tempfile.TemporaryDirectory() as tmp:
-            store=InitiativeStore(Path(tmp)/'proactive.db',clock=lambda:now,rng=NS(uniform=lambda a,b:a))
+            store=InitiativeStore(Path(tmp)/'proactive.db',clock=lambda:now,rng=NS(randint=lambda a,b:1,uniform=lambda a,b:a))
+            store.plan(now-180)
             with store.connect() as db:store.set(db,'last_activity',now-7200)
             self.assertTrue(store.claim_evaluation(store.day(now),0,store.epoch()))
             self.assertFalse(store.claim_evaluation(store.day(now),0,store.epoch()))
@@ -682,6 +683,8 @@ class BackgroundExecution(unittest.IsolatedAsyncioTestCase):
         with store.connect() as db:
             store.set(db,'last_activity',now-7200)
             db.execute('INSERT INTO days VALUES(?,?,?)',('2026-10-30',now-60,now+8*3600))
+            db.execute('INSERT INTO random_days VALUES(?,?,?,?)',('2026-10-30',1,
+                json.dumps([dict(slot=0,at=now-60,until=now+1800)]),now-120))
         provider=NS(text_chat=generate)
         controller=NS(catalog=lambda:NS(read=lambda *args:CatalogSnapshot(())),metered_provider=lambda p,*args:p)
         context=NS(get_using_provider_async=AsyncMock(return_value=provider),send_message=send)

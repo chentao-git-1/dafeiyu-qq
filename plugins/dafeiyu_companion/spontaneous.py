@@ -183,8 +183,9 @@ class InitiativeEngine:
                 if not source:return
                 async with self.plugin.lock:
                     if (not self.allowed() or not await self.source_valid(source)
-                            or not await asyncio.to_thread(self.store.reserve,day,slot,source['id'],source['kind'],epoch)
-                            or not await asyncio.to_thread(self.store.begin_send,day,slot,epoch,body)):return
+                            or not await asyncio.to_thread(self.store.reserve,day,slot,source['id'],source['kind'],epoch)):return
+                    if not await asyncio.to_thread(self.store.begin_send,day,slot,epoch,body):
+                        await asyncio.to_thread(self.store.finish,day,slot,'cancelled','eligibility_changed');return
                     if source['kind']=='care':
                         self.plugin.state.setdefault('care_attempt_days',{})[OWNER]=day;self.plugin.save()
                 try:sent=await asyncio.wait_for(self.context.send_message(SESSION,MessageChain(chain=[Plain(body)])),timeout=40)
