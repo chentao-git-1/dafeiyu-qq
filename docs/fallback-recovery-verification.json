@@ -1,0 +1,73 @@
+{
+  "commit": "44c0a5e1fc45883b56fb373a020d7bc933c0a8ae",
+  "versions": {
+    "dafeiyu_dialogue": "0.4.4",
+    "dafeiyu_message_routes": "0.2.0",
+    "dafeiyu_runtime": "0.3.4",
+    "dafeiyu_natural_chat": "0.10.0",
+    "astrbot_plugin_group_chat_plus": "1.2.3.hotfix.2",
+    "长期记忆系统": "1.5.0",
+    "dafeiyu_life": "0.3.2",
+    "dafeiyu_companion": "0.4.2",
+    "dafeiyu_bailian_tts": "0.4.0",
+    "astrbot_plugin_dafeiyu_draw": "0.1.8",
+    "astrbot_plugin_dafeiyu_voice_request": "0.2.3"
+  },
+  "mode": "active",
+  "all_allowed_private": true,
+  "all_allowed_groups": true,
+  "container_healthy": true,
+  "qq_platform_running": true,
+  "runtime_guards_verified": true,
+  "existing_config_values_preserved": true,
+  "unrelated_sources_preserved": true,
+  "old_data_overwritten": false,
+  "sqlite_backups": 11,
+  "observation_started_at_beijing": "2026-10-31T23:06:05.387296+08:00",
+  "deployed": true,
+  "verified_at_beijing": "2026-10-31T23:06:24.074678+08:00",
+  "native_context_adapter_installed": true,
+  "native_tts_override_installed": true,
+  "text_segmentation_preserved": true,
+  "random_plan_preserved": true,
+  "today_opportunities": 4,
+  "before_current_process": {
+    "accepted_generations": 20,
+    "failed_generations": 9,
+    "format_failures": 6,
+    "rejected_revisions": 3,
+    "format_recovery_attempts": 23,
+    "recovered_generations": 20,
+    "observed_fallback_messages": 9
+  },
+  "checks": {
+    "focused_tests": 8,
+    "production_image_verified": true,
+    "network_during_isolated_tests": false,
+    "production_data_mounted_in_tests": false,
+    "full_suite_run": false,
+    "real_native_runner_and_openai_adapter": true,
+    "copied_summary_has_no_chat_json_capability": true,
+    "unselected_runner_unchanged": true,
+    "confirmed_image_failure_tail_suppressed": true,
+    "unsent_tail_excluded_from_history": true,
+    "unknown_delivery_does_not_count_as_confirmed": true,
+    "bounded_revision_repair_verified_again": true,
+    "privacy_and_no_extra_model_on_ordinary_reply_preserved": true
+  },
+  "synthetic_primary": {
+    "real_model_calls": 1,
+    "primary_generations": 1,
+    "primary_json_mode": true,
+    "parsed_without_format_repair": true,
+    "format_repair_attempts": 0,
+    "reply_characters": 28
+  },
+  "qq_test_sends": 0,
+  "real_tts_test_calls": 0,
+  "qzone_test_posts": 0,
+  "known_limits": [
+    "Synthetic checks do not establish a real-conversation failure rate after deployment.",
+    "A final safe fallback remains if bounded recovery fails and nothing has been confirmed sent."
+  ]
+}
