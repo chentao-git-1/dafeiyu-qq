@@ -16,7 +16,7 @@ from .life import TZ, LifeEngine, LifeStore
 from .topic_context import relevant as relevant_life, world_profile
 
 
-@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.4.0")
+@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.5.0")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -103,7 +103,7 @@ class JingjingLife(Star):
                 ).isoformat(),
                 "project": latest["project"] if latest else "好奇手帐·第1册",
                 "project_stage": latest["stage"] if latest else 0,
-                "daily_window": "09:00–21:00 Asia/Shanghai",
+                "daily_window": "自选打算按自己的时间；无打算时09:00–21:00 Asia/Shanghai",
                 "max_automatic_activities_per_day": 1,
                 "virtual_world": "海边小屋；窗台上的小芽；手帐书架",
                 "private_chat_input": False,
@@ -112,6 +112,9 @@ class JingjingLife(Star):
                 "drawing_every_activities": 7,
                 "self_direction": self.engine.direction_store().status(),
                 "self_direction_thinks_without_activity": True,
+                "activity_timing": "self_selected_when_intention",
+                "self_selected_time_can_override_legacy_window": True,
+                "step_completion_requires_semantic_check": True,
             }
         )
 
@@ -163,7 +166,7 @@ class JingjingLife(Star):
         """查询或自主推进鲸鲸自己的数字兴趣项目；不必等用户逐项指定要做什么。
 
         develop会根据已有作品和反思选择阅读、写作或允许的绘画，也可以不做。
-        它与定时日常共用每天一次额度，只在09:00到21:00执行；不创建额外提醒或发送消息。
+        它与定时日常共用每天一次实际活动额度；自选打算按自己的时间安排，develop可主动评估，不创建额外提醒或发送消息。
         当天阅读失败时可有一次基于失败信息的选择，只能改做原创文字或停下，不重复检索或生图。
         只在爸爸私聊可主动评估，适合确有想推进的兴趣时使用，不在问候和每轮聊天中反复调用。
         作品资料不含联系人私聊，query只用于recall，不把当前对方的话写进公开日常。

@@ -55,6 +55,12 @@ class SelfJournal:
             row = db.execute('SELECT decision FROM activity_choices WHERE day=?', (day,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def latest_choice(self,day):
+        with self.db() as db:
+            row=db.execute('SELECT decision FROM activity_choices WHERE day=? OR day LIKE ? ORDER BY at DESC,rowid DESC LIMIT 1',
+                (day,day+':direction:%')).fetchone()
+        return json.loads(row[0]) if row else None
+
     def reserve_choice(self, day, choice):
         with self.db() as db:
             return db.execute('INSERT OR IGNORE INTO activity_choices VALUES(?,?,?)',
@@ -152,7 +158,7 @@ def parse_choice(raw, packet):
     return choice
 
 
-async def choose_activity(provider, journal, records, allowed_kinds, availability=None,growth=None):
+async def choose_activity(provider, journal, records, allowed_kinds, availability=None,growth=None,outcomes=None):
     from data.plugins.dafeiyu_natural_chat.self_profile import self_profile
     from data.plugins.dafeiyu_dialogue.review import structured_result
     packet = {'operator_seed': {'id':'operator:seed','profile':self_profile()}, 'self_state': journal.view(),
@@ -161,7 +167,7 @@ async def choose_activity(provider, journal, records, allowed_kinds, availabilit
     if availability:packet['availability']=availability
     if growth:packet['grown_dispositions']=growth
     from .direction import DirectionStore
-    packet['self_direction']=DirectionStore(journal.root).visible(records=records)
+    packet['self_direction']=DirectionStore(journal.root).visible(records=records,outcomes=outcomes)
     async def call(prompt,policy):
         response=await provider.text_chat(prompt=prompt,system_prompt=policy,contexts=[],func_tool=None,request_max_retries=1)
         return response.completion_text

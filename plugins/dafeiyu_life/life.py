@@ -114,6 +114,19 @@ class LifeStore:
                 return c.execute("UPDATE runs SET status='started',kind=?,error=NULL,updated=? WHERE day=? AND status='failed' AND kind='reading' AND updated=?",
                     (kind,now,day,failed_at)).rowcount==1
             return c.execute("UPDATE runs SET status='started',kind=?,updated=? WHERE day=? AND status='pending'",(kind,now,day)).rowcount==1
+    def reopen_skipped(self,plan):
+        if any((self.root/'works'/(plan['day']+suffix)).exists() for suffix in ('.json','.jpg')):return False
+        with self.db() as db:
+            return db.execute("UPDATE runs SET status='pending',kind=NULL,updated=? WHERE day=? AND status='skipped' AND kind='none' AND updated=?",
+                (time.time(),plan['day'],plan['updated'])).rowcount==1
+    def outcomes(self):
+        with self.db() as db:
+            rows=db.execute("SELECT day,kind,status,error,updated FROM runs WHERE status IN ('failed','unknown') ORDER BY updated DESC LIMIT 6").fetchall()
+        result=[]
+        for row in rows:
+            value=dict(row);key=hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()[:24]
+            result.append(dict(id='outcome:'+key,note=str(row['day'])+' '+str(row['kind'])+' '+row['status']+' '+str(row['error']),**value))
+        return result
     def records(self,limit=7):
         with self.db() as c:
             rows=c.execute("SELECT record FROM runs WHERE status='completed' ORDER BY day DESC LIMIT ?",(limit,)).fetchall()
@@ -272,21 +285,33 @@ class LifeEngine:
             controller = getattr(self.context,'get_registered_star',lambda name:None)('dafeiyu_dialogue')
             controller = getattr(controller,'star_cls',None) if controller and controller.activated else None
             semantic = bool(controller and controller.owner_policy_enabled('activity_policy_v2'))
+            direction=self.direction_profile() if semantic else None
+            directed=bool(direction and direction['status']=='intent')
+            direction_key=plan['day']+':direction:'+str(direction['version']) if directed else plan['day']
+            if semantic:
+                from .planning import SelfJournal
+                saved=SelfJournal(self.store.root)
+                if directed and plan['status']=='skipped' and not saved.decision(direction_key):
+                    if self.store.reopen_skipped(plan):plan=self.store.schedule()
             # One alternative within the same failed daily slot, never another
             # search/drawing attempt or an overwrite of an unconfirmed artifact.
             adapting=bool(semantic and plan['status']=='failed' and plan['kind']=='reading'
                 and not any((self.store.root/'works'/(plan['day']+suffix)).exists() for suffix in ('.json','.jpg')))
             if plan['status']!='pending' and not adapting:return {'advanced':False,'status':plan['status']}
             if opportunity and not semantic:return {'advanced':False,'status':'autonomy_not_enabled'}
-            if not bootstrap and (not 9<=dt.datetime.fromtimestamp(now,TZ).hour<21
-                    or now<plan['run_at'] and not (opportunity or adapting)):return {'advanced':False,'status':'waiting'}
+            if not bootstrap and not (opportunity or adapting):
+                if directed:
+                    if now<direction.get('execute_at',direction['updated']):return {'advanced':False,'status':'waiting_for_own_time'}
+                elif not 9<=dt.datetime.fromtimestamp(now,TZ).hour<21 or now<plan['run_at']:
+                    return {'advanced':False,'status':'waiting'}
             choice=project=journal=None
             if semantic:
                 from .planning import SelfJournal, choose_activity
                 journal=SelfJournal(self.store.root)
-                if adapting and not journal.decision(plan['day']):return {'advanced':False,'status':'failed_without_semantic_choice'}
+                prior=journal.latest_choice(plan['day'])
+                if adapting and not prior:return {'advanced':False,'status':'failed_without_semantic_choice'}
                 # Persist the evaluation slot before any model call; a tick never becomes a retry loop.
-                decision_day=plan['day']+(':adaptation' if adapting else '')
+                decision_day=plan['day']+':adaptation' if adapting else direction_key
                 if journal.decision(decision_day):return {'advanced':False,'status':'decision_already_used'}
                 if not journal.reserve_choice(decision_day,{'kind':'pending'}):return {'advanced':False,'status':'decision_already_used'}
                 try:
@@ -298,10 +323,10 @@ class LifeEngine:
                     if not adapting and index>=6 and not any(r['kind']=='drawing' for r in self.store.records(6)):allowed.append('drawing')
                     if adapting:
                         choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed,
-                            availability={'prior_choice':journal.decision(plan['day']), 'failed_stage':'reading',
+                            availability={'prior_choice':prior, 'failed_stage':'reading',
                                 'error_type':plan['error'],'reading':'no_verified_completed_reading',
-                                'instruction':'这次阅读未能完成，不再搜索。可以沿自己的兴趣改做一段原创文字或none；不宣称已读过文章，不把猜测写成知识。仍是当天同一次活动。'},growth=growth)
-                    else:choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed,growth=growth)
+                                'instruction':'这次阅读未能完成，不再搜索。可以沿自己的兴趣改做一段原创文字或none；不宣称已读过文章，不把猜测写成知识。仍是当天同一次活动。'},growth=growth,outcomes=self.store.outcomes())
+                    else:choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed,growth=growth,outcomes=self.store.outcomes())
                     journal.save_choice(decision_day,choice)
                 except asyncio.CancelledError:raise
                 except Exception as error:
@@ -369,7 +394,17 @@ class LifeEngine:
                 if semantic:
                     journal.integrate(record,generated.get('reflection'),project)
                     if choice.get('direction_version'):
-                        self.direction_store().complete_step(choice['direction_version'],record,self.store)
+                        from .direction import assess_step
+                        direction_store=self.direction_store();intention=direction_store.current()
+                        if intention and intention['version']==choice['direction_version']:
+                            try:
+                                reviewer=await self.context.get_using_provider_async('dafeiyu-qq:FriendMessage:'+str(controller.natural().actor_owner()))
+                                checked=await assess_step(controller.metered_provider(reviewer,'direction'),intention,record)
+                            except asyncio.CancelledError:raise
+                            except Exception as error:
+                                checked=dict(accepted=False,evidence='',reason='步骤核对尚未完成，保留打算：'+type(error).__name__)
+                            direction_store.save_assessment(choice['direction_version'],record,checked)
+                            direction_store.complete_step(choice['direction_version'],record,self.store)
                 self.store.cleanup()
                 return {'advanced':True,'day':plan['day'],'kind':kind,'artifact_verified':True,'project':record['project'],'stage':record['stage'],
                     'adapted_from':'reading' if adapting else None}
