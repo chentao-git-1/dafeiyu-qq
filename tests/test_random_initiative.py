@@ -1,4 +1,4 @@
-"""Random opportunity plans with durable no-action, delivery and quiet-time gates."""
+"""Model-led initiative: no message quota, durable waiting and one claimed decision."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
@@ -13,102 +13,80 @@ import test_cognition as base
 from data.plugins.dafeiyu_companion.spontaneous_store import InitiativeStore,TZ
 
 
-def stamp(hour=9,day=31):return dt.datetime(2026,10,day,hour,tzinfo=TZ).timestamp()
-def rng(count):return NS(randint=lambda a,b:count,uniform=lambda a,b:(a+b)/2)
+def stamp(hour=23):return dt.datetime(2026,11,1,hour,tzinfo=TZ).timestamp()
 
 
-class RandomInitiative(unittest.TestCase):
-    def test_daily_counts_and_times_vary_but_restart_cannot_redraw_them(self):
+class AutonomousInitiative(unittest.TestCase):
+    def test_legacy_zero_quota_and_cooldown_do_not_limit_new_sends_or_erase_history(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for count in (0,1,3,4):
-                now=[stamp()];path=Path(tmp)/('push'+str(count)+'.db')
-                store=InitiativeStore(path,clock=lambda:now[0],rng=rng(count));plan=store.plan()
-                self.assertEqual(plan['budget'],count);self.assertEqual(len(plan['opportunities']),count)
-                self.assertTrue(all(stamp()<=s['at']<s['until']<=stamp(21) for s in plan['opportunities']))
-                self.assertEqual(InitiativeStore(path,clock=lambda:now[0],rng=rng(4-count)).plan(),plan)
-                self.assertEqual(store.status()['daily_limit'],count)
-                if count==0:self.assertIsNone(store.due());self.assertFalse(store.eligible())
-
-    def test_each_scheduled_opportunity_can_be_evaluated_only_once(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            now=[stamp()];store=InitiativeStore(Path(tmp)/'push.db',clock=lambda:now[0],rng=rng(3));plan=store.plan()
-            first,second=plan['opportunities'][:2]
-            self.assertFalse(store.claim_evaluation(plan['day'],0,store.epoch()))
-            now[0]=first['at']+1
-            self.assertTrue(store.claim_evaluation(plan['day'],0,store.epoch()))
-            store.finish_evaluation(plan['day'],0,'no_action')
-            self.assertFalse(store.claim_evaluation(plan['day'],0,store.epoch()));self.assertIsNone(store.due())
-            now[0]=second['at']+1;self.assertEqual(store.due(),(plan['day'],1))
-
-    def test_third_real_send_is_possible_when_the_random_budget_allows_it(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            now=[stamp()];store=InitiativeStore(Path(tmp)/'push.db',clock=lambda:now[0],rng=rng(3));plan=store.plan()
-            for item in plan['opportunities']:
-                now[0]=item['at']+1;epoch=store.epoch()
-                self.assertTrue(store.reserve(plan['day'],item['slot'],'work:'+str(item['slot']),'life',epoch))
-                self.assertTrue(store.begin_send(plan['day'],item['slot'],epoch,'one grounded thought'))
-                store.finish(plan['day'],item['slot'],'sent')
-                now[0]+=10;store.observe_incoming('reply:'+str(item['slot']),now[0])
-            self.assertEqual(store.status()['sent_today'],3)
-            self.assertFalse(store.reserve(plan['day'],3,'unplanned','life',store.epoch()))
-
-    def test_pending_reply_and_random_cooldown_survive_restart(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            now=[stamp()];path=Path(tmp)/'push.db';store=InitiativeStore(path,clock=lambda:now[0],rng=rng(3))
-            plan=store.plan();now[0]=plan['opportunities'][0]['at']+1;epoch=store.epoch()
-            self.assertTrue(store.reserve(plan['day'],0,'work:one','life',epoch))
-            self.assertTrue(store.begin_send(plan['day'],0,epoch,'one thought'));store.finish(plan['day'],0,'sent')
-            allowed=store.status()['next_push_allowed_at'];self.assertTrue(90*60<=allowed-now[0]<=4*3600)
-            store=InitiativeStore(path,clock=lambda:now[0],rng=rng(1))
-            self.assertEqual(store.status()['next_push_allowed_at'],allowed)
-            now[0]=allowed+1;self.assertFalse(store.eligible())
-            store.observe_incoming('actual reply',now[0]);self.assertFalse(store.eligible())
-            now[0]+=3601;self.assertTrue(store.eligible())
-
-    def test_expired_opportunities_night_and_old_day_cannot_be_sent(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            now=[stamp()];store=InitiativeStore(Path(tmp)/'push.db',clock=lambda:now[0],rng=rng(1));plan=store.plan()
-            now[0]=plan['opportunities'][0]['until']+1
-            self.assertIsNone(store.due());self.assertFalse(store.reserve(plan['day'],0,'old','life',store.epoch()))
-            now[0]=stamp(23);self.assertIsNone(store.due())
-            now[0]=dt.datetime(2026,11,1,9,tzinfo=TZ).timestamp()
-            self.assertFalse(store.claim_evaluation(plan['day'],0,store.epoch()))
-            self.assertEqual(store.plan()['day'],'2026-11-01')
-
-    def test_legacy_attempts_pending_state_and_quotas_are_preserved(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            now=[stamp()];path=Path(tmp)/'push.db';store=InitiativeStore(path,clock=lambda:now[0],rng=rng(3))
+            now=[stamp()];path=Path(tmp)/'push.db';store=InitiativeStore(path,clock=lambda:now[0])
             with store.connect() as db:
-                db.execute('INSERT INTO days VALUES(?,?,?)',('2026-10-31',stamp(10),stamp(19)))
-                db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?)',('2026-10-31',0,'old work','life','sent',stamp()-10,'old body',''))
-                store.set(db,'pending_at',stamp()-10);store.set(db,'last_push',stamp()-10);store.set(db,'next_push_at',stamp()+7200)
-            store=InitiativeStore(path,clock=lambda:now[0],rng=rng(3));plan=store.plan()
-            self.assertEqual(store.status()['attempts_today'],1);self.assertTrue(store.status()['awaiting_reply'])
-            now[0]=plan['opportunities'][0]['at']+1;self.assertIsNone(store.due())
-            with store.connect() as db:self.assertEqual(db.execute('SELECT body FROM attempts').fetchone()[0],'old body')
-            self.assertFalse(store.eligible());self.assertTrue(store.used('old work'))
+                db.execute('INSERT INTO random_days VALUES(?,?,?,?)',(store.day(now[0]),0,'[]',now[0]))
+                db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?)',('2026-10-31',0,'old work','life','sent',now[0]-86400,'old body',''))
+                store.set(db,'next_push_at',now[0]+7200)
+            for i in range(6):
+                day,slot=store.due();epoch=store.epoch()
+                self.assertTrue(store.reserve(day,slot,'new work:'+str(i),'care',epoch))
+                self.assertTrue(store.begin_send(day,slot,epoch,'a grounded thought'))
+                store.finish(day,slot,'sent');now[0]+=61
+                store.observe_incoming('reply:'+str(i),now[0])
+            reopened=InitiativeStore(path,clock=lambda:now[0]);status=reopened.status()
+            self.assertEqual(status['sent_today'],6);self.assertIsNone(status['daily_limit'])
+            self.assertEqual(status['frequency_mode'],'model_decides');self.assertEqual(status['windows_beijing'],[])
+            self.assertIsNone(status['cooldown_minutes_range']);self.assertTrue(reopened.used('old work'))
+            with reopened.connect() as db:
+                self.assertEqual(db.execute('SELECT budget FROM random_days').fetchone()[0],0)
+                self.assertEqual(db.execute("SELECT body FROM attempts WHERE source='old work'").fetchone()[0],'old body')
 
-    def test_concurrent_evaluations_cannot_claim_the_same_random_opportunity(self):
+    def test_model_wait_survives_restart_and_new_context_can_be_considered_early(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            now=[stamp()];path=Path(tmp)/'push.db';store=InitiativeStore(path,clock=lambda:now[0])
+            day,slot=store.due();self.assertTrue(store.claim_evaluation(day,slot,store.epoch(),'same context'))
+            store.finish_evaluation(day,slot,'no_action',180);now[0]+=120
+            reopened=InitiativeStore(path,clock=lambda:now[0]);day,slot=reopened.due()
+            self.assertFalse(reopened.claim_evaluation(day,slot,reopened.epoch(),'same context'))
+            self.assertTrue(reopened.claim_evaluation(day,slot,reopened.epoch(),'new actual work'))
+            reopened.finish_evaluation(day,slot,'no_action',30);now[0]+=1801
+            day,slot=reopened.due();self.assertTrue(reopened.claim_evaluation(day,slot,reopened.epoch(),'new actual work'))
+
+    def test_pending_reply_and_unknown_delivery_remain_blocked_after_migration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            now=[stamp()];path=Path(tmp)/'push.db';store=InitiativeStore(path,clock=lambda:now[0])
+            day,slot=store.due();epoch=store.epoch();self.assertTrue(store.reserve(day,slot,'work','life',epoch))
+            self.assertTrue(store.begin_send(day,slot,epoch,'a thought'));store.finish(day,slot,'unknown','TimeoutError')
+            now[0]+=86400;store=InitiativeStore(path,clock=lambda:now[0])
+            self.assertIsNone(store.due());self.assertTrue(store.used('work'))
+            store.observe_incoming('actual reply',now[0]);self.assertIsNotNone(store.due())
+            day,slot=store.due();self.assertFalse(store.reserve(day,slot,'work','life',store.epoch()))
+
+    def test_concurrent_evaluations_claim_once_and_failed_assessment_is_not_tick_retried(self):
         with tempfile.TemporaryDirectory() as tmp:
             now=[stamp()];path=Path(tmp)/'push.db'
-            stores=[InitiativeStore(path,clock=lambda:now[0],rng=rng(1)) for _ in range(2)]
-            plan=stores[0].plan();now[0]=plan['opportunities'][0]['at']+1
+            stores=[InitiativeStore(path,clock=lambda:now[0]) for _ in range(2)];day,slot=stores[0].due()
             with ThreadPoolExecutor(max_workers=2) as pool:
-                results=list(pool.map(lambda store:store.claim_evaluation(plan['day'],0,store.epoch()),stores))
-            self.assertEqual(sorted(results),[False,True])
+                results=list(pool.map(lambda store:store.claim_evaluation(day,slot,store.epoch(),'same'),stores))
+            self.assertEqual(sorted(results),[False,True]);now[0]+=120
+            restarted=InitiativeStore(path,clock=lambda:now[0]);day,slot=restarted.due()
+            self.assertFalse(restarted.claim_evaluation(day,slot,restarted.epoch(),'same'))
 
 
 class NoActionDecision(unittest.IsolatedAsyncioTestCase):
     initiative_fixture=base.BackgroundExecution.initiative_fixture
 
-    async def test_model_can_decline_without_consuming_transport_or_repeated_model_calls(self):
+    async def test_model_chooses_wait_and_unchanged_context_does_not_cause_more_calls(self):
         with tempfile.TemporaryDirectory() as tmp:
             model=AsyncMock(return_value=NS(completion_text=json.dumps(dict(candidate_id='',text='',source_quote='',
-                reason='刚聊过，没有新内容',related_message_ids=[],activity_day=''))))
+                reason='刚聊过，没有新内容',related_message_ids=[],activity_day='',reconsider_after_minutes=150))))
             send=AsyncMock();engine,store=await self.initiative_fixture(tmp,model,send)
-            await engine.tick_semantic();await engine.tick_semantic()
-            model.assert_awaited_once();send.assert_not_awaited();self.assertEqual(store.status()['attempts_today'],0)
-            self.assertIsNone(store.due())
+            now=[engine.clock()];engine.clock=store.clock=lambda:now[0]
+            await engine.tick_semantic();now[0]+=120;await engine.tick_semantic()
+            engine.store=InitiativeStore(store.path,clock=lambda:now[0]);await engine.tick_semantic()
+            model.assert_awaited_once();send.assert_not_awaited()
+            self.assertEqual(store.status()['attempts_today'],0)
+            self.assertEqual(store.status()['next_consideration_at'],now[0]-120+150*60)
+            timing=json.loads(model.call_args.kwargs['prompt'])['timing']
+            self.assertIsNone(timing['daily_message_limit']);self.assertIn('beijing_now',timing)
+            now[0]+=150*60;await engine.tick_semantic();self.assertEqual(model.await_count,2)
 
 
 if __name__=='__main__':unittest.main()
