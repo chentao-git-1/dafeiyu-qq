@@ -1,6 +1,6 @@
 # 换电脑接手说明
 
-**2026-11-01 自主联系去额度已实现，部署待连接恢复。** 候选代码 `fa578d2e895895645b1f53b94446157724ac86ce`，主动陪伴 0.5.0 / `model_decides`，本地 7 项相关检查通过。取消每日随机条数、硬时段、随机冷却和一小时闲置门槛，模型决定发不发及下次考虑时间。SSH 多次超时，尚未上传候选、执行生产镜像验证或替换线上源码；最近核对的线上仍是 0.4.3 / `random_daily`。见 [当前机制](AUTONOMOUS_INITIATIVE.md) 和 [状态记录](autonomous-initiative-verification.json)。连接恢复后使用工作区 `output/qq-autonomous-initiative-20261101` 的 `prepare_release.py`、`run_remote.py stage`、`run_remote.py deploy` 依次完成；上线包绑定上述提交，只替换 companion，保留其他插件与配置，并在停服后备份 SQLite。基线漂移或隔离检查失败应先定位。不要把代码同步成功当作上线成功，也不要为验证注入真实 QQ 消息。
+**2026-11-01 13:00 自主联系去额度已上线核验。** 部署代码 `fa578d2e895895645b1f53b94446157724ac86ce`，主动陪伴 0.5.0 / `model_decides`。取消每日随机条数、硬时段、随机冷却和一小时闲置门槛，模型决定发不发及下次考虑时间。7 项相关检查通过生产镜像隔离验证，基线无漂移，16 个 SQLite 及配置一致备份；只替换 companion，旧随机记录与收发历史保留，用户数据未覆盖。13:00:53 读取确认首轮真实后台评估选择 `no_action`，下一次考虑时间已保存，无新增错误。QQ running、获准私聊和群聊 active、文字分段和长期成长正常。见 [当前机制](AUTONOMOUS_INITIATIVE.md) 和 [状态记录](autonomous-initiative-verification.json)。后续观察实际联系是否自然、是否打扰及新资料的选择；不为验证而注入真实 QQ 消息或重复部署。工作区 `output/qq-autonomous-initiative-20261101` 保留固定提交的上线包、隔离检查、部署与后续读取记录。
 
 **2026-11-01 12:25 长期性格成长已上线核验。** 先读 [当前成长机制](PERSONALITY_GROWTH.md) 和 [数值证据](personality-growth-verification.json)。部署代码 `a4e63e9f283f8cb63e97b299352c5b5405f8e80c`：统一对话 0.5.0、自己的日常 0.3.3、主动陪伴 0.4.3，`personality_growth_v1=true`。稳定画像是起点，倾向由模型依据独立跨日经历提出并再核对，允许保持原样。作用于聊天、自己的项目与主动分享；人设身份、动作权限、日常和发送额度保留。
 
