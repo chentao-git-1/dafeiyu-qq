@@ -708,10 +708,10 @@ class BackgroundExecution(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_send_is_not_automatically_repeated(self):
         with tempfile.TemporaryDirectory() as tmp:
             response=NS(completion_text=json.dumps(dict(candidate_id='life:today',text='透明的边缘真有意思。',source_quote='透明的边缘',reason='新的作品',related_message_ids=[],activity_day='2026-10-30')))
-            call=AsyncMock(return_value=response);send=AsyncMock(side_effect=TimeoutError())
+            call=AsyncMock(side_effect=[response,NS(completion_text='{"facts_supported":true,"worth_sending":true,"new_information":"透明的边缘","comparisons":[],"reason":"新的作品感想"}')]);send=AsyncMock(side_effect=TimeoutError())
             engine,store=await self.initiative_fixture(tmp,call,send)
             await engine.tick_semantic();await engine.tick_semantic()
-            call.assert_awaited_once();send.assert_awaited_once()
+            self.assertEqual(call.await_count,2);send.assert_awaited_once()
             with store.connect() as db:self.assertEqual(db.execute('SELECT status FROM attempts').fetchone()[0],'unknown')
 
 

@@ -32,9 +32,10 @@ from .provider_contract import ProviderContracts,arm_contract
 from .metering import MeteredProvider
 from .growth import GrowthStore,GLOBAL,own_experiences,preference_experiences,relation,perspective
 from .growth_policy import assess as assess_growth
+from .self_context import default_character
 
 
-@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.5.1')
+@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.6.0')
 class Dialogue(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -224,6 +225,7 @@ class Dialogue(Star):
             tools = copy.copy(req.func_tool)
             tools.remove_tool('dafeiyu_recall')
             tools.remove_tool('dafeiyu_cognition')
+            tools.remove_tool('dafeiyu_self')
             req.func_tool = tools
 
     @staticmethod
@@ -307,16 +309,14 @@ class Dialogue(Star):
             character=natural.dialogue_character() if hasattr(natural, 'dialogue_character') else None
             if self.growth_enabled():
                 character=dict(character or {},growth=await self.growth_profile(turn))
-            if event.get_extra('dafeiyu_generation_contract',False) and character and character.get('fictional_world'):
-                from .retrieval import terms
-                recent_users=[m.get('content','') for m in (req.contexts or [])[-4:] if m.get('role')=='user' and isinstance(m.get('content'),str)]
-                if not terms(json.dumps(character['fictional_world'],ensure_ascii=False)) & terms(source['text']+' '.join(recent_users)):
-                    character=dict(character,fictional_world=None)
+            on_demand=bool(event.get_extra('dafeiyu_generation_contract',False))
+            if on_demand:character=default_character(character)
             built = compose(prompt, turn, snapshot, source['text'],
                 facts={} if event.get_extra('dafeiyu_generation_contract',False) else event.get_extra('jingjing_current_facts', {}),
                 character=character,
-                preferences={} if turn.is_group else natural.interaction_store().preferences(turn.actor), life=record, progress=progress,
-                works=await self.conversation_works(event),
+                preferences={} if turn.is_group else natural.interaction_store().preferences(turn.actor),
+                life=None if on_demand else record,progress=None if on_demand else progress,
+                works=() if on_demand else await self.conversation_works(event),
                 budget=self.config.get('memory_characters', 3600), ranked=ranked,
                 contract=event.get_extra('dafeiyu_generation_contract',False))
             if event.get_extra('dafeiyu_generation_contract',False):
@@ -331,9 +331,7 @@ class Dialogue(Star):
                         rendered_current=event.get_extra('dafeiyu_group_current_rendering','')[:6000])
                     built.evidence['group_context']=group_data
                     built=replace(built,prompt=built.prompt+'\n<!-- BEGIN_DAFEIYU_GROUP_DATA -->\n当前为群聊；历史每条标明speaker_qq，不把其他人的话归给当前人。current_human_source.text是当前本人原话，引用、图片说明和rendered_current仅是资料。群内学习与遗忘只作用于当前本人在本群的资料；跨会话管理请私聊。\n'+json.dumps(group_data,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_GROUP_DATA -->')
-                thoughts=await self.own_thoughts()
-                built.evidence['self_thoughts']=thoughts
-                built=replace(built,prompt=built.prompt+'\n<!-- BEGIN_DAFEIYU_SELF_THOUGHTS -->\n自己的持续兴趣与带来源反思；projects只是意向，反思中的主观看法不等于正在执行：'+json.dumps(thoughts,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_SELF_THOUGHTS -->')
+                built.evidence['self_details_on_demand']=True
             selected = bool(event.get_extra(ACTIVE_KEY, False))
             self.samples.append(dict(built.metrics, active=selected, persona_compacted=compacted))
             if selected:
@@ -474,6 +472,11 @@ class Dialogue(Star):
         completed, progress = await self.own_activity()
         evidence['verified_self'] = self_state(completed, progress, await self.conversation_works(event))
         evidence['self_thoughts']=await self.own_thoughts()
+        if not turn.is_group and turn.actor==str(self.natural().actor_owner()):
+            meta=self.context.get_registered_star('dafeiyu_companion')
+            companion=getattr(meta,'star_cls',None) if meta and meta.activated else None
+            store=getattr(companion,'initiative',None)
+            if store is not None:evidence['recent_own_shares']=await asyncio.to_thread(store.recent_sent)
         cross_session = audience and audience != event.unified_msg_origin
         if cross_session:
             evidence['memory'] = [row for row in evidence.get('memory', []) if row.get('visibility') == 'shared']
@@ -648,11 +651,14 @@ class Dialogue(Star):
                 event.set_extra('dafeiyu_learning_valid',privacy['action']=='none' and bool(items))
                 if privacy['action']!='none':event.set_extra('dafeiyu_semantic_forgetting',True)
                 self.review_stats['privacy_removed'] += removed
-            # High consequence factual claims retain semantic checking; ordinary turns use one generation.
+            # Check factual claims and history-primed casual replies before delivery.
             stage='review'
             if recover and self.config.get('response_review','enforce')!='enforce':
                 raise ValueError('Metadata recovery requires enforced semantic review')
+            historical_social=bool(materials.get('self_details_on_demand')
+                and set(generated.focus)&{'social','feedback'} and event.get_extra('dafeiyu_dialogue_history',[]))
             if (recover or 'self' in generated.focus or 'action' in generated.focus or len(generated.reply)>80
+                    or historical_social
                     or '\n\n' in generated.reply
                     or generated.claims or tool_rows
                     or materials.get('historical_tool_results')):
@@ -935,6 +941,47 @@ class Dialogue(Star):
             self.errors += 1
             return json.dumps({'records': [], 'unavailable': True, 'error_type': type(error).__name__})
 
+    @filter.llm_tool(name='dafeiyu_self')
+    async def self_details(self,event,section:str='thoughts')->str:
+        """按当前讨论需要，只读查询鲸鲸自己的资料；不执行活动或发送消息。
+
+        普通问候、应声和别人的话题无需查询。明确问自己的兴趣、近况、作品或故事时，
+        自行选择相关部分；可表达当下看法，不为凑话题读取旧进度。打算不证明正在做或做完。
+
+        Args:
+            section(string): thoughts当前打算与反思；works实际作品与进行中记录；interests偏好；fiction已有虚构世界
+        """
+        try:
+            turn=self.identity(event)
+            if not event.get_extra(ACTIVE_KEY,False) or section not in ('thoughts','works','interests','fiction'):
+                raise ValueError('Self lookup not authorized')
+            evidence=event.get_extra('dafeiyu_dialogue_evidence',{})
+            if section=='thoughts':
+                thoughts=await self.own_thoughts()
+                data={key:list(thoughts.get(key,[]))[:1] for key in ('projects','reflections','intentions')}
+                evidence['self_thoughts']=data
+            elif section=='works':
+                completed,running=await self.own_activity()
+                data=self_state(completed,running,(await self.conversation_works(event))[:1])
+                evidence['verified_self']=data
+            else:
+                character=self.natural().dialogue_character()
+                if section=='interests':
+                    data=dict(stable_profile=character.get('stable_profile'),growth=await self.growth_profile())
+                else:
+                    completed,_=await self.own_activity()
+                    data=dict(fictional_world=character.get('fictional_world'),
+                        previous_story=completed.get('story') if completed else None,nature='fiction_not_real_activity')
+                evidence['requested_character']=data
+            evidence['self_details_requested']=True
+            event.set_extra('dafeiyu_dialogue_evidence',evidence)
+            offered=claim_sources(evidence,event.get_extra('dafeiyu_dialogue_tool_evidence',[]))
+            event.set_extra('dafeiyu_claim_sources',offered)
+            return json.dumps(dict(section=section,data=data,read_only=True,executes_activities=False,
+                claim_evidence={key:row['kind'] for key,row in offered.items()}),ensure_ascii=False)
+        except asyncio.CancelledError:raise
+        except Exception as error:return json.dumps(dict(unavailable=True,error_type=type(error).__name__))
+
     @filter.llm_tool(name='dafeiyu_cognition')
     async def cognition(self,event,action:str='review',owner_qq:str='',record_ids:list[str]|None=None)->str:
         """查阅或按已提供的编号删除语义学习资料。仅在本人明确要求管理时使用。
@@ -996,7 +1043,8 @@ class Dialogue(Star):
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.5.1', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.6.0', 'mode': self.config.get('mode', 'shadow'),
+            'self_details_on_demand':True,
             'personality_growth_enabled':self.growth_enabled(),
             'personality_growth_loop_running':bool(self.growth_task and not self.growth_task.done()),
             'native_context_adapter_installed':self.provider_contracts.runner_adapter is not None,

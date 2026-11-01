@@ -57,7 +57,8 @@ class InitiativeEngine:
             record=life.public_context()
             if record and 0<=now-record.get('completed_at',0)<=48*3600:
                 source={'id':str(record['id']),'kind':'life','day':record['day'],
-                    'activity':record['kind'],'note':record['note'],'thought':record['thought']}
+                    'activity':record['kind'],'note':record['note'],'thought':record['thought'],
+                    'completed_at':record['completed_at'],'source':record.get('source',{})}
                 if not self.store.used(source['id']):yield source
         natural=self.active('dafeiyu_natural_chat')
         if not natural:return
@@ -121,6 +122,10 @@ class InitiativeEngine:
         if self.semantic_controller():return await self.tick_semantic()
         await asyncio.to_thread(self.store.diagnose,'skip','semantic_controller_unavailable')
 
+    async def review(self,provider,source,body,recent,previous):
+        from .spontaneous_policy import review_initiative
+        return await review_initiative(provider,source,body,recent,previous)
+
     async def tick_semantic(self):
         if self.lock.locked():return
         async with self.lock:
@@ -154,6 +159,10 @@ class InitiativeEngine:
                 source,body,minutes=await choose_initiative(provider,candidates,recent,previous,day,growth=growth,timing=timing,include_schedule=True)
                 await asyncio.to_thread(self.store.finish_evaluation,day,slot,'selected' if source else 'no_action',minutes)
                 if not source:return
+                if epoch!=await asyncio.to_thread(self.store.epoch) or not await self.source_valid(source):return
+                if not await self.review(provider,source,body,recent,previous):
+                    await asyncio.to_thread(self.store.finish_evaluation,day,slot,'filtered',minutes)
+                    await asyncio.to_thread(self.store.diagnose,'skip','semantic_review_declined');return
                 async with self.plugin.lock:
                     if (not self.allowed() or not await self.source_valid(source)
                             or not await asyncio.to_thread(self.store.reserve,day,slot,source['id'],source['kind'],epoch)):return

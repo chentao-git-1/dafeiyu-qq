@@ -117,7 +117,9 @@ class InitiativeStore:
 
     def recent_sent(self):
         with self.connect() as db:
-            return [dict(r) for r in db.execute("SELECT source,body,at FROM attempts WHERE status='sent' ORDER BY at DESC LIMIT 4")]
+            # Private human material is not promoted to a new topic/history store.
+            return [dict(r,body=r['body'] if r['kind'] in ('life','intention') else None)
+                for r in db.execute("SELECT source,kind,body,at FROM attempts WHERE status='sent' ORDER BY at DESC LIMIT 12")]
     def begin_send(self,day,slot,epoch,body):
         now=self.clock()
         with self.connect() as db:

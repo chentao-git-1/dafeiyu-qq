@@ -39,6 +39,7 @@ DELIVERY_POLICY='\nmaterials.delivery_receipts来自本轮实际发送确认，m
 POLICY+=DELIVERY_POLICY
 VERIFY_POLICY+=DELIVERY_POLICY
 POLICY+='\nmaterials.rejected_revision若存在，包含上次改写未通过独立事实核对的逐字片段。只修正这些存疑事实及其必要上下文，保留有依据的回答、主观看法和当前构思；不要以核对流程说明或笼统拒绝替代回答。必须依据当前材料重新判断，不把上次草稿当事实来源。'
+POLICY+='\n自己的完整资料用于核对事实，不表示本轮应该主动讲它。当前是问候、应声或别人的话题时，无关的旧作品、故事和计划应按unhelpful_style修订为回应眼前内容。结合history与materials.recent_own_shares判断是否复述同一主题且没有新增信息；这些历史自述只用于判断已说过什么，不能证明动作真实发生。用户明确在聊该兴趣、索要作品或核对细节时保留必要内容，不设词语禁令，不强行换题。角色的偏好不限制当前话题中新的主观看法。'
 
 
 @dataclass(frozen=True)

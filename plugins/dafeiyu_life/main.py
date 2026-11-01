@@ -16,7 +16,7 @@ from .life import TZ, LifeEngine, LifeStore
 from .topic_context import relevant as relevant_life, world_profile
 
 
-@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.5.1")
+@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.6.0")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -115,6 +115,8 @@ class JingjingLife(Star):
                 "activity_timing": "self_selected_when_intention",
                 "self_selected_time_can_override_legacy_window": True,
                 "step_completion_requires_semantic_check": True,
+                "fiction_is_optional": True,
+                "activity_requires_journal_format": False,
             }
         )
 
@@ -173,7 +175,7 @@ class JingjingLife(Star):
         只有工具确认完成才说做过，未执行就只谈自己的想法。展示已有插画仍需用户明确要求。
 
         Args:
-            action(string): develop在原有额度内自行选择推进数字项目，status近况，recall查旧手帐，show_work按用户明确要求发已有插画
+            action(string): develop在原有额度内自行选择推进数字项目，status最近作品，recall查旧作品，show_work按用户明确要求发已有插画
             query(string): recall的主题或日期关键词，不提供文件路径；没有关键词返回最近五项
         """
         try:
@@ -183,7 +185,7 @@ class JingjingLife(Star):
                 result=await self.engine.advance(opportunity=True)
                 if result.get('advanced'):result['completed_work']=self.public_context()
                 return json.dumps(result,ensure_ascii=False)
-            records = self.store.records(60)
+            records = self.store.verified_records(60)
             if action == "show_work":
                 if not re.search(r"看|发|展示|给我|作品|插画", event.message_str or ""):
                     return "对方没有要求展示图片，先正常聊。"
@@ -232,7 +234,7 @@ class JingjingLife(Star):
                                 "source",
                             )
                         }
-                        for r in records[:5]
+                        for r in records[:1 if action=='status' else 5]
                     ],
                     ensure_ascii=False,
                 )
