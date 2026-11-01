@@ -34,7 +34,7 @@ from .growth import GrowthStore,GLOBAL,own_experiences,preference_experiences,re
 from .growth_policy import assess as assess_growth
 
 
-@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.5.0')
+@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.5.1')
 class Dialogue(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -432,7 +432,9 @@ class Dialogue(Star):
                             or not 0<float(work['completed_at'])<=time.time()+5):continue
                     reflections.append(dict(row,source_work={k:work[k] for k in ('id','day','kind','note','completed_at')}))
                     if len(reflections)==3:break
-                return dict(projects=[dict(p,status='intent') for p in projects],reflections=reflections)
+                direction=getattr(getattr(life,'engine',None),'direction_profile',lambda:None)()
+                return dict(projects=[dict(p,status='intent') for p in projects],reflections=reflections,
+                    intentions=[direction] if direction else [])
             except (OSError,sqlite3.Error,KeyError,ValueError,TypeError):return {}
         return await asyncio.to_thread(read)
 
@@ -994,7 +996,7 @@ class Dialogue(Star):
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.5.0', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.5.1', 'mode': self.config.get('mode', 'shadow'),
             'personality_growth_enabled':self.growth_enabled(),
             'personality_growth_loop_running':bool(self.growth_task and not self.growth_task.done()),
             'native_context_adapter_installed':self.provider_contracts.runner_adapter is not None,
@@ -1006,7 +1008,7 @@ class Dialogue(Star):
             'retained_samples': len(self.samples), 'samples': list(self.samples)[-20:], 'errors': self.errors,
             'response_review': self.config.get('response_review', 'enforce'), 'review_statistics': dict(self.review_stats),
             'contains_chat_content': False,
-            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative','learning_state','personality_growth')),
+            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative','direction','learning_state','personality_growth')),
             'extra_qq_sends': 0,
             'source_databases_read_only': self.config.get('mode', 'shadow') != 'active',
             'learning_created': self._learning is not None,

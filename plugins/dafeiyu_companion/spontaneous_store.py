@@ -122,10 +122,11 @@ class InitiativeStore:
         now=self.clock()
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            row=db.execute('SELECT status FROM attempts WHERE day=? AND slot=?',(day,slot)).fetchone()
+            row=db.execute('SELECT status,kind FROM attempts WHERE day=? AND slot=?',(day,slot)).fetchone()
             if (not self._slot_ready(db,day,slot,now) or not row or row[0]!='generating' or self.get(db,'epoch')!=epoch
                     or not self._automatic_care_ready(db,now)):return False
-            db.execute("UPDATE attempts SET status='sending',body=? WHERE day=? AND slot=?",(body,day,slot))
+            # Private discussion text stays in its source store, where forgetting can remove it.
+            db.execute("UPDATE attempts SET status='sending',body=? WHERE day=? AND slot=?",(None if row['kind']=='conversation' else body,day,slot))
             self.set(db,'pending_at',now);self.set(db,'last_activity',now);self.set(db,'last_push',now)
         return True
     def finish(self,day,slot,status,error=''):

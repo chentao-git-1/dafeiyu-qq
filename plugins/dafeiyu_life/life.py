@@ -173,7 +173,48 @@ class LifeStore:
 
 
 class LifeEngine:
-    def __init__(self,store,context):self.store=store;self.context=context;self.lock=asyncio.Lock()
+    def __init__(self,store,context):self.store=store;self.context=context;self.lock=asyncio.Lock();self._direction=None
+    def direction_store(self):
+        if self._direction is None:
+            from .direction import DirectionStore
+            self._direction=DirectionStore(self.store.root)
+        return self._direction
+    def direction_profile(self):
+        return self.direction_store().visible(self.store) if self.store.enabled() else None
+    async def consider_direction(self):
+        if self.lock.locked() or not self.store.enabled():return False
+        async with self.lock:
+            from decimal import Decimal,InvalidOperation
+            from .direction import packet,fingerprint,choose
+            from .planning import SelfJournal
+            meta=self.context.get_registered_star('dafeiyu_dialogue')
+            controller=getattr(meta,'star_cls',None) if meta and meta.activated else None
+            if not controller or not controller.owner_policy_enabled('activity_policy_v2'):return False
+            balance=self.context.get_registered_star('astrbot_plugin_dafeiyu_balance')
+            balance=getattr(balance,'star_cls',None) if balance and balance.activated else None
+            if balance is None:return False
+            status=balance.watch.status()
+            try:
+                value=Decimal(str(status.get('last_balance_cny')))
+                if not (value.is_finite() and value>=Decimal('0.70') and status.get('last_available') is True
+                        and 0<=time.time()-float(status.get('last_checked_at') or 0)<=1800):return False
+            except (InvalidOperation,ValueError,TypeError):return False
+            provider=await self.context.get_using_provider_async('dafeiyu-qq:FriendMessage:'+str(controller.natural().actor_owner()))
+            if provider is None:return False
+            journal=SelfJournal(self.store.root);direction=self.direction_store()
+            growth=await controller.growth_profile() if callable(getattr(controller,'growth_profile',None)) else {}
+            materials=await asyncio.to_thread(packet,self.store,journal,growth)
+            claim=await asyncio.to_thread(direction.claim,materials)
+            if not claim:return False
+            try:
+                choice=await choose(controller.metered_provider(provider,'direction'),claim)
+                fresh_growth=await controller.growth_profile() if callable(getattr(controller,'growth_profile',None)) else {}
+                fresh=await asyncio.to_thread(packet,self.store,journal,fresh_growth)
+                return await asyncio.to_thread(direction.finish,claim,choice,self.store.enabled()
+                    and controller.owner_policy_enabled('activity_policy_v2') and fingerprint(fresh)==claim['fingerprint'])
+            except asyncio.CancelledError:raise
+            except Exception:
+                await asyncio.to_thread(direction.fail,claim);raise
     async def web_tool(self,name,payload):
         config=self.context.get_config()
         keys=config.get('provider_settings',{}).get('websearch_deepseek_key',[])
@@ -325,7 +366,10 @@ class LifeEngine:
                     'scene':scene_title,'source':{k:v for k,v in source.items() if k!='body'},
                     'artifact':'works/'+name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'completed_at':time.time()}
                 self.store.finish(plan['day'],record)
-                if semantic:journal.integrate(record,generated.get('reflection'),project)
+                if semantic:
+                    journal.integrate(record,generated.get('reflection'),project)
+                    if choice.get('direction_version'):
+                        self.direction_store().complete_step(choice['direction_version'],record,self.store)
                 self.store.cleanup()
                 return {'advanced':True,'day':plan['day'],'kind':kind,'artifact_verified':True,'project':record['project'],'stage':record['stage'],
                     'adapted_from':'reading' if adapting else None}

@@ -16,7 +16,7 @@ from .life import TZ, LifeEngine, LifeStore
 from .topic_context import relevant as relevant_life, world_profile
 
 
-@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.3.3")
+@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.4.0")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -48,6 +48,12 @@ class JingjingLife(Star):
     async def loop(self):
         await asyncio.sleep(30)
         while True:
+            try:
+                await self.engine.consider_direction()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning('[鲸鲸自己的打算] 本次未更新：%s',type(error).__name__)
             try:
                 await self.engine.advance()
             except asyncio.CancelledError:
@@ -104,6 +110,8 @@ class JingjingLife(Star):
                 "extra_qq_sends": False,
                 "extra_qzone_posts": False,
                 "drawing_every_activities": 7,
+                "self_direction": self.engine.direction_store().status(),
+                "self_direction_thinks_without_activity": True,
             }
         )
 

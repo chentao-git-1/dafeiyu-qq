@@ -48,6 +48,12 @@ class InitiativeEngine:
         now=self.clock();today=dt.datetime.fromtimestamp(now,TZ).date()
         life=self.active('dafeiyu_life')
         if life:
+            direction=await asyncio.to_thread(getattr(getattr(life,'engine',None),'direction_profile',lambda:None))
+            if direction and direction['status']=='intent':
+                source={'id':direction['id'],'kind':'intention','day':dt.datetime.fromtimestamp(direction['updated'],TZ).date().isoformat(),
+                    'note':direction['question']+'\n'+direction['next_step'],'version':direction['version'],
+                    'status':'intent','activity':direction['kind']}
+                if not self.store.used(source['id']):yield source
             record=life.public_context()
             if record and 0<=now-record.get('completed_at',0)<=48*3600:
                 source={'id':str(record['id']),'kind':'life','day':record['day'],
@@ -55,6 +61,8 @@ class InitiativeEngine:
                 if not self.store.used(source['id']):yield source
         natural=self.active('dafeiyu_natural_chat')
         if not natural:return
+        for source in await asyncio.to_thread(self.conversation_candidates):
+            if not self.store.used(source['id']):yield source
         controller=self.semantic_controller()
         if controller and controller.feature('learning_v2'):
             for row in controller.learning_store().current(OWNER,SESSION):
@@ -73,7 +81,29 @@ class InitiativeEngine:
             source={'id':'episode:'+str(row['id']),'kind':'care','episode_id':row['id'],
                 'updated':row['updated'],'topic':row['topic'],'day':row['event_day'],'evidence':row['evidence'][:500]}
             if not self.store.used(source['id']) and await self.care_allowed(source['topic']):yield source
+    def conversation_candidates(self):
+        natural=self.active('dafeiyu_natural_chat')
+        if not natural or not callable(getattr(natural,'exchange_store',None)):return []
+        from data.plugins.dafeiyu_dialogue.adapters import MemoryCatalog
+        from data.plugins.dafeiyu_natural_chat.interaction import privacy_time
+        path=natural.exchange_store().path
+        rows=MemoryCatalog._read(path,'SELECT id,human,at FROM exchanges WHERE qq=? AND origin=? AND at>=? ORDER BY at DESC,id DESC LIMIT 6',
+            (OWNER,SESSION,max(self.clock()-7*86400,privacy_time(path,SESSION))))
+        result=[]
+        for row in rows:
+            if not row['human'] or not 0<=self.clock()-row['at']<=7*86400:continue
+            key=hashlib.sha256(json.dumps([OWNER,SESSION,row['id'],row['human'],row['at']],ensure_ascii=False).encode()).hexdigest()[:24]
+            result.append(dict(id='conversation:'+key,kind='conversation',day=dt.datetime.fromtimestamp(row['at'],TZ).date().isoformat(),
+                evidence=row['human'],recorded_at=row['at'],exchange_id=row['id']))
+        return result
     async def source_valid(self,source):
+        if source['kind']=='conversation':
+            return source in await asyncio.to_thread(self.conversation_candidates)
+        if source['kind']=='intention':
+            life=self.active('dafeiyu_life')
+            current=await asyncio.to_thread(getattr(getattr(life,'engine',None),'direction_profile',lambda:None))
+            return bool(current and current['status']=='intent' and current['id']==source['id']
+                and current['version']==source['version'] and current['question']+'\n'+current['next_step']==source['note'])
         if source['kind']=='care':
             if source.get('learned_id'):
                 controller=self.semantic_controller()

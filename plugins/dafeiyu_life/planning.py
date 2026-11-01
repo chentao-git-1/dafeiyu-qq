@@ -11,7 +11,8 @@ import time
 POLICY = '''为AI角色选择一次自己的数字活动。输入仅含操作员种子偏好、真实作品、带来源反思和持续项目，不含人的私聊。结合尚未解决的问题、已做过什么和现在可用的材料，选择继续项目、开一个有理由的新方向，或者暂不行动。不要按次数轮播、随机抽签或为了“有生活”硬凑。
 grown_dispositions若存在只含机器人自己的全局长期倾向，可参考其中的适用情境和反向分寸发展兴趣；它不证明活动已完成，不改变每日额度、工具范围、身份和权限。operator_seed是起点，不强制每次选同样的题目。
 operator_seed.id也是明确可引用的兴趣来源；尚无作品或项目时，可以从自己的兴趣提出一个具体问题，开始原创文字或受控阅读，不必先有成品才允许创作。创作构思不要求外部事实证据；阅读问题会交给工具查证，不提前编知识或网址。已有项目值得继续时接着推进，不重复建立同一个方向。none仍然是允许的真实选择，不把没有历史成品误解成无法自主开始。
-只输出JSON：{"kind":"reading|writing|drawing|none","project_id":"已有项目编号或空串","expected_version":0,"title":"项目标题","question":"这次具体想弄清或表达什么","source_ids":["实际提供的来源编号"],"reason":"简短依据"}。新项目expected_version为0；继续原项目保留其编号和版本。none时其他文字可为空，source_ids为空。阅读只给研究问题，不生成网址；工具会受控搜索和核验。绘画只有allowed_kinds允许才选择。没有合适材料、没有想推进的事或预算不足可none。不得把未执行的选择说成已完成，不生成联系、发布、改权限或花费的新授权。'''
+self_direction是自己此前保存的打算，只是意向。适合且工具允许时可以推进它的next_step，direction_version填其version且kind与它一致；source_ids仍取operator:seed或recent_works/reflections中的作品编号，不填direction的编号。可以暂不推进或做其他方向，此时direction_version为0。不能为完成打算绕开allowed_kinds或把阅读失败后的文字替代称作完成了原阅读步骤。
+只输出JSON：{"kind":"reading|writing|drawing|none","project_id":"已有项目编号或空串","expected_version":0,"title":"项目标题","question":"这次具体想弄清或表达什么","source_ids":["实际提供的来源编号"],"reason":"简短依据","direction_version":0}。新项目expected_version为0；继续原项目保留其编号和版本。none时其他文字可为空，source_ids为空。阅读只给研究问题，不生成网址；工具会受控搜索和核验。绘画只有allowed_kinds允许才选择。没有合适材料、没有想推进的事或预算不足可none。不得把未执行的选择说成已完成，不生成联系、发布、改权限或花费的新授权。'''
 
 
 class SelfJournal:
@@ -120,7 +121,8 @@ def validate_reflection(reflection, note):
 def parse_choice(raw, packet):
     from data.plugins.dafeiyu_dialogue.retrieval import json_object
     choice = json_object(raw)
-    if set(choice) != {'kind', 'project_id', 'expected_version', 'title', 'question', 'source_ids', 'reason'}:
+    fields={'kind', 'project_id', 'expected_version', 'title', 'question', 'source_ids', 'reason'}
+    if set(choice) not in (fields,fields|{'direction_version'}):
         raise ValueError('Unexpected activity decision')
     if choice['kind'] not in {*packet['allowed_kinds'], 'none'} or type(choice['expected_version']) is not int:
         raise ValueError('Unapproved activity')
@@ -133,6 +135,10 @@ def parse_choice(raw, packet):
     offered.update(r['work_id'] for r in packet['self_state']['reflections'])
     if any(not isinstance(i, str) or i not in offered for i in choice['source_ids']):
         raise ValueError('Invented activity source')
+    version=choice.get('direction_version',0);direction=packet.get('self_direction') or {}
+    if type(version) is not int or version<0 or version and (version!=direction.get('version')
+            or direction.get('status')!='intent' or choice['kind']!=direction.get('kind')):
+        raise ValueError('Unknown or mismatched intention step')
     if choice['kind'] == 'none':
         return choice
     if not choice['title'] or not choice['question'] or not choice['source_ids']:
@@ -154,6 +160,8 @@ async def choose_activity(provider, journal, records, allowed_kinds, availabilit
         'allowed_kinds': list(allowed_kinds), 'max_activities_today': 1}
     if availability:packet['availability']=availability
     if growth:packet['grown_dispositions']=growth
+    from .direction import DirectionStore
+    packet['self_direction']=DirectionStore(journal.root).visible(records=records)
     async def call(prompt,policy):
         response=await provider.text_chat(prompt=prompt,system_prompt=policy,contexts=[],func_tool=None,request_max_retries=1)
         return response.completion_text
