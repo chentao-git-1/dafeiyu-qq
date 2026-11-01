@@ -253,13 +253,14 @@ class LifeEngine:
                     if provider is None:raise RuntimeError('Text provider unavailable')
                     provider=controller.metered_provider(provider,'activity')
                     allowed=['writing'] if adapting else ['reading','writing']
+                    growth=await controller.growth_profile() if callable(getattr(controller,'growth_profile',None)) else {}
                     if not adapting and index>=6 and not any(r['kind']=='drawing' for r in self.store.records(6)):allowed.append('drawing')
                     if adapting:
                         choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed,
                             availability={'prior_choice':journal.decision(plan['day']), 'failed_stage':'reading',
                                 'error_type':plan['error'],'reading':'no_verified_completed_reading',
-                                'instruction':'这次阅读未能完成，不再搜索。可以沿自己的兴趣改做一段原创文字或none；不宣称已读过文章，不把猜测写成知识。仍是当天同一次活动。'})
-                    else:choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed)
+                                'instruction':'这次阅读未能完成，不再搜索。可以沿自己的兴趣改做一段原创文字或none；不宣称已读过文章，不把猜测写成知识。仍是当天同一次活动。'},growth=growth)
+                    else:choice=await choose_activity(provider,journal,self.store.verified_records(12),allowed,growth=growth)
                     journal.save_choice(decision_day,choice)
                 except asyncio.CancelledError:raise
                 except Exception as error:

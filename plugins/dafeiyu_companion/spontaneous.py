@@ -178,7 +178,8 @@ class InitiativeEngine:
                 if provider is None:raise RuntimeError('Text provider unavailable')
                 provider=controller.metered_provider(provider,'initiative')
                 previous=await asyncio.to_thread(self.store.recent_sent)
-                source,body=await choose_initiative(provider,candidates,recent,previous,day)
+                growth=await controller.growth_profile(turn) if callable(getattr(controller,'growth_profile',None)) else {}
+                source,body=await choose_initiative(provider,candidates,recent,previous,day,growth=growth)
                 await asyncio.to_thread(self.store.finish_evaluation,day,slot,'selected' if source else 'no_action')
                 if not source:return
                 async with self.plugin.lock:

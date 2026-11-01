@@ -1,5 +1,6 @@
 """Source-bound dialogue for admitted contacts and groups; shadow requests remain read only."""
 import asyncio
+import contextlib
 from collections import deque, Counter
 import copy
 from dataclasses import replace
@@ -14,7 +15,7 @@ import sqlite3
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, register
-from astrbot.api.web import json_response
+from astrbot.api.web import json_response, request as web_request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .adapters import MemoryCatalog
@@ -29,9 +30,11 @@ from .learning import LearningStore, proposals
 from .indexes import SourceIndex
 from .provider_contract import ProviderContracts,arm_contract
 from .metering import MeteredProvider
+from .growth import GrowthStore,GLOBAL,own_experiences,preference_experiences,relation,perspective
+from .growth_policy import assess as assess_growth
 
 
-@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.4.4')
+@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.5.0')
 class Dialogue(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -43,16 +46,117 @@ class Dialogue(Star):
         self._learning = None
         self._index = None
         self.provider_contracts=ProviderContracts()
+        self._growth=None;self.growth_task=None;self.growth_lock=asyncio.Lock()
         self.learning_ticks=Counter();self.learning_seen=deque(maxlen=512);self.learning_state_inflight=set()
         context.register_web_api('/dafeiyu_dialogue/status', self.status, ['GET'], '统一对话资料数值状态（无正文）')
+        context.register_web_api('/dafeiyu_dialogue/personality',self.personality_status,['GET'],'长期性格成长版本与运行状态')
+        context.register_web_api('/dafeiyu_dialogue/personality/rollback',self.rollback_personality,['POST'],'管理面板按版本回退全局成长倾向')
 
     def natural(self):
         meta = self.context.get_registered_star('dafeiyu_natural_chat')
         return getattr(meta, 'star_cls', None) if meta and meta.activated else None
 
-    async def initialize(self):self.provider_contracts.install_runner()
+    async def initialize(self):
+        self.provider_contracts.install_runner()
+        if self.growth_enabled():self.growth_task=asyncio.create_task(self.growth_loop())
 
-    async def terminate(self):self.provider_contracts.close()
+    async def terminate(self):
+        if self.growth_task:
+            self.growth_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):await self.growth_task
+        self.provider_contracts.close()
+
+    def growth_enabled(self):
+        return self.config.get('mode')=='active' and self.config.get('generation_contract',True) and self.feature('personality_growth_v1')
+
+    def growth_store(self):
+        if self._growth is None:self._growth=GrowthStore(self.root/'plugin_data/dafeiyu_dialogue/personality_growth.db')
+        return self._growth
+
+    async def sync_growth(self,scope=GLOBAL,owner='',origin=''):
+        growth=self.growth_store()
+        epoch=await asyncio.to_thread(growth.epoch,scope,owner,origin)
+        retained=await asyncio.to_thread(growth.retained,scope)
+        if scope==GLOBAL:
+            meta=self.context.get_registered_star('dafeiyu_life')
+            life=getattr(meta,'star_cls',None) if meta and meta.activated else None
+            rows=await asyncio.to_thread(own_experiences,getattr(life,'store',None),retained=retained)
+        else:
+            rows=await asyncio.to_thread(preference_experiences,self.learning_store(),owner,origin,retained=retained) if self.feature('learning_v2') else []
+        return await asyncio.to_thread(growth.reconcile,scope,rows,owner,origin,epoch)
+
+    async def growth_profile(self,turn=None):
+        if not self.growth_enabled():return {}
+        try:
+            result={'global':perspective(await self.sync_growth())}
+            if turn is not None and not turn.is_group and self.feature('learning_v2'):
+                result['with_current_person']=perspective(await self.sync_growth(relation(turn.actor,turn.origin),turn.actor,turn.origin))
+            return result
+        except asyncio.CancelledError:raise
+        except Exception as error:
+            self.review_stats['personality_growth_context_failed']+=1
+            logger.warning('Personality context unavailable: %s',type(error).__name__)
+            return {}
+
+    async def review_growth(self):
+        if not self.growth_enabled() or self.growth_lock.locked():return 0
+        async with self.growth_lock:
+            from data.plugins.dafeiyu_natural_chat.self_profile import self_profile
+            await self.sync_growth();store=self.growth_store();changed=0
+            scopes=await asyncio.to_thread(store.scopes)
+            for scope in sorted(scopes,key=lambda r:r['scope']!=GLOBAL):
+                if not self.growth_enabled():break
+                await self.sync_growth(scope['scope'],scope['owner'],scope['origin'])
+                natural=self.natural()
+                if scope['scope']==GLOBAL and natural is None:continue
+                origin=scope['origin'] or 'dafeiyu-qq:FriendMessage:'+str(natural.actor_owner())
+                provider=await self.context.get_using_provider_async(origin)
+                if provider is None:continue
+                claim=await asyncio.to_thread(store.claim,scope['scope'])
+                if not claim:continue
+                try:
+                    claim['packet']['stable_profile']=self_profile()
+                    async def call(prompt,policy):
+                        response=await self.metered_provider(provider,'personality_growth').text_chat(
+                            prompt=prompt,system_prompt=policy,contexts=[],func_tool=None,request_max_retries=1)
+                        return response.completion_text
+                    proposal,accepted=await assess_growth(claim['packet'],call)
+                    if not self.growth_enabled():raise ValueError('Personality growth disabled during consolidation')
+                    await self.sync_growth(scope['scope'],scope['owner'],scope['origin'])
+                    changed+=int(await asyncio.to_thread(store.finish,claim,proposal,accepted))
+                except asyncio.CancelledError:raise
+                except Exception as error:
+                    await asyncio.to_thread(store.finish,claim,error=type(error).__name__)
+                    self.review_stats['personality_growth_evaluation_failed']+=1
+                    logger.warning('Personality consolidation unavailable: %s',type(error).__name__)
+            return changed
+
+    async def growth_loop(self):
+        await asyncio.sleep(30)
+        while True:
+            try:await self.review_growth()
+            except asyncio.CancelledError:raise
+            except Exception as error:logger.warning('Personality background unavailable: %s',type(error).__name__)
+            await asyncio.sleep(600)
+
+    async def personality_status(self):
+        enabled=self.growth_enabled()
+        current=await self.sync_growth() if enabled else dict(revision=0,version=0,tendencies=[])
+        return json_response(dict(enabled=enabled,global_personality=current,
+            history=await asyncio.to_thread(self.growth_store().history,GLOBAL) if enabled else [],
+            statistics=await asyncio.to_thread(self.growth_store().status) if enabled else {},
+            background_running=bool(self.growth_task and not self.growth_task.done()),
+            max_reviews_per_day=2,max_model_calls_per_review=2,min_distinct_experiences=3,min_span_hours=24,
+            private_feedback_scope='same_person_same_private_session',identity_mutable=False,contains_chat_content=False))
+
+    async def rollback_personality(self):
+        if not web_request.username or not self.growth_enabled():raise ValueError('Authenticated operator required')
+        body=await web_request.json(default={})
+        if (not isinstance(body,dict) or set(body)!={'expected_revision','target_version'}
+                or any(type(body[k]) is not int or body[k]<0 for k in body)):raise ValueError('Explicit personality revisions required')
+        await self.sync_growth()
+        version=await asyncio.to_thread(self.growth_store().rollback,GLOBAL,body['expected_revision'],body['target_version'])
+        return json_response(dict(rolled_back=True,version=version))
 
     def metered_provider(self,provider,purpose,structured=True):
         self.provider_contracts.install(provider)
@@ -201,6 +305,8 @@ class Dialogue(Star):
             prompt, compacted = replace_persona(req.system_prompt, event.get_extra('dafeiyu_dialogue_persona', ''),
                 contract=event.get_extra('dafeiyu_generation_contract',False))
             character=natural.dialogue_character() if hasattr(natural, 'dialogue_character') else None
+            if self.growth_enabled():
+                character=dict(character or {},growth=await self.growth_profile(turn))
             if event.get_extra('dafeiyu_generation_contract',False) and character and character.get('fictional_world'):
                 from .retrieval import terms
                 recent_users=[m.get('content','') for m in (req.contexts or [])[-4:] if m.get('role')=='user' and isinstance(m.get('content'),str)]
@@ -616,6 +722,8 @@ class Dialogue(Star):
 
     async def forget_legacy(self,event,turn,privacy):
         action=privacy['action'];ids=None if action=='forget_all' else privacy['ids']
+        if self._growth is not None and not turn.is_group and action in ('forget_all','forget_selected'):
+            await asyncio.to_thread(self._growth.forget,turn.actor)
         meta=self.context.get_registered_star('astrbot_plugin_dafeiyu_draw')
         drawing=getattr(meta,'star_cls',None) if meta and meta.activated else None
         if drawing and callable(getattr(drawing,'forget_works',None)):
@@ -851,6 +959,7 @@ class Dialogue(Star):
                 raise ValueError('Review current records before deleting')
             removed=await asyncio.to_thread(self.learning_store().forget_entities,owner,
                 {i:offered['versions'][i] for i in record_ids})
+            if self._growth is not None and not turn.is_group:await asyncio.to_thread(self._growth.forget,owner)
             await asyncio.to_thread(self.natural().forget_semantic,owner,origin,[])
             event.set_extra('dafeiyu_memory_mutated_in_turn',True)
             event.set_extra('dafeiyu_semantic_forgetting',True)
@@ -861,8 +970,33 @@ class Dialogue(Star):
         except asyncio.CancelledError:raise
         except Exception as error:return json.dumps({'confirmed':False,'error_type':type(error).__name__})
 
+    @filter.llm_tool(name='dafeiyu_personality')
+    async def personality(self,event,action:str='status')->str:
+        """本人问长期性格或变化原因时，只读查阅真实成长；不改变性格、身份或权限。
+
+        Args:
+            action(string): status当前倾向；history最近变化及原因。私聊只读当前人自己的关系倾向，群聊只读全局。
+        """
+        try:
+            turn=self.identity(event)
+            if not event.get_extra(ACTIVE_KEY,False) or action not in ('status','history'):raise ValueError('Personality read not authorized')
+            result=dict(enabled=self.growth_enabled(),current=await self.growth_profile(turn),identity_changed=False)
+            if self.growth_enabled() and action=='history':
+                scopes=[GLOBAL]+([] if turn.is_group else [relation(turn.actor,turn.origin)])
+                result['history']={}
+                for scope in scopes:
+                    rows=await asyncio.to_thread(self.growth_store().history,scope)
+                    result['history']['global' if scope==GLOBAL else 'with_current_person']=[
+                        dict(version=r['version'],at=r['at'],action=r['action'],reason=r['reason'],
+                            tendencies=[{k:t[k] for k in ('tendency','when','counterweight')} for t in r['tendencies']]) for r in rows[:3]]
+            return json.dumps(result,ensure_ascii=False)
+        except asyncio.CancelledError:raise
+        except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
+
     async def status(self):
-        return json_response({'version': '0.4.4', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.5.0', 'mode': self.config.get('mode', 'shadow'),
+            'personality_growth_enabled':self.growth_enabled(),
+            'personality_growth_loop_running':bool(self.growth_task and not self.growth_task.done()),
             'native_context_adapter_installed':self.provider_contracts.runner_adapter is not None,
             'legacy_adapter_ready': getattr(self.natural(), 'dialogue_context_protocol', 0) == 4,
             'active_private_user_count': len(self.config.get('active_private_users', [])),
@@ -872,7 +1006,7 @@ class Dialogue(Star):
             'retained_samples': len(self.samples), 'samples': list(self.samples)[-20:], 'errors': self.errors,
             'response_review': self.config.get('response_review', 'enforce'), 'review_statistics': dict(self.review_stats),
             'contains_chat_content': False,
-            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative','learning_state')),
+            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative','learning_state','personality_growth')),
             'extra_qq_sends': 0,
             'source_databases_read_only': self.config.get('mode', 'shadow') != 'active',
             'learning_created': self._learning is not None,

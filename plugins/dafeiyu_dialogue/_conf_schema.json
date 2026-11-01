@@ -61,6 +61,11 @@
     "description": "仅主人active灰度：按持续项目和来源选择自主活动，允许不行动；沿用每天一次与费用边界",
     "default": false
   },
+  "personality_growth_v1": {
+    "type": "bool",
+    "description": "仅active主对话：根据已核验作品或同人同私聊的已确认偏好，积累跨日经历后在后台语义评估缓慢成长；每24小时每范围至多一次、全局每天最多两次评估，每次最多两次无工具文字请求。允许保持原样，来源撤回或遗忘会撤销派生倾向，身份和权限不变。",
+    "default": false
+  },
   "initiative_policy_v2": {
     "type": "bool",
     "description": "仅主人active灰度：结合真实近期互动，选择允许的分享或不发送；沿用原时窗、配额和回执",

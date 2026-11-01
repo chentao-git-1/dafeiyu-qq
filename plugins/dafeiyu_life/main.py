@@ -16,7 +16,7 @@ from .life import TZ, LifeEngine, LifeStore
 from .topic_context import relevant as relevant_life, world_profile
 
 
-@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.3.2")
+@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.3.3")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
