@@ -291,7 +291,7 @@ class LifeEngine:
             if semantic:
                 from .planning import SelfJournal
                 saved=SelfJournal(self.store.root)
-                if directed and plan['status']=='skipped' and not saved.decision(direction_key):
+                if directed and plan['status']=='skipped' and not saved.decision(direction_key) and saved.can_reconsider(plan['day']):
                     if self.store.reopen_skipped(plan):plan=self.store.schedule()
             # One alternative within the same failed daily slot, never another
             # search/drawing attempt or an overwrite of an unconfirmed artifact.

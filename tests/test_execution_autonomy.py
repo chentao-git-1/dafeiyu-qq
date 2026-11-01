@@ -26,6 +26,25 @@ def context(provider):
 
 
 class ExecutionAutonomy(unittest.IsolatedAsyncioTestCase):
+    async def test_new_intention_cannot_repeat_reading_after_a_failed_read_and_declined_alternative(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);life=LifeStore(root);journal=SelfJournal(root);now=[time.time()]
+            direction=DirectionStore(root,clock=lambda:now[0]);materials=packet(life,journal)
+            direction.finish(direction.claim(materials),proposal(materials,kind='reading'))
+            provider=NS(text_chat=AsyncMock());engine=LifeEngine(life,context(provider));engine._direction=direction
+            engine.reading=AsyncMock(side_effect=ValueError('no verified source'))
+            selected=dict(kind='reading',project_id='',expected_version=0,title='核验一个问题',question='查一份可靠资料',
+                source_ids=['operator:seed'],reason='推进自己的打算',direction_version=1)
+            none=dict(kind='none',project_id='',expected_version=0,title='',question='',source_ids=[],reason='先停下',direction_version=0)
+            with patch('data.plugins.dafeiyu_life.planning.choose_activity',AsyncMock(side_effect=[selected,none])) as select:
+                with self.assertRaises(ValueError):await engine.advance(bootstrap=True)
+                self.assertEqual((await engine.advance(bootstrap=True))['status'],'chose_no_activity')
+                now[0]+=600;materials=packet(life,journal)
+                direction.finish(direction.claim(materials),proposal(materials,1,kind='reading'))
+                self.assertEqual((await engine.advance(bootstrap=True))['status'],'skipped')
+                engine.reading.assert_awaited_once();self.assertEqual(select.await_count,2)
+                provider.text_chat.assert_not_awaited();self.assertEqual(life.count(),0)
+
     async def test_own_time_at_night_and_reconsidering_no_action_keep_the_real_activity_budget(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);life=LifeStore(root);journal=SelfJournal(root)

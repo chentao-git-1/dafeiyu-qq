@@ -61,6 +61,11 @@ class SelfJournal:
                 (day,day+':direction:%')).fetchone()
         return json.loads(row[0]) if row else None
 
+    def can_reconsider(self,day):
+        with self.db() as db:
+            rows=db.execute('SELECT decision FROM activity_choices WHERE day=? OR day LIKE ?',(day,day+':%')).fetchall()
+        return bool(rows) and all(json.loads(row[0]).get('kind')=='none' for row in rows)
+
     def reserve_choice(self, day, choice):
         with self.db() as db:
             return db.execute('INSERT OR IGNORE INTO activity_choices VALUES(?,?,?)',
