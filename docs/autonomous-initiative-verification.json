@@ -1,0 +1,23 @@
+{
+  "candidate_commit": "fa578d2e895895645b1f53b94446157724ac86ce",
+  "candidate_companion_version": "0.5.0",
+  "frequency_mode": "model_decides",
+  "daily_limit": null,
+  "fixed_contact_window": false,
+  "random_cooldown": false,
+  "model_selects_reconsideration_time": true,
+  "local_focused_tests": 7,
+  "local_focused_exit_code": 0,
+  "full_suite_run": false,
+  "production_image_verification_completed": false,
+  "deployed": false,
+  "blocking_condition": "SSH connection timeout before uploading the candidate",
+  "last_verified_live_companion_version": "0.4.3",
+  "last_verified_live_frequency_mode": "random_daily",
+  "production_source_changed_by_this_release": false,
+  "test_qq_sends": 0,
+  "test_qzone_posts": 0,
+  "real_tts_test_calls": 0,
+  "new_real_model_test_calls": 0,
+  "source_rollback_rehearsed": false
+}
