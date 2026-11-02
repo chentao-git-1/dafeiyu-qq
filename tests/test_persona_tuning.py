@@ -13,7 +13,8 @@ STAGE=Path(sys.argv.pop(1))
 sys.path.insert(0,str(STAGE))
 from dafeiyu_natural_chat.image_chat import image_mode
 from dafeiyu_natural_chat.recall_guard import own_life_question
-from dafeiyu_natural_chat.spoken_style import conversational_text, technical_turn, close_short_ack
+from dafeiyu_natural_chat.spoken_style import conversational_text, technical_turn, close_short_ack, conversational_mode, style_context, close_idle_questions
+from dafeiyu_natural_chat.interaction import parse_feedback, naturalness_feedback
 from dafeiyu_life.topic_context import relevant, world_profile
 
 def load(name,path):
@@ -96,6 +97,66 @@ class ShortAck(unittest.TestCase):
     def test_real_questions_technical_answers_and_normal_curiosity_survive(self):
         for human,reply,prior in [('我醒了，药怎么吃？','请问是什么药？','早吗？好了吗？'),('HTTP为什么失败','状态码504。还有日志吗？','早吗？好了吗？'),('我醒了','睡踏实了吗？','要睡会儿吗？')]:
             with self.subTest(human=human):self.assertEqual(close_short_ack(reply,human,prior),reply)
+
+class NaturalFeedback(unittest.TestCase):
+    def test_direct_style_complaints_select_brief_replies(self):
+        for text in ('你的人机味好重啊','感觉鲸鲸人机味好重啊','你说话好机械','你太像客服了','别那么机械了'):
+            with self.subTest(text=text):
+                self.assertTrue(naturalness_feedback(text))
+                self.assertEqual(parse_feedback(text),{'length':'short'})
+
+    def test_contextual_short_feedback_requires_a_recent_reply(self):
+        for text in ('好人机','太人机了','说话自然一点'):
+            with self.subTest(text=text):
+                self.assertFalse(naturalness_feedback(text))
+                self.assertEqual(parse_feedback(text,recent_reply=True),{'length':'short'})
+
+    def test_identity_questions_quotes_and_other_people_do_not_change_preferences(self):
+        for text in ('你是AI吗','你真的是机器人吗？','他说你的人机味好重啊','翻译“你太像客服了”','“你的人机味好重啊”','如果你太像客服了怎么办','你是客服吗？','照片里的你太像客服了'):
+            with self.subTest(text=text):
+                self.assertFalse(naturalness_feedback(text,recent_reply=True))
+                self.assertEqual(parse_feedback(text,recent_reply=True),{})
+        self.assertEqual(parse_feedback('你的人机味好重啊',has_image=True,recent_reply=True),{})
+
+
+class ConversationalModes(unittest.TestCase):
+    def test_light_updates_and_playful_sounds_have_their_own_intent(self):
+        for text in ('今天游戏又输了三把','刚下班了','没困呢才睡醒去的'):
+            with self.subTest(text=text):self.assertEqual(conversational_mode(text),'sharing')
+        self.assertEqual(conversational_mode('喵喵'),'banter')
+        self.assertEqual(close_idle_questions('又输三把，这也太不顺了。是队友太离谱，还是手感不对？','今天游戏又输了三把'),'又输三把，这也太不顺了。')
+        self.assertEqual(close_idle_questions('刚才那句确实像客服。你是在试我吗？','你的人机味好重啊'),'刚才那句确实像客服。')
+        self.assertEqual(close_idle_questions('我说“赢了吗？”是接着上一局问的。现在醒透了吗？','我睡醒了'),'我说“赢了吗？”是接着上一局问的。')
+        self.assertEqual(close_idle_questions('要我帮你看一下吗？','我睡醒了'),'要我帮你看一下吗？')
+
+    def test_substantive_requests_take_priority_over_a_casual_prefix(self):
+        for text in ('我输了三把，帮我分析一下','刚下班了，明天提醒我开会','这局输了，该怎么出装？','睡醒了，药怎么吃？','今天输了三把，给点建议','刚下课了，发个你的自拍','睡醒了，画你安慰我','这局输了，评价我的打法'):
+            with self.subTest(text=text):self.assertEqual(conversational_mode(text),'request')
+        for text in ('逐字复述我刚才说输了三把','翻译“喵”','回执unknown是什么意思','HTTP 404怎么修'):
+            with self.subTest(text=text):self.assertEqual(conversational_mode(text),'technical')
+        reply='先看看出装。你用的哪个角色？'
+        self.assertEqual(close_idle_questions(reply,'输了三把，帮我分析一下'),reply)
+        self.assertEqual(close_idle_questions('任务已创建。要改时间吗？','我忙完了',True),'任务已创建。要改时间吗？')
+
+    def test_tone_requests_are_feedback_but_identity_questions_stay_questions(self):
+        for text in ('你说话能不能自然一点','说话再有人味一点'):
+            with self.subTest(text=text):self.assertEqual(conversational_mode(text),'feedback')
+        self.assertEqual(conversational_mode('你是AI吗？'),'request')
+
+    def test_plain_delivery_hides_internal_status_without_claiming_a_send_outcome(self):
+        result=conversational_text('还没确认发出去，回执是unknown，我没法说他已经收到了。','你到底发给他了吗？')
+        self.assertEqual(result,'还没确认发出去，我没法说他已经收到了。')
+        result=conversational_text('回执是unknown，不能说明已送达。','发了吗？')
+        self.assertIn('还不能确定有没有发出去',result)
+        self.assertNotIn('unknown',result)
+
+    def test_technical_quotes_and_non_delivery_status_preserve_their_details(self):
+        text='回执是unknown，不能说明已送达。'
+        for human in ('回执unknown是什么意思','逐字复述这句','HTTP接口返回什么'):
+            with self.subTest(human=human):self.assertEqual(conversational_text(text,human),text)
+        self.assertEqual(conversational_text('他说“回执是unknown，不能说明已送达”。','发了吗？'),'他说“回执是unknown，不能说明已送达”。')
+        self.assertEqual(conversational_text('回执是unknown，付款状态还不确定。','付款好了吗？'),'回执是unknown，付款状态还不确定。')
+
 
 class Lore(unittest.TestCase):
     def test_unrelated_turns_do_not_include_own_projects(self):

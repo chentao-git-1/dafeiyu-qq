@@ -1,12 +1,15 @@
 import asyncio
 import contextlib
 import datetime
+import hashlib
 import re
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 from astrbot.api.event import filter
+from astrbot.api import logger
 from astrbot.api.star import Context, Star
 from astrbot.api.web import json_response
 from astrbot.core.message.components import (
@@ -24,11 +27,13 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from astrbot.core.utils.session_lock import session_lock_manager
 
 from .flow import ChatFlow
 from .ops import load_state, problem, result
 from .reliability import LoopWatchdog, ReplyReliability
-from .diagnostics import CURRENT, KEY, Journal, Turn, active, phase
+from .diagnostics import CURRENT, KEY, Journal, Turn, active, phase, request_metrics
+from .private_outbound import PrivateOutbound
 
 WRITES = {
     "dafeiyu_draw",
@@ -55,6 +60,8 @@ class DafeiyuRuntime(Star):
         self.loop_watchdog = LoopWatchdog()
         self.diagnostics = Journal(Path(get_astrbot_data_path()) / 'plugin_data/dafeiyu_runtime/diagnostics.json')
         self.tts_wrappers = []
+        self.outbound = PrivateOutbound(context, Path(get_astrbot_data_path()))
+        self.original_session_lock = session_lock_manager.acquire_lock
         self.context.register_web_api(
             "/dafeiyu_runtime/status",
             self.status,
@@ -65,6 +72,27 @@ class DafeiyuRuntime(Star):
 
     async def initialize(self):
         original_execute = self.original_execute
+        await self.outbound.observe_bot()
+        await self.outbound.seed_balance(Path(get_astrbot_data_path()))
+
+        @contextlib.asynccontextmanager
+        async def measured_lock(session_id):
+            started = time.monotonic()
+            turn = active()
+            matching = turn and turn.session == hashlib.sha256(str(session_id).encode()).hexdigest()[:16]
+            entered = False
+            try:
+                async with self.original_session_lock(session_id):
+                    entered = True
+                    if matching:
+                        turn.phases['session_wait'] = turn.phases.get('session_wait', 0) + (time.monotonic() - started) * 1000
+                    yield
+            finally:
+                if matching and not entered:
+                    turn.phases['session_wait'] = turn.phases.get('session_wait', 0) + (time.monotonic() - started) * 1000
+
+        self.session_lock_wrapper = measured_lock
+        session_lock_manager.acquire_lock = measured_lock
 
         async def execute(scheduler, event):
             if event.get_platform_id() != "dafeiyu-qq":
@@ -87,6 +115,7 @@ class DafeiyuRuntime(Star):
                 pass
             try:
                 with contextlib.suppress(Exception):
+                    await self.outbound.observe_bot()
                     await self.observe_tts_provider(event)
                 return await self.replies.execute(original_execute, scheduler, event)
             except asyncio.CancelledError:
@@ -117,6 +146,9 @@ class DafeiyuRuntime(Star):
 
     async def terminate(self):
         await self.replies.close()
+        self.outbound.close()
+        if session_lock_manager.acquire_lock is getattr(self, 'session_lock_wrapper', None):
+            session_lock_manager.acquire_lock = self.original_session_lock
         for provider, original, wrapper in self.tts_wrappers:
             if getattr(provider, 'get_audio', None) is wrapper:
                 provider.get_audio = original
@@ -207,7 +239,9 @@ class DafeiyuRuntime(Star):
                 "progress_after_seconds": self.replies.progress_after,
                 "send_timeout_seconds": self.replies.send_timeout,
                 "progress_notice_cooldown_seconds": self.replies.progress_cooldown,
-                "version": "0.3.0",
+                "version": "0.3.2",
+                "outbound_history": self.outbound.status(),
+                "session_wait_diagnostics": session_lock_manager.acquire_lock is getattr(self, 'session_lock_wrapper', None),
                 "reply_diagnostics": {'enabled': True, 'retained_turns': self.diagnostics.status()['retained_turns'], 'contains_chat_content': False},
                 "confirmed_delivery_receipts": True,
                 "group_reply_policy_active": callable(getattr(AiocqhttpMessageEvent, "_dafeiyu_group_reply_policy", None)),
@@ -279,7 +313,7 @@ class DafeiyuRuntime(Star):
         row = rows[0]
         when = datetime.datetime.fromtimestamp(row['at'],datetime.timezone(datetime.timedelta(hours=8))).strftime('%m-%d %H:%M')
         lines = ['最近一轮（北京时间{}，{}）：{:.2f}秒，结果：{}'.format(when,'群聊' if row['scope']=='group' else '私聊',row['total_ms'] / 1000,row['outcome'])]
-        labels = {'preparation':'准备', 'history':'聊天记录', 'memory':'片段回忆', 'schedule':'日程', 'agent':'主模型与工具', 'tools':'工具', 'vision':'图片识别', 'tts':'语音合成', 'send':'发送'}
+        labels = {'preparation':'准备', 'session_wait':'会话排队', 'first_response':'模型首个完整响应', 'history':'聊天记录', 'memory':'片段回忆', 'schedule':'日程', 'agent':'主模型与工具', 'tools':'工具', 'vision':'图片识别', 'tts':'语音合成', 'send':'发送'}
         lines.append('；'.join('{}{:.2f}秒'.format(labels[k], v / 1000) for k, v in row['phases_ms'].items()))
         for source, label in (('main','主模型'), ('vision','图片识别')):
             usage = row['reported_tokens'].get(source)
@@ -405,6 +439,21 @@ class DafeiyuRuntime(Star):
     async def reply_requested(self, event, request):
         if self.allowed(event) and not event.is_stopped():
             self.replies.expect(event)
+            request_metrics(request, event)
+
+    @filter.on_llm_request(priority=-1000035)
+    async def outgoing_history(self, event, request):
+        try:
+            await self.outbound.prepare(event, request)
+        except Exception as error:
+            self.outbound.stats['record_failures'] += 1
+            logger.warning('Private outgoing context unavailable: %s', type(error).__name__)
+
+    @filter.on_llm_response(priority=sys.maxsize)
+    async def first_model_response(self, event, response):
+        turn = active(event)
+        if turn and turn.agent_started is not None and 'first_response' not in turn.phases:
+            turn.phases['first_response'] = max(0, time.monotonic() - turn.agent_started) * 1000
 
     @filter.on_llm_tool_respond()
     async def confirm_tool_delivery(self, event, tool, arguments, result):
@@ -496,6 +545,7 @@ class DafeiyuRuntime(Star):
         while True:
             client = None
             try:
+                await self.outbound.observe_bot()
                 platform = self.context.get_platform("aiocqhttp")
                 client = getattr(platform, "bot", None)
                 if client is None:

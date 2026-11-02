@@ -77,7 +77,7 @@ class QzoneAPI(QzoneHttpClient):
         )
         return ApiResponse.from_raw(raw)
 
-    async def publish(self, post: Post) -> ApiResponse:
+    async def publish(self, post: Post, *, before_publish=None) -> ApiResponse:
         """发表说说, 返回tid"""
         ctx = await self.session.get_ctx()
         data: dict[str, Any] = {
@@ -97,22 +97,28 @@ class QzoneAPI(QzoneHttpClient):
         if post.images:
             logger.debug(f"正在上传图片: {post.images}")
             pic_bos, richvals = [], []
-            imgs: list[bytes] = await normalize_images(post.images)
-            if len(imgs) != len(post.images):
-                raise RuntimeError("配图读取失败，未提交空间发布")
-            for img in imgs:
-                resp = await self._upload_image(img)
-                if not resp.ok:
-                    raise RuntimeError(f"上传图片失败: {resp.message}")
-                picbo, richval = QzoneParser.parse_upload_result(resp.data)
-                pic_bos.append(picbo)
-                richvals.append(richval)
+            try:
+                imgs: list[bytes] = await normalize_images(post.images)
+                if len(imgs) != len(post.images):
+                    raise RuntimeError('Incomplete images')
+                for img in imgs:
+                    resp = await self._upload_image(img)
+                    if not resp.ok:
+                        raise RuntimeError('Image upload rejected')
+                    picbo, richval = QzoneParser.parse_upload_result(resp.data)
+                    pic_bos.append(picbo)
+                    richvals.append(richval)
+            except Exception as error:
+                from ..diary import ImagePreparationFailed
+                raise ImagePreparationFailed('配图准备失败，尚未提交说说') from error
             data.update(
                 pic_bo=",".join(pic_bos),
                 richtype="1",
                 richval="\t".join(richvals),
             )
 
+        if before_publish:
+            await before_publish()
         raw = await self.request(
             "POST",
             self.EMOTION_URL,

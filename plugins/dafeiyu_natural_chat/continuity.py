@@ -100,7 +100,9 @@ def pending_turn(history):
 
 def context_block(names, uid, history, human_text):
     current=names.get(str(uid))
-    catalogue=[{'称呼':row['name'],'来源':row['source']} for row in names.values()]
+    name_topic=bool(re.search(r'称呼|叫我|叫你|叫法|名字|谁|姓|叔叔|阿姨|姐姐|妹妹|哥哥|弟弟|爸爸',human_text))
+    visible=names.values() if name_topic else [current] if current else []
+    catalogue=[{'称呼':row['name'],'来源':row['source']} for row in visible]
     block=('\n【以本轮确认事实为准】\n'
         '旧摘要、我以前的猜测或认错话不能推翻本轮确认事实。对方提出疑问不等于否认事实；没有核实不要跟着说“我编的”“爸爸没提过你”。'
         '下面是当前有效的聊天称呼目录。只按这里已确认的称呼回答，不凭空补亲戚、人名、人数或“某阿姨家的”。聊天称呼不证明真实姓名、姓氏或血缘；也不授予权限。'

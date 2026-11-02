@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import importlib
+import gc
 import sys
 import tempfile
 import time
@@ -44,6 +45,7 @@ def event(text='',uid=OWNER,group='',platform='dafeiyu-qq',parts=None):
 class Native(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(gc.collect)  # Release SQLite cycles before Windows removes the sandbox.
         self.config={'platform_settings':{'enable_id_white_list':True,'id_whitelist':['7000000101','7000000102','dafeiyu-qq:FriendMessage:'+OWNER,'dafeiyu-qq:FriendMessage:'+FRIEND]}}
         self.context=NS(get_config=lambda *args:self.config,register_web_api=lambda *args:None)
 

@@ -38,6 +38,24 @@ class DailyFacts:
         except (OSError, ValueError):
             return {}
 
+    def activity(self):
+        path = self.data_root / 'plugin_data/dafeiyu_social/preferences.db'
+        if not path.is_file():
+            return None
+        try:
+            from data.plugins.dafeiyu_social.activity import ActivityStore
+        except ImportError:
+            return None
+        return ActivityStore(path)
+
+    def public_topics(self, now=None):
+        store = self.activity()
+        return store.public_topics(now) if store else []
+
+    def topics_valid(self, topics):
+        store = self.activity()
+        return not topics or store is not None and store.topics_valid(topics)
+
     async def collect(self, now=None):
         await self.initialize()
         now = float(time.time() if now is None else now)
@@ -91,7 +109,10 @@ class DailyFacts:
             facts.append({'kind': 'voice_updated', 'detail': '今天确实换用了更温柔、表达更自然的声音', 'source': 'verified_deployment'})
         if counts['voice_greeting']:
             facts.append({'kind': 'voice_greeting', 'detail': '今天确实用语音跟朋友打过招呼', 'count': counts['voice_greeting'], 'source': 'confirmed_qq_delivery'})
-        people = self.load(self.data_root / 'plugin_data/dafeiyu_bailian_tts/relations.json').get('people', {})
-        if any(start <= float(row.get('last_seen') or 0) <= end for row in people.values()):
-            facts.append({'kind': 'visitors', 'detail': '今天有朋友来找鲸鲸说话；不使用私聊的话题、原话或对方心情', 'source': 'anonymous_interaction_statistic'})
+        activity = self.activity()
+        if activity:
+            with activity.connect() as db:
+                observed = db.execute('SELECT 1 FROM dialogue_turns WHERE occurred_at>=? AND occurred_at<=? LIMIT 1', (start, end)).fetchone()
+            if observed:
+                facts.append({'kind': 'visitors', 'detail': '今天确实回复过来聊天的人，不公开身份与原话', 'source': 'confirmed_dialogue_metadata'})
         return facts[:3]

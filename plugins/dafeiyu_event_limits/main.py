@@ -58,7 +58,7 @@ def reply_scope(raw, is_group, session_id):
     return hashlib.sha256("|".join(identity).encode()).hexdigest(), user, group
 
 
-@register("dafeiyu_event_limits", "Local", "DeepSeek峰谷回复限流与恢复提示", "0.2.1")
+@register("dafeiyu_event_limits", "Local", "DeepSeek峰谷回复限流与恢复提示", "0.2.2")
 class EventLimits(Star):
     def __init__(self, context):
         super().__init__(context)
@@ -69,7 +69,8 @@ class EventLimits(Star):
         self.notice_count = 0
         self.ledger = ReplyLedger(
             Path(get_astrbot_data_path())
-            / "plugin_data/dafeiyu_event_limits/replies.db"
+            / "plugin_data/dafeiyu_event_limits/replies.db",
+            exempt_users=self.admin_users,
         )
         context.register_web_api(
             "/dafeiyu_event_limits/status",
@@ -77,6 +78,10 @@ class EventLimits(Star):
             ["GET"],
             "DeepSeek峰谷回复限流状态",
         )
+
+    def admin_users(self):
+        """Use the same trusted administrator list as AstrBot permissions."""
+        return {str(uid) for uid in self.context.get_config().get("admins_id", []) if uid}
 
     async def initialize(self):
         self.original = RateLimitStage.process
@@ -228,6 +233,10 @@ class EventLimits(Star):
                 personal_scope="qq_user_across_private_and_groups",
                 segments_count_as_one_reply=True,
                 off_peak_unlimited=True,
+                admin_exempt=True,
+                admin_exempt_from_group_quota=True,
+                admin_replies_consume_quota=False,
+                admin_identity_source="AstrBot.admins_id",
                 pricing_source="https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
             )
         )

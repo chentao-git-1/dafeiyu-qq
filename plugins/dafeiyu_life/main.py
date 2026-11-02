@@ -16,7 +16,7 @@ from .life import TZ, LifeEngine, LifeStore
 from .topic_context import relevant as relevant_life, world_profile
 
 
-@register("dafeiyu_life", "Local", "鲸鲸自己的手帐、小计划与海边小屋故事", "0.2.0")
+@register("dafeiyu_life", "Local", "鲸鲸自己的手帐、小计划与海边小屋故事", "0.2.1")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -68,6 +68,12 @@ class JingjingLife(Star):
 
     def public_context(self):
         return self.store.public_context()
+
+    def public_context_for_day(self, now=None):
+        return self.store.public_context_for_day(now)
+
+    def public_image_for_day(self, now=None):
+        return self.store.public_image_for_day(now)
 
     async def bootstrap(self):
         if self.store.count():

@@ -218,6 +218,7 @@ class ReplyReliability:
                     if isinstance(part, Record)
                 ).strip()
             )
+            fallback_purpose = 'reply' if text else 'notice'
             if text:
                 text = "这条没确认发出去，我先用文字说：\n" + text
             elif any(isinstance(part, Record) for part in components):
@@ -227,7 +228,7 @@ class ReplyReliability:
             fallback = [part for part in components if isinstance(part, At)][:1]
             fallback.append(Plain(text))
             try:
-                result = await self._send_direct(event, MessageChain(chain=fallback))
+                result = await self._send_direct(event, MessageChain(chain=fallback), purpose=fallback_purpose)
                 if result is False:return
             except Exception:
                 self.stats["fallback_failures"] += 1

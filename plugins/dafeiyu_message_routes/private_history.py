@@ -22,6 +22,7 @@ STATUS = re.compile(
 TECHNICAL = re.compile(
     r"(?:消息|回复|我这边|这边).{0,15}(?:卡住|没刷|未刷新|看漏|延迟|漏收)|(?:卡住|没刷新).{0,8}(?:消息|回复)"
 )
+PAST_REPLY = re.compile(r"以前|从前|曾经|历史|回过什么|上次.{0,8}(?:说|回)|(?:昨天|前天|上周|\d{1,2}月\d{1,2}[日号]).{0,12}(?:说|回|消息)")
 RULES = """
 【跨私聊状态必须有本轮查询依据】
 你与不同人的私聊上下文分别保存，共享长期记忆和旧摘要不是最新收件状态。
@@ -143,6 +144,35 @@ def received_reply_text(label, received, question):
     )
 
 
+def reply_position(report):
+    """A received message proves a new arrival only after a known sent message."""
+    sent = report.get('last_sent')
+    received = report.get('last_received')
+    if not sent:
+        return 'no_sent_anchor'
+    if not received or received['timestamp'] < sent['timestamp']:
+        return 'no_later_message_in_window'
+    if received['timestamp'] == sent['timestamp']:
+        return 'order_uncertain'
+    return 'later_message'
+
+
+def latest_reply_text(report, question):
+    """Describe the latest outgoing turn without passing off an old reply as new."""
+    label = report.get('contact', '对方')
+    if PAST_REPLY.search(question):
+        return None
+    position = reply_position(report)
+    if position == 'no_sent_anchor':
+        return None
+    if position == 'order_uncertain':
+        return label + '有消息，不过收发时间落在同一秒，还不能确认是不是接着刚发的那条。'
+    if position == 'no_later_message_in_window':
+        return '最近这条发出后，还没查到' + label + '的新消息。' + ('之前有聊过，但那是这条发出以前的。' if report.get('last_received') else '')
+    text = received_reply_text(label, report['last_received'], question)
+    return '这条发出以后，' + text.replace(label + '有回过，', label + '发来新消息，', 1)
+
+
 class PrivateHistory:
     def __init__(self):
         self.stats = {"reads": 0, "read_failures": 0, "corrected_answers": 0}
@@ -232,6 +262,7 @@ class PrivateHistory:
                 recent_messages=messages[-12:],
                 scope="recent_60_messages_only_not_a_global_delivery_or_read_receipt",
             )
+            report['reply_after_last_sent'] = reply_position(report)
         except Exception as error:
             self.stats["read_failures"] += 1
             report.update(read_status="unavailable", reason=type(error).__name__)
@@ -295,20 +326,19 @@ class PrivateHistory:
         report = proofs.get(target)
         technical = any(TECHNICAL.search(part) for part in claims)
         negative = any(NEGATIVE.search(part) for part in claims)
-        if (
-            report
-            and report.get("read_status") == "ok"
-            and not technical
-            and not negative
-        ):
-            return None
-        report = await self.read(bot, target, contacts)
+        if not report or report.get('read_status') != 'ok' or technical:
+            report = await self.read(bot, target, contacts)
         proofs[target] = report
         event.set_extra("dafeiyu_private_history", proofs)
         self.stats["corrected_answers"] += 1
         label = report.get("contact", "对方")
         if report.get("read_status") != "ok":
             return "我这会儿还没查到和" + label + "的最新消息，还不能确认有没有回复。"
+        current = latest_reply_text(report, str(event.message_str or ''))
+        if current:
+            return current
+        if not technical and not negative:
+            return None
         received = report.get("last_received")
         if received:
             return received_reply_text(label, received, str(event.message_str or ""))

@@ -15,7 +15,8 @@ from astrbot.api.star import Star
 from astrbot.api.web import json_response
 from astrbot.core.message.components import At, Image, Plain, Record, Reply
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-from .access import store
+from .access import store, activity
+from .activity import KNOWN_BOTS, privacy_command
 from .store import DEFAULT, OWNER, SELF, TZ, can_notify_profile, clock_minutes
 from .cards import render_card
 
@@ -37,7 +38,13 @@ def setting_change(text):
         match=re.fullmatch(r'免打扰\s+(\d{2}:\d{2})\s*[-—至到]\s*(\d{2}:\d{2})',value)
         if match:return 'set',{'quiet_start':clock_minutes(match[1]),'quiet_end':clock_minutes(match[2])}
         raise ValueError('用法：/聊天设置 文字、语音、表情 少、免打扰 23:00-08:00、主动消息 关。')
-    clean=QUOTED.sub('',raw).strip('。！!，, ')
+    if re.search(r'他说|她说|别人说|朋友说|假如|假设|比如|举例|转述|翻译|台词|[“”「」『』"`]',raw):
+        return None,{}
+    clean=raw.strip('。！!，,～~ ')
+    if re.fullmatch(r'(?:你)?(?:以后|今后)?(?:你)?(?:随便)?(?:随时|什么时候|任何时候)(?:都)?(?:可以|能)?(?:给我)?(?:发(?:信息|消息)|找我(?:聊天)?|来找我(?:聊天)?)(?:吧|呀|哦|就行)?',clean):
+        return 'set',{'proactive':True,'quiet_start':None,'quiet_end':None}
+    if re.fullmatch(r'(?:你)?(?:以后|今后)?(?:想聊(?:天)?(?:的)?时候|有空(?:的)?时候)(?:就|都可以|可以)?(?:来)?找我(?:聊(?:天)?)?(?:吧|呀|就行)?',clean):
+        return 'set',{'proactive':True}
     if re.fullmatch(r'(?:你)?(?:以后|今后)?(?:你)?(?:请)?(?:别|不要|不用)(?:再|老|总)?主动(?:来)?(?:找我|联系我|给我发(?:消息|信息)|发消息给我)?(?:了|吧|啦)?',clean):
         return 'set',{'proactive':False}
     if re.fullmatch(r'(?:你)?(?:以后|今后)?(?:你)?(?:可以|允许|恢复|继续)(?:再)?主动(?:来)?(?:找我|联系我|给我发(?:消息|信息))?(?:了|吧|啦)?',clean):
@@ -90,7 +97,42 @@ class DafeiyuSocial(Star):
     def allowed_private(self,event):
         if not self.real_event(event) or not event.is_private_chat():return False
         cfg=self.context.get_config(event.unified_msg_origin)['platform_settings']
-        return event.unified_msg_origin in {str(x) for x in cfg.get('id_whitelist',[])}
+        allowed={str(x) for x in cfg.get('id_whitelist',[])}
+        return not cfg.get('enable_id_white_list') or event.unified_msg_origin in allowed or str(event.get_sender_id()) in allowed
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=sys.maxsize+190)
+    async def activity_input(self, event):
+        if not self.real_event(event) or event.get_platform_name() != 'aiocqhttp':
+            return
+        uid, group = str(event.get_sender_id()), str(event.get_group_id() or '')
+        raw = event.message_obj.raw_message
+        sender = raw.get('sender') or {}
+        if uid in {SELF, *KNOWN_BOTS, *self.db.bots()} or isinstance(sender, dict) and sender.get('is_bot') is True:
+            return
+        cfg = self.context.get_config(event.unified_msg_origin)['platform_settings']
+        allowed = {str(x) for x in cfg.get('id_whitelist', [])}
+        if cfg.get('enable_id_white_list') and not (group in allowed if group else uid in allowed or event.unified_msg_origin in allowed):
+            return
+        parts = event.get_messages()
+        if group and not any(isinstance(p, At) and str(p.qq) == SELF for p in parts):
+            return
+        text = ''.join(p.text for p in parts if isinstance(p, Plain)).strip()
+        if re.fullmatch(r'饭钱(?:状态|检查|暂停|继续)|(?:我的设置|聊天设置|相处设置)(?:\s+.*)?|(?:查|查询|查看)?余额', text):
+            return
+        if text.startswith(('/', '!', '！')) and not privacy_command(text):
+            return
+        source = activity().prepare(uid, event.unified_msg_origin,
+            str(getattr(event.message_obj, 'message_id', '') or raw.get('message_id') or ''),
+            raw.get('time'), text, media=any(not isinstance(p, (Plain, At)) for p in parts))
+        for qzone_path in (self.data / 'plugin_data/astrbot_plugin_qzone').glob('posts_*.db'):
+            activity().purge_drafts(qzone_path)
+        if source and source.get('command'):
+            reply = ('好，这段不会用作未发布日记的素材。' if source['command'] == 'segment' else
+                     '记住了，以后不把你的聊天用于公开日记，未发布的相关素材也已清除。')
+            await event.send(MessageChain(chain=[Plain(reply)]))
+            event.stop_event()
+        elif source:
+            event.set_extra('dafeiyu_activity_input', source)
 
     @filter.event_message_type(filter.EventMessageType.ALL,priority=sys.maxsize+200)
     async def bot_guard(self,event):
@@ -147,7 +189,10 @@ class DafeiyuSocial(Star):
             intent,changes=setting_change(text)
             if intent:
                 result=self.db.set_profile(uid,changes) if intent=='set' else self.db.profile(uid)
-                await event.send(MessageChain(chain=[Plain(profile_text(result))]));event.stop_event();return
+                reply=profile_text(result) if command.startswith(('聊天设置','我的设置')) else (
+                    '记住啦，你允许我主动来找你聊天；我会有分寸，不连续打扰你。' if changes.get('proactive') is True else
+                    '记住了，以后不主动打扰你。' if changes.get('proactive') is False else '记住啦，之后按你刚说的偏好来。')
+                await event.send(MessageChain(chain=[Plain(reply)]));event.stop_event();return
             if command.split(' ',1)[0] in ('机器人名单','机器人标记','机器人解除'):
                 if uid!=OWNER:raise ValueError('只有爸爸能管理机器人名单。')
                 args=shlex.split(command)
@@ -287,4 +332,4 @@ class DafeiyuSocial(Star):
             await asyncio.sleep(60)
 
     async def status(self):
-        return json_response({'version':'0.1.1','stats':self.stats,'bots':self.db.bots(),'calendar_records':len(self.db.dates(OWNER)),'calendar_running':self.task is not None and not self.task.done(),'bot_round_limit':3,'bot_cooldown_seconds':1800,'calendar_timezone':'Asia/Shanghai'})
+        return json_response({'version':'0.2.1','stats':self.stats,'bots':self.db.bots(),'calendar_records':len(self.db.dates(OWNER)),'calendar_running':self.task is not None and not self.task.done(),'bot_round_limit':3,'bot_cooldown_seconds':1800,'calendar_timezone':'Asia/Shanghai'})
