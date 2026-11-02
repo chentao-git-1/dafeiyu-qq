@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable
 from .memory_manager import MemoryManager
 from .prompts import COMPRESS_PROMPT
 from .utils import estimate_tokens
+from .provenance import expected_revision, StaleSource
 
 logger = logging.getLogger("memory_system.compressor")
 
@@ -82,6 +83,8 @@ class ContextCompressor:
         if not force and not self.should_compress(contexts):
             return contexts, ""
         try:
+            database=getattr(self.manager,'db',None)
+            revision=await database.revision() if hasattr(database,'revision') else None
             history, tail = contexts[: -self._keep], contexts[-self._keep :]
             transcript = "\n".join(
                 line for line in (self._render_message(m) for m in history) if line
@@ -96,15 +99,12 @@ class ContextCompressor:
             if not summary:
                 return contexts, ""
             # 写入长期记忆
-            await self.manager.memorize(
-                user_id=user_id,
-                content=summary,
-                memory_type="summary",
-                tags=["对话摘要"],
-                importance=0.7,
-                session_id=session_id,
-                source="compressed",
-            )
+            token=expected_revision.set((database._db_path,revision)) if revision is not None else None
+            try:
+                await self.manager.memorize(user_id=user_id,content=summary,memory_type="summary",
+                    tags=["对话摘要"],importance=0.7,session_id=session_id,source="compressed")
+            finally:
+                if token is not None:expected_revision.reset(token)
             # 用一条 system 摘要消息替换旧历史
             new_contexts: list[dict[str, Any]] = [
                 {"role": "system", "content": f"（以下是更早对话的摘要）\n{summary}"},
@@ -114,6 +114,8 @@ class ContextCompressor:
                 "上下文已压缩: %d 条 -> %d 条 (user=%s)", len(contexts), len(new_contexts), user_id
             )
             return new_contexts, summary
+        except StaleSource:
+            return contexts, ""
         except Exception:
             logger.exception("上下文压缩失败（保留原历史）")
             return contexts, ""

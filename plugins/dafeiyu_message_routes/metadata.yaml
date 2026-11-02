@@ -1,7 +1,7 @@
 name: dafeiyu_message_routes
 display_name: 鲸鲸QQ发送目标映射
 desc: 提供真实好友与群发送目录，支持语音代发；管理员私聊查询真实收发记录，防止无据断言未回复或编造技术原因。
-version: 0.1.9
+version: 0.2.0
 author: Local
 repo: local
 support_platforms:

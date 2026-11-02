@@ -1,0 +1,69 @@
+{
+  "commit": "a5b7b635bf5ecfa3a2c0762539c2714d38610485",
+  "versions": {
+    "dafeiyu_dialogue": "0.4.3",
+    "dafeiyu_message_routes": "0.2.0",
+    "dafeiyu_runtime": "0.3.4",
+    "dafeiyu_natural_chat": "0.10.0",
+    "astrbot_plugin_group_chat_plus": "1.2.3.hotfix.2",
+    "长期记忆系统": "1.5.0",
+    "dafeiyu_life": "0.3.2",
+    "dafeiyu_companion": "0.4.2",
+    "dafeiyu_bailian_tts": "0.4.0",
+    "astrbot_plugin_dafeiyu_draw": "0.1.8",
+    "astrbot_plugin_dafeiyu_voice_request": "0.2.3"
+  },
+  "mode": "active",
+  "all_allowed_private": true,
+  "all_allowed_groups": true,
+  "container_healthy": true,
+  "qq_platform_running": true,
+  "runtime_guards_verified": true,
+  "existing_config_values_preserved": true,
+  "unrelated_sources_preserved": true,
+  "old_data_overwritten": false,
+  "sqlite_backups": 10,
+  "observation_started_at_beijing": "2026-10-31T15:47:07.012355+08:00",
+  "deployed": true,
+  "verified_at_beijing": "2026-10-31T15:49:03.689294+08:00",
+  "native_tts_override_installed": true,
+  "text_segmentation_preserved": true,
+  "random_plan_preserved": true,
+  "today_opportunities": 4,
+  "tests": {
+    "focused": 10,
+    "full_suite_run": false,
+    "production_image_verified": true,
+    "network_during_isolated_tests": false,
+    "production_data_mounted_in_tests": false,
+    "captured_separate_onebot_calls": 2,
+    "after_send_hook_once": true,
+    "successful_speech_remains_one_clip": true,
+    "speech_failure_does_not_retry_native_tts": true,
+    "group_headers_first_bubble_only": true,
+    "structured_code_preserved": true,
+    "tts_override_scoped_to_event_and_restored_on_unload": true
+  },
+  "synthetic_replay": {
+    "before_characters": 90,
+    "after_characters": 52,
+    "captured_bubble_characters": [
+      40,
+      12
+    ],
+    "successful_review_calls": 2,
+    "primary_generations": 0,
+    "earlier_probe_call_bound": [
+      2,
+      4
+    ],
+    "earlier_probe_result": "Four bubbles; tightened semantic review of unnecessary content."
+  },
+  "qq_test_sends": 0,
+  "real_tts_test_calls": 0,
+  "qzone_test_posts": 0,
+  "known_limits": [
+    "The model still needs real-conversation observation; a short reply may be a single bubble.",
+    "Detailed requested answers and structured code remain intact."
+  ]
+}

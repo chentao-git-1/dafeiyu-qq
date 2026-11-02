@@ -20,7 +20,7 @@ from astrbot.api.message_components import Plain
 import json
 import asyncio
 from datetime import datetime
-from ._session_guard import guard_session
+from ...utils._session_guard import guard_session
 
 # 导入群聊 ContextManager 的历史截止时间戳机制（共享同一份持久化数据）
 from ...utils.context_manager import ContextManager as _GroupContextManager

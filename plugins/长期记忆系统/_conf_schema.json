@@ -56,7 +56,7 @@
     "description": "是否启用 embedding 向量检索（默认关闭，使用关键词打分检索）",
     "type": "bool",
     "default": false,
-    "hint": "开启前需确认 AstrBot 版本的 EmbeddingProvider 接口（见 adapter.py TODO）"
+    "hint": "需配置可用的 EmbeddingProvider；最多增强16条可见候选，失效时退回字面相关检索"
   },
   "embedding_provider_id": {
     "description": "embedding 提供商 ID（embedding_enable 开启时使用）",

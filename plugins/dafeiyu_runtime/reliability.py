@@ -87,7 +87,8 @@ class ReplyReliability:
     @staticmethod
     def confirm_delivery(event, components, purpose='reply'):
         text=' '.join(str(getattr(p,'text','') or '').strip() for p in components if isinstance(p,(Plain,Record))).strip()
-        append_receipt(event,text,purpose)
+        media=['image' if isinstance(p,Image) else 'audio' for p in components if isinstance(p,(Image,Record))]
+        append_receipt(event,text,purpose,media)
 
     async def _send_direct(self, event, message, purpose='reply'):
         policy=getattr(AiocqhttpMessageEvent,'_dafeiyu_group_reply_policy',None)

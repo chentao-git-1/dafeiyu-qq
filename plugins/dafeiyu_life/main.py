@@ -16,7 +16,7 @@ from .life import TZ, LifeEngine, LifeStore
 from .topic_context import relevant as relevant_life, world_profile
 
 
-@register("dafeiyu_life", "Local", "鲸鲸自己的手帐、小计划与海边小屋故事", "0.2.1")
+@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.6.0")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -34,6 +34,7 @@ class JingjingLife(Star):
             ["POST"],
             "首次建立鲸鲸自己的手帐",
         )
+        context.register_web_api('/dafeiyu_life/opportunity', self.opportunity, ['POST'], '在原有日常额度内评估一次自主活动')
 
     async def initialize(self):
         self.task = asyncio.create_task(self.loop())
@@ -47,6 +48,12 @@ class JingjingLife(Star):
     async def loop(self):
         await asyncio.sleep(30)
         while True:
+            try:
+                await self.engine.consider_direction()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning('[鲸鲸自己的打算] 本次未更新：%s',type(error).__name__)
             try:
                 await self.engine.advance()
             except asyncio.CancelledError:
@@ -80,6 +87,9 @@ class JingjingLife(Star):
             return json_response({"advanced": False, "status": "already_initialized"})
         return json_response(await self.engine.advance(bootstrap=True))
 
+    async def opportunity(self):
+        return json_response(await self.engine.advance(opportunity=True))
+
     async def status(self):
         plan = self.store.schedule()
         latest = self.public_context()
@@ -93,18 +103,27 @@ class JingjingLife(Star):
                 ).isoformat(),
                 "project": latest["project"] if latest else "好奇手帐·第1册",
                 "project_stage": latest["stage"] if latest else 0,
-                "daily_window": "09:00–21:00 Asia/Shanghai",
+                "daily_window": "自选打算按自己的时间；无打算时09:00–21:00 Asia/Shanghai",
                 "max_automatic_activities_per_day": 1,
                 "virtual_world": "海边小屋；窗台上的小芽；手帐书架",
                 "private_chat_input": False,
                 "extra_qq_sends": False,
                 "extra_qzone_posts": False,
                 "drawing_every_activities": 7,
+                "self_direction": self.engine.direction_store().status(),
+                "self_direction_thinks_without_activity": True,
+                "activity_timing": "self_selected_when_intention",
+                "self_selected_time_can_override_legacy_window": True,
+                "step_completion_requires_semantic_check": True,
+                "fiction_is_optional": True,
+                "activity_requires_journal_format": False,
             }
         )
 
     @filter.on_llm_request(priority=400)
     async def life_context(self, event, req):
+        if event.get_extra('dafeiyu_dialogue_v2', False):
+            return
         try:
             self.actor(event)
         except ValueError:
@@ -146,15 +165,27 @@ class JingjingLife(Star):
 
     @filter.llm_tool(name="jingjing_life")
     async def life_tool(self, event, action: str = "status", query: str = "") -> str:
-        """回忆鲸鲸自己的真实阅读、原创手帐和明确属于虚构故事的海边小屋；可按用户要求展示真实插画。
+        """查询或自主推进鲸鲸自己的数字兴趣项目；不必等用户逐项指定要做什么。
+
+        develop会根据已有作品和反思选择阅读、写作或允许的绘画，也可以不做。
+        它与定时日常共用每天一次实际活动额度；自选打算按自己的时间安排，develop可主动评估，不创建额外提醒或发送消息。
+        当天阅读失败时可有一次基于失败信息的选择，只能改做原创文字或停下，不重复检索或生图。
+        只在爸爸私聊可主动评估，适合确有想推进的兴趣时使用，不在问候和每轮聊天中反复调用。
+        作品资料不含联系人私聊，query只用于recall，不把当前对方的话写进公开日常。
+        只有工具确认完成才说做过，未执行就只谈自己的想法。展示已有插画仍需用户明确要求。
 
         Args:
-            action(string): status近况、recall回忆自己的旧手帐、show_work按用户明确要求发一张已经存在的插画
+            action(string): develop在原有额度内自行选择推进数字项目，status最近作品，recall查旧作品，show_work按用户明确要求发已有插画
             query(string): recall的主题或日期关键词，不提供文件路径；没有关键词返回最近五项
         """
         try:
-            self.actor(event)
-            records = self.store.records(60)
+            uid=self.actor(event)
+            if action=='develop':
+                if uid!='7000000001' or not event.is_private_chat():return '这个会话只读取已有日常。'
+                result=await self.engine.advance(opportunity=True)
+                if result.get('advanced'):result['completed_work']=self.public_context()
+                return json.dumps(result,ensure_ascii=False)
+            records = self.store.verified_records(60)
             if action == "show_work":
                 if not re.search(r"看|发|展示|给我|作品|插画", event.message_str or ""):
                     return "对方没有要求展示图片，先正常聊。"
@@ -203,7 +234,7 @@ class JingjingLife(Star):
                                 "source",
                             )
                         }
-                        for r in records[:5]
+                        for r in records[:1 if action=='status' else 5]
                     ],
                     ensure_ascii=False,
                 )

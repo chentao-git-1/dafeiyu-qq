@@ -10981,6 +10981,11 @@ class ChatPlus(Star):
             PLUGIN_CUSTOM_STATIC_INSTRUCTIONS, ""
         )
         if plugin_static_instructions:
+            if event.get_extra('dafeiyu_generation_contract',False):
+                from .utils.reply_handler import ReplyHandler
+                if (plugin_static_instructions.startswith(ReplyHandler.SYSTEM_REPLY_PROMPT)
+                        and plugin_static_instructions.endswith(ReplyHandler.SYSTEM_REPLY_PROMPT_ENDING)):
+                    plugin_static_instructions=plugin_static_instructions[len(ReplyHandler.SYSTEM_REPLY_PROMPT):-len(ReplyHandler.SYSTEM_REPLY_PROMPT_ENDING)]
             req.system_prompt += "\n\n" + plugin_static_instructions
             if self.debug_mode:
                 logger.info(
@@ -11072,7 +11077,7 @@ class ChatPlus(Star):
         # P2: 情绪提示追加到 system_prompt 末尾（由 _generate_and_send_reply /
         # proactive_chat_manager 预先存入 event extra，此处统一处理）。
         mood_hint = event.get_extra("_group_chat_plus_mood_hint", None)
-        if mood_hint:
+        if mood_hint and not event.get_extra('dafeiyu_generation_contract',False):
             req.system_prompt += f"\n\n{mood_hint}"
             if self.debug_mode:
                 logger.info(f"  ✅ 已追加情绪提示到 system_prompt")

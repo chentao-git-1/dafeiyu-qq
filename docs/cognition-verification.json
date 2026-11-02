@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "date_beijing": "2026-10-30",
+  "implementation_status": "candidate_implemented_with_known_failures",
+  "acceptance_status": "not_passed",
+  "draft_pr": "https://github.com/chentao-git-1/dafeiyu-qq/pull/2",
+  "preceding_implementation_commits": [
+    "872a56db1c06998694d50f519c6ce3ef66393ca1",
+    "72f52e9b87fe661e8293b4e77a8e3c7f40dc3673"
+  ],
+  "tests": {
+    "expected": 286,
+    "production_image": {
+      "exit_code": 0,
+      "test_groups": [
+        41,
+        21,
+        8,
+        22,
+        22,
+        6,
+        29,
+        14,
+        11,
+        23,
+        43,
+        46
+      ],
+      "passed_tests": 286,
+      "expected_tests": 286,
+      "production_image": "sha256:6bbe494e579a23773007e0db771a9a06ef5312127283874d105f45933b1a3567",
+      "network": "none",
+      "production_data_mounted": false,
+      "production_changed": false,
+      "baseline_drift": []
+    },
+    "verified_candidate_files": 441,
+    "local_tests": 286,
+    "new_cognition_cases": 46,
+    "real_qq_sends": 0,
+    "real_qzone_posts": 0,
+    "paid_media_generations": 0,
+    "candidate_archive_sha256": "49547e885d5526fa210768c75af3e99afbde20433f60c2aa8bef4bb46a058401"
+  },
+  "evaluation": {
+    "schema_version": 1,
+    "date_beijing": "2026-10-30",
+    "configured_model": "deepseek-flash",
+    "scenario_count": 32,
+    "families": 32,
+    "repeats": 2,
+    "matched_baseline": {
+      "turns": 384,
+      "api_requests": 384,
+      "single_request_turns": 384,
+      "median_http_sum_ms": 932.41,
+      "p95_http_sum_ms": 1528.45,
+      "input_tokens": 1525278,
+      "input_cache_hit_tokens": 933888,
+      "output_tokens": 12771,
+      "normalized_usd_at_flash_offpeak_rates": 0.09917,
+      "requests_missing_reported_usage": 0,
+      "decisions": {
+        "inactive": 384
+      }
+    },
+    "final_candidate": {
+      "turns": 384,
+      "api_requests": 442,
+      "single_request_turns": 338,
+      "median_http_sum_ms": 1370.66,
+      "p95_http_sum_ms": 2669.67,
+      "input_tokens": 1277212,
+      "input_cache_hit_tokens": 808064,
+      "output_tokens": 44886,
+      "normalized_usd_at_flash_offpeak_rates": 0.09973,
+      "requests_missing_reported_usage": 0,
+      "decisions": {
+        "contract": 353,
+        "unavailable": 31
+      }
+    },
+    "recorded_development_and_evaluation_requests": 2640,
+    "request_kinds": {
+      "main": 2458,
+      "review": 84,
+      "learning_check": 28,
+      "learning_state": 6,
+      "verification": 24,
+      "recall": 40
+    },
+    "all_input_tokens": 8615130,
+    "all_output_tokens": 256297,
+    "baseline_measurement": "earlier same-day paired repeats, same model; cache state and sampling differ; offline legacy path, not a production measurement",
+    "latency_scope": "HTTP requests only, excludes native queues, QQ, real tools and TTS",
+    "price_source": "https://api-docs.deepseek.com/quick_start/pricing/",
+    "cost_is_invoice": false,
+    "normalization": "both sides use the same published Flash off-peak unit prices; candidate ran at peak; invoice not obtained",
+    "interrupted_final_attempts": 2,
+    "earlier_failures_missing_usage": true,
+    "development_request_count_is_lower_bound": true,
+    "quality_gate": "not_passed",
+    "human_blind_review": "pending",
+    "real_qq_sends": 0,
+    "production_memory_writes": 0,
+    "group_plugin_included": false,
+    "actual_native_tool_execution": false,
+    "exposure": "32 original held-out families are now regression material; 2 were previously exposed in stage 2",
+    "normalized_text_cost_ratio": 1.006,
+    "comprehensive_cost_gate": "not_passed; no actual background activity/initiative/tools/media invoice, failed usage incomplete"
+  },
+  "recall": {
+    "scope": "semantic_selector_after_ACL; six visible synthetic source records; not full retrieval chain",
+    "cases": 20,
+    "repeats": 2,
+    "api_calls": 40,
+    "precision": 1.0,
+    "recall_at_5": 1.0,
+    "no_answer_false_recalls": 0,
+    "foreign_private_offered": false,
+    "real_qq_sends": 0,
+    "production_writes": 0,
+    "synthetic_hand_labeled": true,
+    "production_generalization": "not_established"
+  },
+  "learning_probes": {
+    "cases": 10,
+    "turns": 20,
+    "api_calls": 33,
+    "hidden": false,
+    "unconditional_pass": false,
+    "known_failure": {
+      "case": "learning:8",
+      "problem": "hypothetical plan incorrectly persisted"
+    },
+    "actual_qq_sends": 0,
+    "production_memory_writes": 0
+  },
+  "human_review": {
+    "blinded_pairs": 64,
+    "raters": 0,
+    "votes": 0,
+    "win_rate": null,
+    "tie_rate": null,
+    "confidence_interval": null,
+    "independent_fresh_hidden_set": false
+  },
+  "deployment": {
+    "observed_at_utc": "2026-10-30T07:43:52.809042Z",
+    "current_mode": "active",
+    "current_active_private_user_count": 1,
+    "current_plugins": {
+      "dafeiyu_dialogue": {
+        "version": "0.2.0",
+        "activated": true
+      },
+      "dafeiyu_natural_chat": {
+        "version": "0.8.0",
+        "activated": true
+      },
+      "dafeiyu_life": {
+        "version": "0.2.1",
+        "activated": true
+      },
+      "dafeiyu_companion": {
+        "version": "0.3.0",
+        "activated": true
+      },
+      "dafeiyu_bailian_tts": {
+        "version": "0.3.3",
+        "activated": true
+      }
+    },
+    "current_guards": {
+      "pipeline_guard_active": true,
+      "send_guard_active": true,
+      "group_reply_policy_active": true,
+      "confirmed_delivery_receipts": true
+    },
+    "container_healthy": true,
+    "candidate_installed": false,
+    "business_source_or_configuration_modified_by_this_release": false,
+    "new_database_backup_performed": false,
+    "container_restarted": false,
+    "install_attempt": "aborted before mutation because current state changed from shadow/0 to active/1",
+    "observer_disable_reenable_rehearsed": false,
+    "active_policy_rollback_rehearsed": false,
+    "minimum_pilot_days_completed": 0,
+    "minimum_pilot_confirmed_turns": 0
+  },
+  "gates": {
+    "deterministic_regression": "passed",
+    "model_learning_negatives": "failed",
+    "naturalness": "not_measured_by_independent_humans",
+    "full_recall_chain": "not_measured",
+    "end_to_end_latency": "not_measured",
+    "comprehensive_cost": "not_passed",
+    "three_days_and_100_confirmed_turns": "not_started",
+    "active_rollback": "not_rehearsed",
+    "group_path": "not_enabled"
+  }
+}

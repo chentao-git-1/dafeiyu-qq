@@ -70,6 +70,15 @@ def parse_feedback(text, *, has_image=False, recent_reply=False):
     return {}
 
 
+def privacy_time(path,origin):
+    source=Path(path).parent.parent/'dafeiyu_dialogue/learning.db'
+    if not source.is_file():return 0
+    try:
+        from data.plugins.dafeiyu_dialogue.privacy_cache import privacy_cutoff
+        return privacy_cutoff(source,origin)
+    except ImportError:return time.time()
+
+
 class InteractionStore:
     def __init__(self, path, clock=time.time):
         self.path, self.clock = Path(path), clock
@@ -130,7 +139,8 @@ class InteractionStore:
         with self.connect() as db:
             db.execute('DELETE FROM preferences WHERE qq=?', (str(qq),))
 
-    def record_reply(self, qq, origin, message_id, text):
+    def record_reply(self, qq, origin, message_id, text,observed_at=None):
+        if observed_at is not None and observed_at<privacy_time(self.path,origin):return
         text = str(text).strip()
         if not message_id or not text or len(text) > 600 or SENSITIVE.search(text) or '```' in text:
             return
@@ -145,7 +155,7 @@ class InteractionStore:
     def recent(self, qq, origin, seconds=7*86400):
         with self.connect() as db:
             rows = db.execute('SELECT body FROM replies WHERE qq=? AND origin=? AND at>=? ORDER BY id DESC LIMIT 4',
-                              (str(qq), str(origin), self.clock()-seconds)).fetchall()
+                              (str(qq), str(origin), max(self.clock()-seconds,privacy_time(self.path,origin)))).fetchall()
         return [row['body'] for row in reversed(rows)]
 
 

@@ -1,0 +1,69 @@
+{
+  "deployed": true,
+  "commit": "3abca837261c3e566d8772a02cbdd66f14aee025",
+  "versions": {
+    "dafeiyu_dialogue": "0.4.1",
+    "dafeiyu_message_routes": "0.2.0",
+    "dafeiyu_runtime": "0.3.4",
+    "dafeiyu_natural_chat": "0.10.0",
+    "astrbot_plugin_group_chat_plus": "1.2.3.hotfix.2",
+    "长期记忆系统": "1.5.0",
+    "dafeiyu_life": "0.3.0",
+    "dafeiyu_companion": "0.4.1",
+    "dafeiyu_bailian_tts": "0.4.0"
+  },
+  "mode": "active",
+  "feature_flags": {
+    "learning_v2": true,
+    "activity_policy_v2": true,
+    "initiative_policy_v2": true,
+    "voice_intent_v2": true
+  },
+  "all_allowed_private": true,
+  "all_allowed_groups": true,
+  "existing_config_values_preserved": true,
+  "unrelated_sources_preserved": true,
+  "sqlite_backups": 9,
+  "container_healthy": true,
+  "qq_platform_running": true,
+  "runtime_guards_verified": true,
+  "active_entry_off_on_rehearsed": true,
+  "source_restore_rehearsed": false,
+  "old_data_overwritten": false,
+  "tests": 44,
+  "model_check_calls": 16,
+  "actual_primary_generations": 7,
+  "test_qq_sends": 0,
+  "test_qzone_posts": 0,
+  "human_quality_gate": "pending_observation",
+  "observation_started_at_beijing": "2026-10-30T22:11:18.982423+08:00",
+  "latest_readonly_verification_utc": "2026-10-30T14:13:20.101676Z",
+  "actual_format_regenerations": 1,
+  "synthetic_bad_date_primary": 1,
+  "model_sample_review": {
+    "date_correction": true,
+    "old_self_paragraph_not_repeated": true,
+    "no_class_end_reminder": true,
+    "relevant_followup_questions_allowed": true,
+    "channel_and_action_direction_correct": true,
+    "unsupported_next_round_promise_removed": true
+  },
+  "recovery_budget_per_turn": 1,
+  "content_status_values": [
+    "untracked",
+    "accepted",
+    "recovered",
+    "unavailable"
+  ],
+  "test_production_data_mounted": false,
+  "test_network": "none",
+  "full_suite_run": false,
+  "compiled_python_files": 14,
+  "existing_files_verified": 18,
+  "new_files": 1,
+  "private_diagnostic_alias_difference_only": [
+    "plugins/dafeiyu_message_routes/main.py"
+  ],
+  "backup_index": "backup-20261030T140927Z",
+  "naturalness_verdict": "targeted_samples_reviewed_long_term_observation_pending"
+}

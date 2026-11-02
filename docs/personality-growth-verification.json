@@ -1,0 +1,91 @@
+{
+  "commit": "a4e63e9f283f8cb63e97b299352c5b5405f8e80c",
+  "versions": {
+    "dafeiyu_dialogue": "0.5.0",
+    "dafeiyu_message_routes": "0.2.0",
+    "dafeiyu_runtime": "0.3.4",
+    "dafeiyu_natural_chat": "0.10.0",
+    "astrbot_plugin_group_chat_plus": "1.2.3.hotfix.2",
+    "长期记忆系统": "1.5.0",
+    "dafeiyu_life": "0.3.3",
+    "dafeiyu_companion": "0.4.3",
+    "dafeiyu_bailian_tts": "0.4.0",
+    "astrbot_plugin_dafeiyu_draw": "0.1.8",
+    "astrbot_plugin_dafeiyu_voice_request": "0.2.3"
+  },
+  "mode": "active",
+  "all_allowed_private": true,
+  "all_allowed_groups": true,
+  "container_healthy": true,
+  "qq_platform_running": true,
+  "runtime_guards_verified": true,
+  "existing_config_values_preserved": true,
+  "unrelated_sources_preserved": true,
+  "old_data_overwritten": false,
+  "sqlite_backups": 11,
+  "observation_started_at_beijing": "2026-11-01T12:24:10.836932+08:00",
+  "deployed": true,
+  "verified_at_beijing": "2026-11-01T12:25:24.447828+08:00",
+  "personality_growth_enabled": true,
+  "background_loop_running": true,
+  "global_current_version": 1,
+  "live_growth_model_statistics": {
+    "personality_growth_calls": 2,
+    "personality_growth_input_other": 4279,
+    "personality_growth_input_cached": 0,
+    "personality_growth_output": 332,
+    "personality_growth_elapsed_ms": 3652
+  },
+  "global_dispositions": 1,
+  "statistics": {
+    "experiences": 8,
+    "active_scopes": 1,
+    "applied_versions": 1,
+    "reviews": {
+      "applied": 1
+    }
+  },
+  "max_reviews_per_day": 2,
+  "max_model_calls_per_review": 2,
+  "minimum_independent_experiences": 3,
+  "minimum_span_hours": 24,
+  "private_feedback_scope": "same_person_same_private_session",
+  "identity_mutable": false,
+  "native_tts_override_installed": true,
+  "text_segmentation_preserved": true,
+  "random_plan_preserved": true,
+  "today_opportunities": 0,
+  "checks": {
+    "focused_tests": 10,
+    "full_suite_run": false,
+    "production_image_verified": true,
+    "isolated_tests_network": false,
+    "production_data_mounted_in_tests": false,
+    "persistence_and_restart_checked": true,
+    "same_episode_deduplication_checked": true,
+    "private_scope_and_forgetting_races_checked": true,
+    "source_tampering_retracts_dependent_versions": true,
+    "attested_experience_survives_normal_file_cleanup": true,
+    "rollback_requires_current_revision": true,
+    "background_failure_does_not_replace_chat": true,
+    "project_and_initiative_growth_context_checked": true,
+    "separate_qq_bubbles_preserved": true,
+    "third_random_initiative_still_possible": true
+  },
+  "synthetic_evaluation": {
+    "real_model_calls": 2,
+    "decision": "update",
+    "independent_accepted": true,
+    "applied_to_temporary_store": true,
+    "persisted_temporary_version": 1,
+    "synthetic_private_context_only": true
+  },
+  "qq_test_sends": 0,
+  "real_tts_test_calls": 0,
+  "qzone_test_posts": 0,
+  "known_limits": [
+    "A mechanism and an isolated example do not establish human-like long-term personality development.",
+    "Hold or rejected decisions are valid; insufficient new attributed experiences do not trigger consolidation.",
+    "Identity, action permissions and base model parameters are not modified."
+  ]
+}

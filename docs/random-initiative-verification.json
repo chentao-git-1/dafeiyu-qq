@@ -1,0 +1,67 @@
+{
+  "commit": "9c4ab8df4ed192c57c1202e957f1b55f4c7b0263",
+  "versions": {
+    "dafeiyu_dialogue": "0.4.2",
+    "dafeiyu_message_routes": "0.2.0",
+    "dafeiyu_runtime": "0.3.4",
+    "dafeiyu_natural_chat": "0.10.0",
+    "astrbot_plugin_group_chat_plus": "1.2.3.hotfix.2",
+    "长期记忆系统": "1.5.0",
+    "dafeiyu_life": "0.3.2",
+    "dafeiyu_companion": "0.4.2",
+    "dafeiyu_bailian_tts": "0.4.0",
+    "astrbot_plugin_dafeiyu_draw": "0.1.8"
+  },
+  "mode": "active",
+  "all_allowed_private": true,
+  "all_allowed_groups": true,
+  "container_healthy": true,
+  "qq_platform_running": true,
+  "runtime_guards_verified": true,
+  "existing_config_values_preserved": true,
+  "unrelated_sources_preserved": true,
+  "old_data_overwritten": false,
+  "sqlite_backups": 10,
+  "observation_started_at_beijing": "2026-10-31T14:29:16.739385+08:00",
+  "deployed": true,
+  "verified_at_beijing": "2026-10-31T14:29:25.282701+08:00",
+  "companion_frequency": {
+    "version": "0.4.2",
+    "frequency_mode": "random_daily",
+    "daily_limit_range": [
+      0,
+      4
+    ],
+    "daily_limit": 4,
+    "windows_beijing": [
+      "09:00-21:00"
+    ],
+    "cooldown_minutes_range": [
+      90,
+      240
+    ],
+    "spontaneous_owner_only": true,
+    "initiative_loop_running": true
+  },
+  "original_rows_retained": {
+    "days": true,
+    "attempts": true,
+    "incoming": true,
+    "evaluations": true
+  },
+  "reply_state_preserved": true,
+  "random_plan_persisted": true,
+  "tests": {
+    "focused": 10,
+    "full_suite_run": false,
+    "production_image_verified": true,
+    "network_during_isolated_tests": false,
+    "production_data_mounted_in_tests": false,
+    "third_send_within_random_budget_verified": true,
+    "restart_cannot_reroll_verified": true
+  },
+  "model_test_calls": 0,
+  "qq_test_sends": 0,
+  "qzone_test_posts": 0,
+  "frequency_interpretation": "Random opportunities; the model may choose no action and actual messages may be fewer."
+}
