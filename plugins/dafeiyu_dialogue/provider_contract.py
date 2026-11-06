@@ -96,14 +96,16 @@ class ProviderContracts:
                 binding=getattr(runner.req,'_dafeiyu_generation_binding',None)
                 if binding and binding[0] is owner:
                     owner.install(runner.provider)
+                    from dafeiyu.runtime.outbound import project_history
+                    result=project_history(result,binding[2])
                     return NativeContexts(result,binding[1])
                 return result
             ToolLoopAgentRunner._sanitize_contexts_for_provider=contexts
             self.runner_adapter=(ToolLoopAgentRunner,original,contexts)
 
-    def bind_request(self,request,nonce):
+    def bind_request(self,request,nonce,outgoing=()):
         self.install_runner()
-        request._dafeiyu_generation_binding=(self,nonce)
+        request._dafeiyu_generation_binding=(self,nonce,copy.deepcopy(list(outgoing)))
 
     def install(self,provider):
         if provider is None:return False

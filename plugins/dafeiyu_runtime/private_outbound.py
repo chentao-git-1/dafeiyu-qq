@@ -128,6 +128,7 @@ class PrivateOutbound:
             event.set_extra('jingjing_outbound_managed', True)
             return
         rows = self.store.recent(uid, conversation, stamp)
+        event.set_extra('dafeiyu_confirmed_outgoing',rows)
         event.set_extra('jingjing_outbound_managed', self.store.manages_peer(uid))
         history = event.get_extra('jingjing_actual_chat', []) or []
         for row in rows:
@@ -136,7 +137,7 @@ class PrivateOutbound:
                 req.contexts = contexts
                 self.stats['history_added'] += 1
             self.store.bind(uid, row['id'], conversation)
-        if rows:
+        if rows and not event.get_extra('dafeiyu_generation_contract',False):
             parts.append(TextPart(text=reply_note(rows, human, history)))
 
     def close(self):

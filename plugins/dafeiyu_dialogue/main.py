@@ -19,7 +19,7 @@ from astrbot.api.web import json_response, request as web_request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from dafeiyu.dialogue.catalog import MemoryCatalog
-from dafeiyu.dialogue.context_builder import compose
+from dafeiyu.dialogue.context_builder import compose,automatic_items
 from dafeiyu.dialogue.contracts import ACTIVE_KEY, TurnContext
 from dafeiyu.dialogue.retrieval import lexical_rank, recall_candidates, semantic_select
 from dafeiyu.dialogue.persona import replace_persona,attach_tool_contracts
@@ -40,7 +40,7 @@ from .evidence_context import EvidenceContext
 from .generation_workflow import GenerationWorkflow
 
 
-@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.1')
+@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.2')
 class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -243,10 +243,12 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
                     req.contexts=history(snapshot.items)
                     event.set_extra('dafeiyu_group_context_prepared',True)
             ranked = None
+            on_demand=bool(event.get_extra('dafeiyu_generation_contract',False))
             if event.get_extra(ACTIVE_KEY, False) and self.feature('retrieval_index_v2'):
                 index = self.source_index()
-                await asyncio.to_thread(index.sync, turn, snapshot.items)
-                ranked = await asyncio.to_thread(index.rank, turn, source['text'], snapshot.items)
+                candidates=automatic_items(snapshot.items) if on_demand else snapshot.items
+                await asyncio.to_thread(index.sync, turn, candidates)
+                ranked = await asyncio.to_thread(index.rank, turn, source['text'], candidates)
             # Only a verified artifact may supply the bot's own recent activity.
             record, progress = await self.own_activity()
             if event.get_extra('dafeiyu_generation_contract',False):attach_tool_contracts(req,event.get_extra('dafeiyu_dialogue_persona',''))
@@ -255,7 +257,6 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
             character=natural.dialogue_character() if hasattr(natural, 'dialogue_character') else None
             if self.growth_enabled():
                 character=dict(character or {},growth=await self.growth_profile(turn))
-            on_demand=bool(event.get_extra('dafeiyu_generation_contract',False))
             if on_demand:character=default_character(character)
             built = compose(prompt, turn, snapshot, source['text'],
                 facts={} if event.get_extra('dafeiyu_generation_contract',False) else event.get_extra('jingjing_current_facts', {}),
@@ -316,7 +317,8 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
                     event.set_extra('dafeiyu_claim_sources',sources)
                     req.system_prompt = request_contract(req.system_prompt, sources, learning_enabled,
                         nonce=event.get_extra('dafeiyu_generation_capability',''))
-                    self.provider_contracts.bind_request(req,event.get_extra('dafeiyu_generation_capability'))
+                    self.provider_contracts.bind_request(req,event.get_extra('dafeiyu_generation_capability'),
+                        outgoing=event.get_extra('dafeiyu_confirmed_outgoing',()))
                 # Final fact/receipt guards and confirmed-delivery recording remain active.
         except asyncio.CancelledError:
             raise
@@ -693,8 +695,10 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.7.1', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.7.2', 'mode': self.config.get('mode', 'shadow'),
             'self_details_on_demand':True,
+            'automatic_exchange_recall':False,
+            'legacy_outgoing_sidecars_projected_at_provider':True,
             'personality_growth_enabled':self.growth_enabled(),
             'personality_growth_loop_running':bool(self.growth_task and not self.growth_task.done()),
             'native_context_adapter_installed':self.provider_contracts.runner_adapter is not None,

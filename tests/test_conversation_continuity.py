@@ -204,6 +204,21 @@ class Outbound(unittest.IsolatedAsyncioTestCase):
         contexts = [{'role': 'user', 'content': '没有可信日期'}]
         self.assertEqual(o.bridge(contexts, row), (contexts, False))
 
+    async def test_contract_keeps_one_chronological_message_without_repeating_it_in_user_input(self):
+        stamp=NOW-3600
+        self.obj.store.record(FRIEND,'今天想试一个新点子。',{'message_id':123},'native-one',at=stamp)
+        e=event('我在打游戏');e.set_extra('dafeiyu_generation_contract',True)
+        req=self.req([user('此前的话题',stamp-600),{'role':'assistant','content':'此前的回复'}])
+        await self.obj.prepare(e,req)
+        self.assertEqual(len(req.contexts),3);self.assertFalse(req.extra_user_content_parts)
+        self.assertEqual(e.get_extra('dafeiyu_confirmed_outgoing')[0]['id'],'123')
+        following=event('顺便聊几句');following.set_extra('dafeiyu_generation_contract',True)
+        next_req=self.req(req.contexts+[user('我在打游戏',stamp+120),{'role':'assistant','content':'聊游戏'}])
+        await self.obj.prepare(following,next_req)
+        self.assertEqual(len(next_req.contexts),5);self.assertFalse(next_req.extra_user_content_parts)
+        self.assertEqual(sum('主动发出' in o.content_text(m) for m in next_req.contexts),1)
+        e.send.assert_not_awaited();following.send.assert_not_awaited()
+
     async def test_new_conversation_wrong_scope_and_cron_cannot_receive_old_context(self):
         await self.send()
         cases = [(event(uid=OTHER), self.req()), (event(group='7000000101'), self.req()), (event(platform='other'), self.req()), (event(), self.req(cid='new-chat'))]

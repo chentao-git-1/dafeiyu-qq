@@ -37,6 +37,11 @@ class BuiltContext:
     evidence: dict = field(default_factory=dict)
 
 
+def automatic_items(items):
+    """Raw Q/A pairs remain available to explicit recall, not automatic answer priming."""
+    return [item for item in items if item.kind!='exchange']
+
+
 def without_own_block(prompt):
     base = re.sub(r'\n?' + re.escape(BEGIN) + r'.*?' + re.escape(END), '', prompt or '', flags=re.S)
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_GENERATION -->.*?<!-- END_DAFEIYU_GENERATION -->', '', base, flags=re.S)
@@ -51,8 +56,9 @@ def compose(prompt, turn, snapshot, query, *, facts=None, preferences=None, life
     base = without_own_block(prompt)
     budget = max(600, min(int(budget), 12000))
     picked, used = [], 0
-    visible = [item for item in snapshot.items if item.visible_to(turn)]
-    for item in (ranked if ranked is not None else lexical_rank(visible, query)):
+    visible = [item for item in (automatic_items(snapshot.items) if contract else snapshot.items) if item.visible_to(turn)]
+    candidates=ranked if ranked is not None else lexical_rank(visible,query)
+    for item in (automatic_items(candidates) if contract else candidates):
         if not item.visible_to(turn):continue
         data = item.data()
         size = len(json.dumps(data, ensure_ascii=False))
