@@ -40,7 +40,7 @@ from .evidence_context import EvidenceContext
 from .generation_workflow import GenerationWorkflow
 
 
-@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.0')
+@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.1')
 class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -593,14 +593,20 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         自行选择相关部分；可表达当下看法，不为凑话题读取旧进度。打算不证明正在做或做完。
 
         Args:
-            section(string): thoughts当前打算与反思；works实际作品与进行中记录；interests偏好；fiction已有虚构世界
+            section(string): agenda今天和明天的行程；thoughts当前打算与反思；works实际作品与进行中记录；interests偏好；fiction已有虚构世界
         """
         try:
             turn=self.identity(event)
-            if not event.get_extra(ACTIVE_KEY,False) or section not in ('thoughts','works','interests','fiction'):
+            if not event.get_extra(ACTIVE_KEY,False) or section not in ('agenda','thoughts','works','interests','fiction'):
                 raise ValueError('Self lookup not authorized')
             evidence=event.get_extra('dafeiyu_dialogue_evidence',{})
-            if section=='thoughts':
+            if section=='agenda':
+                meta=self.context.get_registered_star('dafeiyu_life')
+                life=getattr(meta,'star_cls',None) if meta and meta.activated else None
+                engine=getattr(life,'engine',None)
+                data=engine.agenda_status() if engine and callable(getattr(engine,'agenda_status',None)) else {'enabled':False}
+                evidence['requested_agenda']=data
+            elif section=='thoughts':
                 thoughts=await self.own_thoughts()
                 data={key:list(thoughts.get(key,[]))[:1] for key in ('projects','reflections','intentions')}
                 evidence['self_thoughts']=data
@@ -687,7 +693,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.7.0', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.7.1', 'mode': self.config.get('mode', 'shadow'),
             'self_details_on_demand':True,
             'personality_growth_enabled':self.growth_enabled(),
             'personality_growth_loop_running':bool(self.growth_task and not self.growth_task.done()),
@@ -701,7 +707,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
             'response_review': self.config.get('response_review', 'enforce') if self.model_verification_enabled() else 'off',
             'chat_model_verification':self.model_verification_enabled(), 'review_statistics': dict(self.review_stats),
             'contains_chat_content': False,
-            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative','direction','learning_check_background','learning_state','personality_growth')),
+            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('agenda','activity','initiative','direction','learning_check_background','learning_state','personality_growth')),
             'post_delivery_learning':self.deferred_learning.status(),
             'extra_qq_sends': 0,
             'source_databases_read_only': self.config.get('mode', 'shadow') != 'active',

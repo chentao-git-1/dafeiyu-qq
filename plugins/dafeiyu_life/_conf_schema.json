@@ -1,0 +1,22 @@
+{
+  "nightly_agenda": {
+    "type": "bool",
+    "description": "夜间自主规划次日活动，白天执行保存的行程；活动条数由模型决定",
+    "default": true
+  },
+  "planning_hour": {
+    "type": "int",
+    "description": "北京时间每日规划次日行程的小时",
+    "default": 23
+  },
+  "execution_start_hour": {
+    "type": "int",
+    "description": "北京时间白天开始执行行程的小时",
+    "default": 9
+  },
+  "execution_end_hour": {
+    "type": "int",
+    "description": "北京时间停止启动新活动的小时",
+    "default": 21
+  }
+}

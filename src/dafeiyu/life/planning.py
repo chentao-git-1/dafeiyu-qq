@@ -19,8 +19,8 @@ self_direction是自己此前保存的打算，只是意向。适合且工具允
 
 
 class SelfJournal:
-    def __init__(self, root, clock=time.time):
-        self.root, self.clock = Path(root), clock
+    def __init__(self, root, clock=None):
+        self.root, self.clock = Path(root), time.time if clock is None else clock
         self.path = self.root / 'self_journal.db'
         with self.db() as db:
             db.executescript('''
@@ -248,7 +248,7 @@ async def choose_activity(provider: TextProvider, journal, records, allowed_kind
     state, overview = interest_context(journal, records)
     packet = {'operator_seed': {'id':'operator:seed','profile':self_profile()}, 'self_state': state,
         'recent_works': [{k: r[k] for k in ('id', 'day', 'kind', 'note', 'thought', 'source', 'activity_context') if k in r} for r in overview],
-        'allowed_kinds': list(allowed_kinds), 'max_activities_today': 1, 'reading_capabilities': capabilities()}
+        'allowed_kinds': list(allowed_kinds), 'max_activities_today': None if availability and availability.get('schedule_item') else 1, 'reading_capabilities': capabilities()}
     if availability:packet['availability']=availability
     if growth:packet['grown_dispositions']=growth
     from .direction import DirectionStore

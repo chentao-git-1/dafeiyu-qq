@@ -27,6 +27,7 @@ class EvidenceContext:
             path = getattr(store, 'path', None)
             today = dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).date().isoformat()
             try:
+                if callable(getattr(store,'in_progress',None)):return completed,store.in_progress()
                 rows = MemoryCatalog._read(path, 'SELECT day,kind,status,updated FROM runs WHERE day=?', (today,)) if path else []
                 progress = rows[0] if rows and rows[0]['status'] == 'started' else None
                 # A stale/interrupted run is not proof of something still happening.

@@ -33,15 +33,86 @@ def beijing_day(now=None):
 from dafeiyu.life.store import LifeStore
 
 class LifeEngine:
-    def __init__(self,store,context):self.store=store;self.context=context;self.lock=asyncio.Lock();self._direction=None
+    def __init__(self,store,context,agenda_enabled=False,agenda_hours=(23,9,21)):
+        self.store=store;self.context=context;self.lock=asyncio.Lock();self._direction=None
+        self.agenda_enabled=agenda_enabled;self.agenda_hours=agenda_hours;self._agenda=None
+        if agenda_enabled:self.store.model_schedule=True
+    def agenda_store(self):
+        if self._agenda is None:
+            from dafeiyu.life.agenda import AgendaStore
+            self._agenda=AgendaStore(self.store,*self.agenda_hours)
+        return self._agenda
+    def agenda_status(self):
+        return dict(enabled=True,**self.agenda_store().status()) if self.agenda_enabled else {'enabled':False}
+    def agenda_kinds(self):
+        kinds=['reading','writing']
+        meta=self.context.get_registered_star('astrbot_plugin_dafeiyu_draw')
+        drawing=getattr(meta,'star_cls',None) if meta and meta.activated else None
+        if drawing and callable(getattr(drawing,'generate_for_qzone',None)):kinds.append('drawing')
+        return kinds
+    def available_balance(self):
+        from decimal import Decimal,InvalidOperation
+        meta=self.context.get_registered_star('astrbot_plugin_dafeiyu_balance')
+        balance=getattr(meta,'star_cls',None) if meta and meta.activated else None
+        if balance is None or not getattr(balance,'watch',None):return None
+        status=balance.watch.status()
+        try:
+            value=Decimal(str(status.get('last_balance_cny')))
+            if (value.is_finite() and value>=Decimal('0.70') and status.get('last_available') is True
+                    and 0<=time.time()-float(status.get('last_checked_at') or 0)<=1800):return str(value)
+        except (InvalidOperation,ValueError,TypeError):pass
+        return None
+    async def plan_next_day(self):
+        if not self.agenda_enabled or self.lock.locked() or not self.store.enabled():return False
+        async with self.lock:
+            agenda=self.agenda_store();day=agenda.planning_day()
+            if not day or agenda.view(day)['status']!='not_planned':return False
+            meta=self.context.get_registered_star('dafeiyu_dialogue')
+            controller=getattr(meta,'star_cls',None) if meta and meta.activated else None
+            if not controller or not controller.owner_policy_enabled('activity_policy_v2'):return False
+            balance=self.available_balance()
+            if balance is None:return False
+            provider=await self.context.get_using_provider_async('dafeiyu-qq:FriendMessage:'+str(controller.natural().actor_owner()))
+            if provider is None:return False
+            from dafeiyu.life.agenda import materials,plan
+            from dafeiyu.life.planning import SelfJournal
+            growth=await controller.growth_profile() if callable(getattr(controller,'growth_profile',None)) else {}
+            packet=materials(self.store,SelfJournal(self.store.root),day,agenda.start_hour,agenda.end_hour,balance,growth,allowed_kinds=self.agenda_kinds())
+            if packet['window']['start']>=packet['window']['end']:return False
+            if not agenda.claim_plan(day):return False
+            try:
+                result=await plan(controller.metered_provider(provider,'agenda'),packet)
+                return agenda.finish_plan(day,result)
+            except asyncio.CancelledError:raise
+            except Exception as error:
+                agenda.fail_plan(day,error);raise
+    async def advance_agenda(self):
+        if self.lock.locked() or not self.store.enabled():return {'advanced':False,'status':'paused_or_busy'}
+        agenda=self.agenda_store();agenda.expire()
+        from dafeiyu.life.planning import SelfJournal
+        journal=SelfJournal(self.store.root)
+        for item in agenda.due():
+            if item['status']=='failed' and journal.decision(item['id']+':adaptation'):continue
+            if item['kind']!='none' and self.available_balance() is None:return {'advanced':False,'status':'waiting_for_resources'}
+            return await self.advance(activity_id=item['id'])
+        return {'advanced':False,'status':'waiting_for_agenda'}
     def direction_store(self):
         if self._direction is None:
             from dafeiyu.life.direction import DirectionStore
             self._direction=DirectionStore(self.store.root)
         return self._direction
     def direction_profile(self):
+        if self.agenda_enabled and self.store.enabled():
+            state=self.agenda_store().status()
+            for day in (state['today'],state['tomorrow']):
+                for item in day['items']:
+                    if item['status']=='pending' and item['kind']!='none':
+                        return dict(id=item['id'],version=1,status='intent',title=item['title'],question=item['question'],
+                            next_step=item['question'],kind=item['kind'],updated=day['planned_at'],execute_at=item['run_at'],source_ids=[])
+            return None
         return self.direction_store().visible(self.store) if self.store.enabled() else None
     async def consider_direction(self):
+        if self.agenda_enabled:return await self.plan_next_day()
         if self.lock.locked() or not self.store.enabled():return False
         async with self.lock:
             from decimal import Decimal,InvalidOperation
@@ -109,17 +180,21 @@ class LifeEngine:
             if not 8<=len(evidence)<=45 or evidence not in source['body']:raise ValueError('Reading lacks exact source evidence')
         if obj['story']:obj['story']='虚构片段：'+obj['story'].removeprefix('虚构片段：')
         return obj
-    async def advance(self,bootstrap=False,opportunity=False):
+    async def advance(self,bootstrap=False,opportunity=False,activity_id=None):
+        if self.agenda_enabled and activity_id is None:return await self.advance_agenda()
         async with self.lock:
-            plan=self.store.schedule();now=time.time()
+            plan=self.store.activity(activity_id) if activity_id else self.store.schedule();now=time.time()
+            if plan is None:return {'advanced':False,'status':'activity_missing'}
+            run_key=activity_id or plan['day'];stem=self.store.artifact_name(run_key,plan['day'])
             if not self.store.enabled():return {'advanced':False,'status':plan['status']}
             index=self.store.count();kind=ACTIVITIES[index%7]
             controller = getattr(self.context,'get_registered_star',lambda name:None)('dafeiyu_dialogue')
             controller = getattr(controller,'star_cls',None) if controller and controller.activated else None
             semantic = bool(controller and controller.owner_policy_enabled('activity_policy_v2'))
-            direction=self.direction_profile() if semantic else None
+            if activity_id and not semantic:return {'advanced':False,'status':'autonomy_not_enabled'}
+            direction=self.direction_profile() if semantic and not activity_id else None
             directed=bool(direction and direction['status']=='intent')
-            direction_key=plan['day']+':direction:'+str(direction['version']) if directed else plan['day']
+            direction_key=run_key+':direction:'+str(direction['version']) if directed else run_key
             if semantic:
                 from dafeiyu.life.planning import SelfJournal
                 saved=SelfJournal(self.store.root)
@@ -128,10 +203,14 @@ class LifeEngine:
             # One alternative within the same failed daily slot, never another
             # search/drawing attempt or an overwrite of an unconfirmed artifact.
             adapting=bool(semantic and plan['status']=='failed' and plan['kind']=='reading'
-                and not any((self.store.root/'works'/(plan['day']+suffix)).exists() for suffix in ('.json','.jpg')))
+                and not any((self.store.root/'works'/(stem+suffix)).exists() for suffix in ('.json','.jpg')))
             if plan['status']!='pending' and not adapting:return {'advanced':False,'status':plan['status']}
             if opportunity and not semantic:return {'advanced':False,'status':'autonomy_not_enabled'}
-            if not bootstrap and not (opportunity or adapting):
+            if activity_id:
+                agenda=self.agenda_store();local=dt.datetime.fromtimestamp(now,TZ)
+                if (local.date().isoformat()!=plan['day'] or not agenda.start_hour<=local.hour<agenda.end_hour
+                        or now<plan['run_at']):return {'advanced':False,'status':'waiting_for_planned_time'}
+            elif not bootstrap and not (opportunity or adapting):
                 if directed:
                     if now<direction.get('execute_at',direction['updated']):return {'advanced':False,'status':'waiting_for_own_time'}
                 elif not 9<=dt.datetime.fromtimestamp(now,TZ).hour<21 or now<plan['run_at']:
@@ -140,37 +219,55 @@ class LifeEngine:
             if semantic:
                 from dafeiyu.life.planning import SelfJournal, choose_activity
                 journal=SelfJournal(self.store.root)
-                prior=journal.latest_choice(plan['day'])
+                prior=journal.latest_choice(run_key)
                 if adapting and not prior:return {'advanced':False,'status':'failed_without_semantic_choice'}
                 # Persist the evaluation slot before any model call; a tick never becomes a retry loop.
-                decision_day=plan['day']+':adaptation' if adapting else direction_key
+                decision_day=run_key+':adaptation' if adapting else direction_key
                 if journal.decision(decision_day):return {'advanced':False,'status':'decision_already_used'}
                 if not journal.reserve_choice(decision_day,{'kind':'pending'}):return {'advanced':False,'status':'decision_already_used'}
                 try:
+                    allowed=['writing'] if adapting else self.agenda_kinds() if activity_id else ['reading','writing']
+                    if not activity_id and not adapting and index>=6 and not any(r['kind']=='drawing' for r in self.store.records(6)):allowed.append('drawing')
+                    if activity_id and not adapting:
+                        from dafeiyu.life.agenda import bind_activity
+                        try:choice=bind_activity(json.loads(plan['choice']),journal,self.store.verified_records(60),allowed)
+                        except ValueError:
+                            self.store.skip(run_key,'planned_activity_no_longer_available')
+                            return {'advanced':False,'status':'planned_activity_no_longer_available'}
+                    if choice and choice['kind']=='none':
+                        journal.save_choice(decision_day,choice);self.store.skip(run_key)
+                        return {'advanced':False,'status':'chose_no_activity'}
                     provider=await self.context.get_using_provider_async('dafeiyu-qq:FriendMessage:'+str(controller.natural().actor_owner()))
                     if provider is None:raise RuntimeError('Text provider unavailable')
                     provider=controller.metered_provider(provider,'activity')
-                    allowed=['writing'] if adapting else ['reading','writing']
                     growth=await controller.growth_profile() if callable(getattr(controller,'growth_profile',None)) else {}
-                    if not adapting and index>=6 and not any(r['kind']=='drawing' for r in self.store.records(6)):allowed.append('drawing')
                     if adapting:
                         choice=await choose_activity(provider,journal,self.store.verified_records(60),allowed,
                             availability={'prior_choice':prior, 'failed_stage':'reading',
+                                'schedule_item':activity_id,
                                 'error_type':plan['error'],'reading':'no_verified_completed_reading',
                                 'instruction':'这次阅读未能完成，不再搜索。可以沿自己的兴趣改做一段原创文字或none；不宣称已读过文章，不把猜测写成知识。仍是当天同一次活动。'},growth=growth,outcomes=self.store.outcomes())
-                    else:choice=await choose_activity(provider,journal,self.store.verified_records(60),allowed,growth=growth,outcomes=self.store.outcomes())
+                    elif not activity_id:choice=await choose_activity(provider,journal,self.store.verified_records(60),allowed,growth=growth,outcomes=self.store.outcomes())
                     journal.save_choice(decision_day,choice)
                 except asyncio.CancelledError:raise
                 except Exception as error:
-                    self.store.fail(plan['day'],error);raise
+                    self.store.fail(run_key,error);raise
                 kind=choice['kind']
                 if kind=='none':
                     try:journal.begin_project(choice)
                     except Exception as error:
-                        self.store.fail(plan['day'],error);raise
-                    with self.store.db() as db:db.execute("UPDATE runs SET status='skipped',kind='none',updated=? WHERE day=? AND status=?",(time.time(),plan['day'],plan['status']))
+                        self.store.fail(run_key,error);raise
+                    self.store.skip(run_key)
                     return {'advanced':False,'status':'chose_no_activity'}
-            if not self.store.claim(plan['day'],kind,failed_at=plan['updated'] if adapting else None):return {'advanced':False,'status':'claimed'}
+            if not self.store.enabled():
+                self.store.skip(run_key,'paused_before_execution');return {'advanced':False,'status':'paused'}
+            if activity_id:
+                local=dt.datetime.fromtimestamp(time.time(),TZ);agenda=self.agenda_store()
+                if local.date().isoformat()!=plan['day'] or not agenda.start_hour<=local.hour<agenda.end_hour:
+                    agenda.expire();return {'advanced':False,'status':'execution_window_closed'}
+            if activity_id and self.available_balance() is None:
+                self.store.skip(run_key,'resources_changed_before_execution');return {'advanced':False,'status':'resources_changed'}
+            if not self.store.claim(run_key,kind,failed_at=plan['updated'] if adapting else None):return {'advanced':False,'status':'claimed'}
             try:
                 previous=self.store.verified_records(3) if semantic else self.store.records(3);source={};art=None
                 story_history=previous
@@ -226,19 +323,20 @@ class LifeEngine:
                 else:generated=self.decode(response.completion_text,source,kind)
                 if not use_world:generated['story']=''
                 works=self.store.root/'works';works.mkdir(exist_ok=True)
-                name=plan['day']+('.jpg' if art else '.json');path=works/name
+                name=stem+('.jpg' if art else '.json');path=works/name
                 if path.exists():raise FileExistsError('Artifact already exists; reconcile before retry')
                 if art:shutil.copyfile(art,path)
                 else:path.write_text(json.dumps({'type':'own_digital_work','day':plan['day'],**generated,'source':{k:v for k,v in source.items() if k!='body'}},ensure_ascii=False,indent=2),encoding='utf-8')
                 path.chmod(0o600)
-                record={'id':'life:'+plan['day'],'day':plan['day'],'kind':kind,**generated,
+                record={'id':'life:'+run_key,'day':plan['day'],'kind':kind,**generated,
                     'content_nature':'verified_reading_notes' if kind=='reading' else 'original_text' if kind=='writing' else 'digital_art',
                     'project':project['title'] if semantic else '好奇手帐·第{}册'.format(index//7+1),'stage':project['version'] if semantic else index%7+1,
                     'project_id':project['id'] if semantic else '',
                     'adapted_from':'reading' if adapting else None,
+                    'agenda_item':activity_id,'scheduled_for':plan['run_at'] if activity_id else None,
                     'scene':scene_title,'source':{k:v for k,v in source.items() if k!='body'},
                     'artifact':'works/'+name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'completed_at':time.time()}
-                self.store.finish(plan['day'],record)
+                self.store.finish(run_key,record)
                 if semantic:
                     journal.integrate(record,generated.get('reflection'),project)
                     if choice.get('direction_version'):
@@ -260,5 +358,5 @@ class LifeEngine:
                 # A crash/termination leaves a claimed run for reconciliation, never repeats it automatically.
                 raise
             except Exception as error:
-                self.store.fail(plan['day'],error)
+                self.store.fail(run_key,error)
                 raise

@@ -26,12 +26,16 @@ def own_experiences(store,now=None,retained=()):
     try:
         db.execute('PRAGMA query_only=ON')
         runs=[dict(r) for r in db.execute('SELECT day,status,kind,record,error,updated FROM runs ORDER BY day DESC LIMIT 16')]
-        days={r['day'] for r in runs}
+        has_agenda=bool(db.execute("SELECT 1 FROM sqlite_master WHERE name='activities'").fetchone())
+        if has_agenda:runs.extend(dict(r) for r in db.execute("SELECT id AS activity_id,day,status,kind,record,error,updated FROM activities WHERE status IN ('completed','failed') ORDER BY updated DESC LIMIT 32"))
+        known={r.get('activity_id') or r['day'] for r in runs}
         for old in retained:
-            old_day=old['reference'].get('day')
-            if old_day and old_day not in days:
-                row=db.execute('SELECT day,status,kind,record,error,updated FROM runs WHERE day=?',(old_day,)).fetchone()
-                if row:runs.append(dict(row));days.add(old_day)
+            key=old['reference'].get('activity_id') or old['reference'].get('day')
+            if key and key not in known:
+                if old['reference'].get('activity_id'):
+                    row=db.execute('SELECT id AS activity_id,day,status,kind,record,error,updated FROM activities WHERE id=?',(key,)).fetchone() if has_agenda else None
+                else:row=db.execute('SELECT day,status,kind,record,error,updated FROM runs WHERE day=?',(key,)).fetchone()
+                if row:runs.append(dict(row));known.add(key)
     finally:db.close()
     rows=[]
     for run in runs:
@@ -49,6 +53,7 @@ def own_experiences(store,now=None,retained=()):
                     thought=str(record.get('thought',''))[:250],nature='verified_digital_work_not_physical_experience')
                 if record.get('adapted_from')=='reading':payload['activity_context']='alternative_after_failed_reading'
                 reference=dict(day=run['day'],status='completed',sha256=record['sha256'],completed_at=at)
+                if run.get('activity_id'):reference['activity_id']=run['activity_id']
                 reflection=record.get('reflection')
                 if (isinstance(reflection,dict) and isinstance(reflection.get('evidence'),str)
                         and reflection['evidence'] and reflection['evidence'] in record.get('note','')):
@@ -61,8 +66,9 @@ def own_experiences(store,now=None,retained=()):
                 if not 0<at<=now+5:continue
                 payload=dict(activity=run['kind'],outcome='not_completed',error_type=str(run['error'] or 'unknown')[:80])
                 reference=dict(day=run['day'],status='failed',kind=run['kind'],error=run['error'],updated=at)
+                if run.get('activity_id'):reference['activity_id']=run['activity_id']
             else:continue
-            rows.append(dict(scope=GLOBAL,owner='',origin='',episode='own:'+run['day'],at=at,day=day(at),
+            rows.append(dict(scope=GLOBAL,owner='',origin='',episode='own:'+(run.get('activity_id') or run['day']),at=at,day=day(at),
                 reference=reference,payload=payload))
         except (OSError,ValueError,TypeError,KeyError):continue
     return rows
