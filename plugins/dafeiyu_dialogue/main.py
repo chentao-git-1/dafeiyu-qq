@@ -589,11 +589,11 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
     async def self_details(self,event,section:str='thoughts')->str:
         """按当前讨论需要，只读查询鲸鲸自己的资料；不执行活动或发送消息。
 
-        普通问候、应声和别人的话题无需查询。明确问自己的兴趣、近况、作品或故事时，
+        普通问候、应声和别人的话题无需查询。明确问自己的兴趣、近况、作品、来历、住处或故事时，
         自行选择相关部分；可表达当下看法，不为凑话题读取旧进度。打算不证明正在做或做完。
 
         Args:
-            section(string): agenda今天和明天的行程；thoughts当前打算与反思；works实际作品与进行中记录；interests偏好；fiction已有虚构世界
+            section(string): agenda今天和明天的行程；thoughts当前打算与反思；works实际作品与进行中记录；interests偏好；fiction角色来历、城市、住处与已有故事背景
         """
         try:
             turn=self.identity(event)

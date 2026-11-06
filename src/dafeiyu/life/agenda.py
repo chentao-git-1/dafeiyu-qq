@@ -15,21 +15,25 @@ POLICY = '''为哦鲸鲸安排目标日期的自主数字活动。夜间先想�
 只安排allowed_kinds中的活动或none（休息）；每项都在给定北京时间窗口内，按时间先后，时间不重复。执行时仍检查服务可用性和余额，资金不足会等待。选择项目时用真实编号和当前版本；新项目留空编号、版本0。不同时间可以继续同一项目，实际执行时会读取那时的最新进展；已被暂停或结束的项目不会擅自恢复。
 当天执行结果会进入下一次规划；未取得资料与研究没有答案不同，阅读失败后的替代文字也不是研究发现。计划不是已经做过的事，不虚构现实出门、吃饭或身体生活。正常聊天照常，不为了执行计划装忙或催人。
 owner_wishes是主人当前希望生活更丰富的方向；初始爱好只是起点，不是题材范围。recent_activity_distribution如实描述近期活动分布，是否继续深入、暂放或接触新东西由你决定。
+fictional_setting是已经确立的角色生活背景，可以自主选择use_world来发展故事，也可以做无关的数字活动。城市住处与过去的来历不是今天已完成活动，不据此安排真实出行或把背景地点轮流排进日程。
 exploring可用自己选的搜索问题浏览公开结果摘要，在本次活动中挑出感兴趣的一条或不选；reading才会取文章正文。没有预设话题库，不必为了变化随机换题。若稍后的活动需要用到当天较早活动的真实成果，可在该项加入after数组，填写较早项的HH:MM；执行时会注入其已完成作品。reading承接exploring时直接读它选中的来源。不要预先虚构探索结果；没有成果的依赖项会跳过，独立活动不受影响。
 只输出JSON：day（目标日期）、summary（你对这天的安排想法，可空）、items（数组，可空）。每项为{"at":"HH:MM","after":[],"activity":{"kind":"exploring|reading|writing|drawing|none","project_id":"已有编号或空串","expected_version":0,"title":"想做的事","question":"具体想弄清或表达什么；exploring填写想浏览的搜索问题","source_ids":[],"reason":"自己的选择理由","use_world":false}}。after可省略，最多引用8项，reading最多承接一项。none的title/question/reason可空。不输出工具调用或额外说明。'''
 
 
 def materials(life, journal, day, start_hour, end_hour, balance, growth=None, now=None, allowed_kinds=None, owner_wishes=''):
     from dafeiyu.memory.self_profile import self_profile
+    from .topic_context import world_profile
     now=time.time() if now is None else now
     state,records=interest_context(journal,life.verified_records(60))
     start=dt.datetime.combine(dt.date.fromisoformat(day),dt.time(start_hour),TZ).timestamp()
     earliest=max(start,(int(now)//60+1)*60) if day==beijing_day(now) else start
     allowed=list(allowed_kinds) if allowed_kinds is not None else ['exploring','reading','writing','drawing']
+    world=world_profile()
     return dict(day=day,window=dict(timezone='Asia/Shanghai',start=dt.datetime.fromtimestamp(earliest,TZ).strftime('%H:%M'),
         end=f'{end_hour:02d}:00',end_exclusive=True),operator_seed={'id':'operator:seed','profile':self_profile()},
         self_state=state,recent_works=[{k:r[k] for k in ('id','day','kind','note','thought','source','activity_context') if k in r} for r in records],
         allowed_kinds=allowed,reading_capabilities=capabilities(),grown_dispositions=growth or {},owner_wishes=owner_wishes,
+        fictional_setting={key:world[key] for key in ('kind','version','place','summary','continuity','open_future')},
         activity_outcomes=life.outcomes(),execution_state=life.activity_state(now),
         resources=dict(balance_cny=balance,activity_count='model_selected',drawing_currently_allowed='drawing' in allowed))
 

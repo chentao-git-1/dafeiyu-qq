@@ -17,7 +17,7 @@ from dafeiyu.life.topic_context import relevant as relevant_life, world_profile
 from dafeiyu.life.store import failure_code
 
 
-@register("dafeiyu_life", "Local", "自主探索兴趣、规划并推进数字活动", "0.7.1")
+@register("dafeiyu_life", "Local", "自主探索兴趣、规划并推进数字活动", "0.7.2")
 class JingjingLife(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -100,9 +100,10 @@ class JingjingLife(Star):
         agenda=self.engine.agenda_status()
         plan = self.store.activity_state() if self.engine.agenda_enabled else self.store.schedule()
         latest = self.public_context()
+        world = world_profile()
         return json_response(
             {
-                "version": "0.7.1",
+                "version": "0.7.2",
                 "available_activity_kinds": self.engine.agenda_kinds() if self.engine.agenda_enabled else ['reading','writing','drawing'],
                 "discovery_selection_in_activity_call": self.engine.agenda_enabled,
                 "agenda_uses_completed_dependencies": self.engine.agenda_enabled,
@@ -126,7 +127,8 @@ class JingjingLife(Star):
                 "project_stage": latest["stage"] if latest else 0,
                 "daily_window": agenda.get('execution_window') if self.engine.agenda_enabled else "自选打算按自己的时间；无打算时09:00–21:00 Asia/Shanghai",
                 "max_automatic_activities_per_day": None if self.engine.agenda_enabled else 1,
-                "virtual_world": "海边小屋；窗台上的小芽；手帐书架",
+                "virtual_world": world['place'],
+                "fictional_world_version": world.get('version',1),
                 "private_chat_input": False,
                 "extra_qq_sends": False,
                 "extra_qzone_posts": False,
