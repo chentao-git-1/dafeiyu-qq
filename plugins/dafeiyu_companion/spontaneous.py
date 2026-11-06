@@ -24,6 +24,8 @@ class InitiativeEngine:
         controller=self.active('dafeiyu_dialogue')
         return controller if controller and controller.owner_policy_enabled('initiative_policy_v2') else None
     def allowed(self):
+        social=getattr(self.plugin,'social_engine',None)
+        if social and (social.lock.locked() or social.store.peer(OWNER)['pending_since'] or social.store.active_for(OWNER)):return False
         cfg=self.context.get_config(SESSION)['platform_settings']
         if SESSION not in {str(x) for x in cfg.get('id_whitelist',[])}:return False
         from data.plugins.dafeiyu_social.access import can_notify

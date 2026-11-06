@@ -288,6 +288,18 @@ class LLMAction:
         except Exception as e:
             raise ValueError(f"LLM 调用失败：{e}")
 
+    async def generate_social_reply(self,post:Post,comment:Comment):
+        """Automatic comments may propose follow-through in the same generation."""
+        getter=getattr(self.context,'get_registered_star',None)
+        meta=getter('dafeiyu_companion') if callable(getter) else None
+        companion=getattr(meta,'star_cls',None) if meta and meta.activated else None
+        engine=getattr(companion,'social_engine',None)
+        provider=self._get_provider(self.cfg.llm.reply_provider_id)
+        if engine is not None and isinstance(provider,Provider):
+            decision=await engine.handle_comment(post,comment,provider)
+            if decision is not None:return decision
+        return await self.generate_reply(post,comment)
+
     async def generate_reply(
         self,
         post: Post,

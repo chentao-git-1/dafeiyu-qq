@@ -8,6 +8,7 @@ import aiosqlite
 from astrbot.api import logger
 from .operations import classify, problem, result
 from .qzone import QzoneParser
+from dafeiyu.initiative.social_intents import SocialReply
 
 
 class AutoReplies:
@@ -119,7 +120,12 @@ class AutoReplies:
                     # Persist the claim before generation; never repeat an uncertain write.
                     writing = False
                     try:
-                        content = await asyncio.wait_for(self.service.llm.generate_reply(post, comment), timeout=45)
+                        generate=getattr(self.service.llm,'generate_social_reply',self.service.llm.generate_reply)
+                        content = await asyncio.wait_for(generate(post, comment), timeout=45)
+                        if isinstance(content,SocialReply) and not content.strip():
+                            await db.execute("UPDATE qzone_auto_reply_comments SET status='no_public_reply',updated_at=? WHERE key=?",(int(time.time()),key))
+                            await db.commit()
+                            continue
                         content = str(content or '').strip()[:140]
                         if not content:
                             raise ValueError('Empty generated reply')

@@ -18,6 +18,7 @@ from astrbot.core.cron.manager import _normalize_crontab_day_of_week
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from dafeiyu.initiative.spontaneous_store import InitiativeStore
 from .spontaneous import InitiativeEngine
+from .social import SocialEngine
 from dafeiyu.initiative.schedule_context import ASK as SCHEDULE_ASK, snapshot as schedule_snapshot, render as schedule_render, without_context as without_schedule
 try:
     from dafeiyu.runtime.diagnostics import phase, metric
@@ -50,8 +51,9 @@ def social_can_notify(uid):
         return True
 
 
-@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.7.1')
+@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.8.0')
 class Companion(Star):
+    family=FAMILY
     def __init__(self,context:Context):
         super().__init__(context)
         self.path=Path(get_astrbot_data_path())/'plugin_data/dafeiyu_companion/state.json'
@@ -59,12 +61,17 @@ class Companion(Star):
         self.lock=asyncio.Lock()
         self.initiative=InitiativeStore(self.path.with_name('proactive.db'))
         self.initiative_engine=InitiativeEngine(self,self.initiative)
+        self.social_engine=SocialEngine(self)
         self.initiative_task=None
         context.register_web_api('/dafeiyu_companion/status',self.status,['GET'],'私信提醒与回访状态')
+        context.register_web_api('/dafeiyu_companion/social',self.social_status,['GET'],'留言后续联系状态（不含正文）')
 
-    async def initialize(self):self.initiative_task=asyncio.create_task(self.initiative_loop())
+    async def initialize(self):
+        await asyncio.to_thread(self.social_engine.store.recover)
+        self.initiative_task=asyncio.create_task(self.initiative_loop())
 
     async def terminate(self):
+        if getattr(self,'social_engine',None):self.social_engine.closed=True
         if self.initiative_task:
             self.initiative_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):await self.initiative_task
@@ -72,13 +79,16 @@ class Companion(Star):
     async def initiative_loop(self):
         await asyncio.sleep(30)
         while True:
-            try:await self.initiative_engine.tick()
-            except asyncio.CancelledError:raise
-            except Exception as error:
-                logger.warning('Initiative check failed: %s',type(error).__name__)
-                try:self.initiative.diagnose('error',type(error).__name__)
-                except Exception as diagnostic_error:logger.warning('Initiative diagnostics unavailable: %s',type(diagnostic_error).__name__)
+            for engine in (self.social_engine,self.initiative_engine):
+                try:await engine.tick()
+                except asyncio.CancelledError:raise
+                except Exception as error:
+                    logger.warning('Initiative check failed: %s',type(error).__name__)
+                    try:self.initiative.diagnose('error',type(error).__name__)
+                    except Exception as diagnostic_error:logger.warning('Initiative diagnostics unavailable: %s',type(diagnostic_error).__name__)
             await asyncio.sleep(60)
+
+    async def social_status(self):return json_response(await self.social_engine.status())
 
     def owner_message(self,event):
         raw=getattr(event.message_obj,'raw_message',None)
@@ -89,12 +99,17 @@ class Companion(Star):
 
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE,priority=sys.maxsize+300)
     async def initiative_incoming(self,event):
+        peer=self.social_engine.trusted_peer(event) if getattr(self,'social_engine',None) else None
+        if peer:
+            self.social_engine.store.incoming(peer,str(getattr(event.message_obj,'message_id','') or ''),event.message_obj.raw_message.get('time'))
         if self.owner_message(event):
             raw=event.message_obj.raw_message
             self.initiative.observe_incoming(str(getattr(event.message_obj,'message_id','') or ''),raw.get('time'))
 
     @filter.after_message_sent()
     async def initiative_outgoing(self,event):
+        peer=self.social_engine.trusted_peer(event) if getattr(self,'social_engine',None) else None
+        if peer and confirmed_receipts(event):self.social_engine.store.outgoing(peer)
         if self.owner_message(event) and confirmed_receipts(event):self.initiative.observe_outgoing()
 
     def save(self):
@@ -130,7 +145,9 @@ class Companion(Star):
     async def status(self):
         jobs=await self.context.cron_manager.list_jobs()
         ours=[j for j in jobs if (j.payload or {}).get('dafeiyu_companion')]
-        return json_response({**self.initiative.status(),'version':'0.7.1','spontaneous_owner_only':True,
+        return json_response({**self.initiative.status(),'version':'0.8.0','spontaneous_owner_only':False,
+            'general_initiative_owner_only':True,
+            'comment_followthrough_allowed_contacts':True,
             'initiative_semantic_fact_and_novelty_review':True,
             'initiative_sources':['verified_work','confirmed_event','own_intention','current_private_discussion'],
             'initiative_loop_running':self.initiative_task is not None and not self.initiative_task.done(),

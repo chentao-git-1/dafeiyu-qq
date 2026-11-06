@@ -41,7 +41,7 @@ from .generation_workflow import GenerationWorkflow
 from .public_sharing import PublicSharing
 
 
-@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.5')
+@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.6')
 class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicSharing, Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -686,6 +686,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
                 raise ValueError('Review current records before deleting')
             removed=await asyncio.to_thread(self.learning_store().forget_entities,owner,
                 {i:offered['versions'][i] for i in record_ids})
+            if not turn.is_group:await asyncio.to_thread(self.revoke_contact_intents,owner)
             await asyncio.to_thread(self.revoke_public_inspiration,owner,origin if turn.is_group else None)
             if self._growth is not None and not turn.is_group:await asyncio.to_thread(self._growth.forget,owner)
             await asyncio.to_thread(self.natural().forget_semantic,owner,origin,[])
@@ -722,7 +723,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.7.5', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.7.6', 'mode': self.config.get('mode', 'shadow'),
             'publication_photo_content_recall':True,
             'public_space_memory_enabled':bool(self.catalog().public_space),
             'public_inspiration_in_primary_generation':True,
@@ -743,7 +744,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             'response_review': self.config.get('response_review', 'enforce') if self.model_verification_enabled() else 'off',
             'chat_model_verification':self.model_verification_enabled(), 'review_statistics': dict(self.review_stats),
             'contains_chat_content': False,
-            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('agenda','activity','initiative','direction','learning_check_background','learning_state','personality_growth')),
+            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('agenda','activity','initiative','direction','learning_check_background','learning_state','personality_growth','social_followthrough')),
             'post_delivery_learning':self.deferred_learning.status(),
             'extra_qq_sends': 0,
             'source_databases_read_only': self.config.get('mode', 'shadow') != 'active',

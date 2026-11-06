@@ -212,6 +212,7 @@ class GenerationWorkflow:
             long_term=await memory.forget_owned(event,mids)
         native={'episodes':0,'exchanges':0}
         if action in ('forget_selected','forget_all'):
+            if not turn.is_group:await asyncio.to_thread(self.revoke_contact_intents,turn.actor)
             await asyncio.to_thread(self.revoke_public_inspiration,turn.actor,turn.origin if turn.is_group else None)
             native=await asyncio.to_thread(self.natural().forget_semantic,turn.actor,turn.origin,ids)
             if self._index is not None:

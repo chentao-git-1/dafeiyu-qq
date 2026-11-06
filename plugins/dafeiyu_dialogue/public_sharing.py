@@ -6,6 +6,12 @@ from dafeiyu.social.inspiration import sharing_proposal
 
 
 class PublicSharing:
+    def revoke_contact_intents(self,owner):
+        path=self.root/'plugin_data/dafeiyu_companion/social.db'
+        if path.is_file():
+            from dafeiyu.initiative.social_intents import SocialIntentStore
+            SocialIntentStore(path).forget(owner)
+
     def public_activity(self):
         path=self.root/'plugin_data/dafeiyu_social/preferences.db'
         return ActivityStore(path) if path.is_file() else None
