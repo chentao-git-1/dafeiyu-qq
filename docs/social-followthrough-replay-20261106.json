@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "commit": "d789cc79fb325186c67fc105e7f2db2ead77e703",
+  "checked_at_beijing": "2026-11-06T23:34:23.314234+08:00",
+  "selected_old_comment_matches": 1,
+  "unrequested_old_comments_ignored": true,
+  "explicit_import_idempotent": true,
+  "target_bound_to_real_author": true,
+  "original_time_preserved": true,
+  "private_context_not_invented": true,
+  "existing_database_unchanged": true,
+  "network": "none",
+  "model_calls": 0,
+  "live_database_writes": 0,
+  "qq_sends": 0,
+  "qzone_posts": 0
+}
