@@ -1,6 +1,6 @@
 # 大肥鱼独立核心与 AstrBot 接入
 
-2026-11-06。本次为源码重构，基于 `codex/semantic-dialogue` 的 `c5b38fa` 开发；该版本已通过 PR #2 合入 `codex/evening-diary-balance`，因此本次 PR 以该分支的 `6a90b43` 为合并基线。保留自主打算、长期成长和按需自身资料等已有功能，没有部署服务器，没有替换运行配置或数据库。
+2026-11-06。原始重构基于 `codex/semantic-dialogue` 的 `c5b38fa` 开发；该版本通过 PR #2 合入 `codex/evening-diary-balance`，重构 PR 以该分支的 `6a90b43` 为基线，之后已合入 main。源码重构阶段未部署服务器；当天 13:34 已随自然措辞版本 `80bf4a61045bdc954db8d0171d8c5ff6dcaecca5` 完成生产迁移，保留自主打算、长期成长、人格与原数据库。运行核心位于现有持久化路径 `/AstrBot/data/site-packages/dafeiyu`。见 [部署证据](natural-wording-deployment-20261106.json)。
 
 ## 结构
 

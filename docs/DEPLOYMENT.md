@@ -2,6 +2,8 @@
 
 本仓库是去除私人标识的源码快照。先在独立环境配置账号与权限，再启用主动消息和空间发布。
 
+2026-11-06 的现有服务升级已完成，见 [部署证据](natural-wording-deployment-20261106.json)。该 Docker 服务只挂载持久化 data，独立核心安装在 `/AstrBot/data/site-packages/dafeiyu`，由 AstrBot 已有的 site-packages 导入路径加载；配套插件仍在 `/AstrBot/data/plugins`。没有重建镜像、更换账号或覆盖运行数据。下文的新安装示例与实际现有服务升级需要区分，已有服务不能直接运行拒绝覆盖的初装脚本。
+
 ## 身份映射
 
 复制根目录 `identities.example.json` 到仓库外的私人位置，保留左侧示例号码，仅修改右侧的号码。

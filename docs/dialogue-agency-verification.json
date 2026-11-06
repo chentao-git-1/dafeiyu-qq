@@ -1,7 +1,11 @@
 {
   "date_beijing": "2026-11-06",
   "base_commit": "621bd97b90c8b65456e0511508113e90b93d0fb4",
-  "status": "local_candidate_not_committed_or_deployed",
+  "status": "committed_pushed_and_deployed",
+  "deployed_commit": "80bf4a61045bdc954db8d0171d8c5ff6dcaecca5",
+  "deployment_record": "natural-wording-deployment-20261106.json",
+  "status_endpoint_followup_tests": 27,
+  "production_image_isolated_tests": 106,
   "versions": {
     "dialogue": "0.7.0",
     "core": "0.2.0",
@@ -55,7 +59,7 @@
   "real_image_generations": 0,
   "real_qq_messages": 0,
   "real_qzone_posts": 0,
-  "production_service_changed": false,
+  "production_service_changed": true,
   "scope": "Default-off reviewers, primary-owned wording, local action facts, no drawing/singing prefaces, silent meme suppression, single-generation proactive notices and post-generation revocation checks. Historical optional-review tests explicitly opt in. All providers and sends are fake; no live naturalness evaluation.",
   "supersedes": "Earlier 211-test default-off drawing candidate. This version also removes fixed singing, social and balance dialogue and retires legacy whole-reply rewrites.",
   "retired_registered_wording_hooks": 11,
