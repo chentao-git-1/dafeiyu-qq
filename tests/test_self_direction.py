@@ -83,7 +83,7 @@ class DirectionIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(await engine.consider_direction());provider.text_chat.assert_awaited_once()
             self.assertEqual(life.count(),before);self.assertEqual(engine.direction_profile()['status'],'intent')
             request=json.loads(provider.text_chat.call_args.kwargs['prompt'])
-            self.assertEqual(set(request),{'sources','self_state','character_growth','current','beijing_now','activity_outcomes','step_assessments'})
+            self.assertEqual(set(request),{'sources','self_state','character_growth','current','beijing_now','activity_outcomes','step_assessments','execution_state','reading_capabilities'})
             activity=dict(kind='writing',project_id='',expected_version=0,title='潮汐与留白',question='写一段潮汐的文字',
                 source_ids=['operator:seed'],reason='推进自己的打算',direction_version=1)
             creator=NS(text_chat=AsyncMock(return_value=NS(completion_text=json.dumps(activity))))

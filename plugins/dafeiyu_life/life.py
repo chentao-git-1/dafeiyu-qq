@@ -3,7 +3,6 @@ import asyncio
 from contextlib import contextmanager
 import datetime as dt
 import hashlib
-from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -12,13 +11,11 @@ import re
 import shutil
 import sqlite3
 import time
-from urllib.parse import urljoin, urlsplit
 
 import aiohttp
+from dafeiyu.life.reading import ReadingError, decode_response, read_article, read_limited
 
 TZ=dt.timezone(dt.timedelta(hours=8))
-SEEDS=['https://www.cas.cn/kj/202311/t20231127_4988496.shtml',
-       'https://www.cas.cn/kj/201907/t20190716_4699826.shtml']
 ACTIVITIES=('reading','writing','reading','writing','reading','writing','drawing')
 SCENES=(('窗边的小盆栽','给故事里的窗台摆一盆小绿植，挑一个合适的花盆'),
         ('小屋的光','接着上次的小盆栽，研究故事里窗边的光线，挪一下花盆'),
@@ -31,52 +28,6 @@ SCENES=(('窗边的小盆栽','给故事里的窗台摆一盆小绿植，挑一�
 
 def beijing_day(now=None):
     return dt.datetime.fromtimestamp(time.time() if now is None else now,TZ).date().isoformat()
-
-
-def checked_url(url):
-    p=urlsplit(str(url))
-    if p.scheme!='https' or p.netloc!='www.cas.cn' or not p.path.startswith('/kj/') or p.query or p.fragment:
-        raise ValueError('Unapproved reading URL')
-    return str(url)
-
-
-class Article(HTMLParser):
-    def __init__(self):
-        super().__init__();self.depth=0;self.capture=0;self.parts=[];self.title=[];self.in_title=False;self.skip=0
-    def handle_starttag(self,tag,attrs):
-        if tag=='title':self.in_title=True
-        if tag in ('script','style'):self.skip+=1
-        if tag=='div':
-            self.depth+=1
-            if not self.capture and 'TRS_Editor' in dict(attrs).get('class',''):self.capture=self.depth
-    def handle_endtag(self,tag):
-        if tag=='title':self.in_title=False
-        if tag in ('script','style'):self.skip=max(0,self.skip-1)
-        if tag=='div':
-            if self.capture==self.depth:self.capture=0
-            self.depth=max(0,self.depth-1)
-    def handle_data(self,data):
-        if self.in_title:self.title.append(data)
-        if self.capture and not self.skip and data.strip():self.parts.append(data.strip())
-    def result(self):
-        title=''.join(self.title).split('----')[0].strip()
-        body='\n'.join(self.parts)
-        if len(body)<150 or not 4<=len(title)<=150:raise ValueError('No verified article body')
-        return {'title':title,'body':body[:16000]}
-
-
-async def fetch_html(url):
-    current=checked_url(url)
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=18),trust_env=False) as session:
-        for _ in range(3):
-            async with session.get(current,allow_redirects=False,headers={'User-Agent':'JingjingPersonalReading/1.0'}) as response:
-                if response.status in (301,302,303,307,308):
-                    current=checked_url(urljoin(current,response.headers.get('Location','')));continue
-                response.raise_for_status()
-                body=await response.content.read(512*1024+1)
-                if len(body)>512*1024:raise ValueError('Article too large')
-                return body.decode(response.charset or 'utf-8',errors='replace')
-    raise ValueError('Reading redirect limit')
 
 
 from dafeiyu.life.store import LifeStore
@@ -125,38 +76,21 @@ class LifeEngine:
             except Exception:
                 await asyncio.to_thread(direction.fail,claim);raise
     async def web_tool(self,name,payload):
+        if name not in ('search','fetch'):raise ValueError('Unknown reading tool')
         config=self.context.get_config()
         keys=config.get('provider_settings',{}).get('websearch_deepseek_key',[])
         if isinstance(keys,str):keys=[keys]
-        if not keys:raise RuntimeError('Existing search key unavailable')
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30),trust_env=False) as session:
-            async with session.post('https://api.deepseek.com/v1/tools/'+name,json=payload,
-                headers={'Authorization':'Bearer '+keys[0]},allow_redirects=False) as response:
-                if response.status!=200:raise RuntimeError('Official reading service unavailable')
-                raw=await response.content.read(512*1024+1)
-                if len(raw)>512*1024:raise ValueError('Reading result too large')
-                return json.loads(raw)
-    async def reading(self, question=''):
-        seen={r.get('source',{}).get('url') for r in self.store.records(60)}
-        candidates=[u for u in SEEDS if u not in seen]
-        if question or not candidates:
-            topic=question[:200] if question else ('植物','动物 睡眠','海洋','光 颜色','鸟类')[self.store.count()//2%5]
-            results=await self.web_tool('search',{'query':'site:cas.cn/kj/ 科普 '+topic,'count':8,'need_content':False})
-            candidates=[r['url'] for r in results.get('results',[]) if re.fullmatch(r'https://www\.cas\.cn/kj/\d{6}/t\d+_\d+\.shtml',str(r.get('url',''))) and r['url'] not in seen]
-        if not candidates:raise ValueError('No unread primary source available')
-        url=candidates[0]
+        if not keys:raise ReadingError(name,'key_unavailable')
         try:
-            page=Article();page.feed(await fetch_html(url));data=page.result()
-            data['transport']='direct_primary_page'
-        except (ValueError,aiohttp.ClientError,asyncio.TimeoutError):
-            # Reuse the already configured official page extractor; no browser process or new key.
-            extracted=await self.web_tool('fetch',{'url':checked_url(url)})
-            body=str(extracted.get('content') or '')
-            title=str(extracted.get('title') or '').strip()
-            if len(body)<150 or not 4<=len(title)<=150 or re.search(r'滑动验证|访问验证|请开启JavaScript',title):raise ValueError('No verified article body')
-            data={'title':title,'body':body[:16000],'transport':'existing_deepseek_official_fetch'}
-        data.update({'url':url,'text_sha256':hashlib.sha256(data['body'].encode()).hexdigest()})
-        return data
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30),trust_env=False) as session:
+                async with session.post('https://api.deepseek.com/v1/tools/'+name,json=payload,
+                    headers={'Authorization':'Bearer '+keys[0]},allow_redirects=False) as response:
+                    if response.status!=200:raise ReadingError(name,'http_'+str(int(response.status)))
+                    return decode_response(await read_limited(response.content,name),name)
+        except asyncio.TimeoutError:raise ReadingError(name,'timeout') from None
+        except aiohttp.ClientError:raise ReadingError(name,'transport_error') from None
+    async def reading(self, question=''):
+        return await read_article(self.web_tool,question)
     @staticmethod
     def decode(raw,source,kind):
         start=str(raw).find('{')
@@ -301,6 +235,7 @@ class LifeEngine:
                     'content_nature':'verified_reading_notes' if kind=='reading' else 'original_text' if kind=='writing' else 'digital_art',
                     'project':project['title'] if semantic else '好奇手帐·第{}册'.format(index//7+1),'stage':project['version'] if semantic else index%7+1,
                     'project_id':project['id'] if semantic else '',
+                    'adapted_from':'reading' if adapting else None,
                     'scene':scene_title,'source':{k:v for k,v in source.items() if k!='body'},
                     'artifact':'works/'+name,'sha256':hashlib.sha256(path.read_bytes()).hexdigest(),'completed_at':time.time()}
                 self.store.finish(plan['day'],record)

@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import random
+import re
 import sqlite3
 import time
 
@@ -15,6 +16,11 @@ def beijing_day(now=None):
     return dt.datetime.fromtimestamp(time.time() if now is None else now, TZ).date().isoformat()
 
 
+def failure_code(error):
+    code=getattr(error,'code','')
+    return code if isinstance(code,str) and re.fullmatch(r'reading_(query|search|fetch)_[a-z0-9_]{1,48}',code) else type(error).__name__
+
+
 class LifeStore:
     def __init__(self,root):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True);self.root.chmod(0o700)
@@ -22,6 +28,7 @@ class LifeStore:
         with self.db() as c:
             c.execute('CREATE TABLE IF NOT EXISTS runs(day TEXT PRIMARY KEY, run_at REAL NOT NULL,status TEXT NOT NULL,kind TEXT,record TEXT,error TEXT,updated REAL NOT NULL)')
             c.execute('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT)')
+            c.execute('CREATE TABLE IF NOT EXISTS failed_attempts(id TEXT PRIMARY KEY,day TEXT,kind TEXT,status TEXT,error TEXT,updated REAL)')
             c.execute("INSERT OR IGNORE INTO settings VALUES('enabled','true')")
             c.execute("UPDATE runs SET status='unknown',error='interrupted_before_confirmation' WHERE status='started'")
         self.path.chmod(0o600)
@@ -57,12 +64,24 @@ class LifeStore:
                 (time.time(),plan['day'],plan['updated'])).rowcount==1
     def outcomes(self):
         with self.db() as db:
-            rows=db.execute("SELECT day,kind,status,error,updated FROM runs WHERE status IN ('failed','unknown') ORDER BY updated DESC LIMIT 6").fetchall()
+            rows=list(db.execute("SELECT day,kind,status,error,updated FROM runs WHERE status IN ('failed','unknown') ORDER BY updated DESC LIMIT 6"))
+            rows+=list(db.execute('SELECT day,kind,status,error,updated FROM failed_attempts ORDER BY updated DESC LIMIT 6'))
         result=[]
-        for row in rows:
+        seen=set()
+        for row in sorted(rows,key=lambda row:row['updated'],reverse=True):
             value=dict(row);key=hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()[:24]
+            if key in seen:continue
+            seen.add(key)
             result.append(dict(id='outcome:'+key,note=str(row['day'])+' '+str(row['kind'])+' '+row['status']+' '+str(row['error']),**value))
-        return result
+        return result[:6]
+    def activity_state(self,now=None):
+        today=beijing_day(now)
+        with self.db() as db:
+            row=db.execute('SELECT status,kind FROM runs WHERE day=?',(today,)).fetchone()
+        status=row['status'] if row else 'pending'
+        return dict(day=today,status=status,kind=row['kind'] if row else None,daily_activity_limit=1,
+            completed_today=int(status=='completed'),can_start_reading_today=status=='pending',
+            failed_reading_may_choose_writing=status=='failed' and row['kind']=='reading')
     def records(self,limit=7):
         with self.db() as c:
             rows=c.execute("SELECT record FROM runs WHERE status='completed' ORDER BY day DESC LIMIT ?",(limit,)).fetchall()
@@ -82,7 +101,15 @@ class LifeStore:
     def finish(self,day,record):
         with self.db() as c:c.execute("UPDATE runs SET status='completed',record=?,updated=? WHERE day=? AND status='started'",(json.dumps(record,ensure_ascii=False),time.time(),day))
     def fail(self,day,error):
-        with self.db() as c:c.execute("UPDATE runs SET status='failed',error=?,updated=? WHERE day=? AND status IN ('pending','started')",(type(error).__name__,time.time(),day))
+        code=failure_code(error)
+        with self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute("SELECT kind FROM runs WHERE day=? AND status IN ('pending','started')",(day,)).fetchone()
+            if row is None:return
+            now=time.time();value=dict(day=day,kind=row['kind'],status='failed',error=code,updated=now)
+            key=hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()[:24]
+            c.execute('INSERT OR IGNORE INTO failed_attempts VALUES(?,?,?,?,?,?)',(key,day,row['kind'],'failed',code,now))
+            c.execute("UPDATE runs SET status='failed',error=?,updated=? WHERE day=?",(code,now,day))
     def public_context(self):
         for record in self.records(1):
             try:

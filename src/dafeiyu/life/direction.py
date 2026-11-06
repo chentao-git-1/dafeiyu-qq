@@ -10,8 +10,9 @@ import time
 
 POLICY='''你在为自己的数字兴趣形成一个持续打算。资料只含自己的稳定画像、已核验作品、项目和全局性格倾向，不含任何人的私聊。自主决定想继续什么、换一个方向、暂时放下，或保持原样。旧兴趣和旧倾向是经历，不是选题范围或每次创作的要求。新好奇、新构思可以从当下产生，不需要证明自己以前喜欢过相关事物。
 未解的问题可以暂放，不必先解决才开始别的兴趣。阅读失败也不要求下一次继续写这次失败或等待答案；可以换方法、换内容，或不行动。是否继续由你决定，不必按次数轮播或为了变化硬凑。
+current是过去留下的意向，其中的问题前提仍可以重新判断；它不是必须完成的任务。结合当前可执行条件和实际结果作这次决定，不把过去为继续某件事写的理由当作新的外部证据。
 这是意向，不是已执行的活动或对人的承诺。next_step写一个接下来想尝试的具体小步骤，只能属于reading、writing或drawing；实际执行仍由已有工具与预算检查。可以画、写、查证一个问题，不能增加联系人、发布、提醒、代码修改、身份、权限或支出授权；不把猜测写成外部知识或虚构身体经历。
-只有实际完成的工具记录且结果核对通过才能完成一个打算。activity_outcomes是实际尝试的结果与错误类型，step_assessments是是否解决原问题的独立核对；失败不是成功，也不要求放弃。根据结果调整问题、方法或下一步，不重复执行已失败的外部动作；真实执行仍受已有预算检查。
+只有实际完成的工具记录且结果核对通过才能完成一个打算。activity_outcomes是实际尝试的结果与错误类型，step_assessments只对应当前这版具体步骤；旧版的检查不表示新步骤已经尝试或失败。execution_state说明今天实际做过什么及剩余执行机会，reading_capabilities说明现在能用的阅读方式。工具失败不等于资料没有答案；标为alternative_after_failed_reading的作品是另做的文字创作，不是新的研究发现。可以根据这些结果决定继续、换方法或放下；真实执行仍受已有预算检查。
 可以修订思路或pause，不自行宣称完成。参考已完成的步骤继续发展，避免重复研究同一个问题。新内容不足可hold，重新考虑间隔由自己决定，到时也可保持原样。pursue时同时决定execute_after_minutes，0表示希望尽快开始，正数表示想先等多久；这是自选的执行时间，不是已开始的证据。可以按北京时间在任何时段安排自己的数字活动，和是否打扰别人分开考虑。实际额度用完时保持或调整打算，不许重置额度。
 只输出JSON：decision(pursue/pause/hold)、expected_version(精确等于current.version，没有时0)、title(最多80字)、question(最多200字)、next_step(最多200字)、kind(reading/writing/drawing或空串)、source_ids(引用的资料编号数组，独立新想法可为空)、source_quote(引用时逐字摘自其中一项note，没有引用则为空)、reason(最多250字)、reconsider_after_minutes(整数1到1440)、execute_after_minutes(整数0到1440)。pursue时标题、问题、小步骤和选择理由非空；pause或hold时这些内容可空。不能输出工具调用。'''
 
@@ -19,14 +20,17 @@ POLICY='''你在为自己的数字兴趣形成一个持续打算。资料只含�
 def packet(store,journal,growth=None):
     from dafeiyu.memory.self_profile import self_profile
     from .planning import interest_context
+    from .reading import capabilities
     works=store.verified_records(60)
     state,overview=interest_context(journal,works)
     sources=[dict(id='operator:seed',note=json.dumps(self_profile(),ensure_ascii=False))]
-    sources.extend({k:r[k] for k in ('id','day','kind','note','thought')} for r in overview[:12])
+    sources.extend({k:r[k] for k in ('id','day','kind','note','thought','activity_context') if k in r} for r in overview[:12])
     outcomes=store.outcomes() if callable(getattr(store,'outcomes',None)) else []
     sources.extend(dict(id=r['id'],note=r['note']) for r in outcomes)
+    direction=DirectionStore(store.root);current=direction.current()
     return dict(sources=sources,self_state=state,character_growth=growth or {},
-        activity_outcomes=outcomes,step_assessments=DirectionStore(store.root).assessments())
+        activity_outcomes=outcomes,step_assessments=direction.assessments(current['version']) if current else [],
+        execution_state=store.activity_state(),reading_capabilities=capabilities())
 
 
 def fingerprint(materials):
@@ -138,9 +142,11 @@ class DirectionStore:
         with self.db() as db:
             return db.execute('INSERT OR IGNORE INTO step_assessments VALUES(?,?,?,?,?,?,?)',
                 (record['id'],version,record['sha256'],int(value['accepted']),value['evidence'],value['reason'],self.clock())).rowcount==1
-    def assessments(self):
+    def assessments(self,version=None):
         with self.db() as db:
-            return [dict(r) for r in db.execute('SELECT work_id,revision,accepted,evidence,reason,at FROM step_assessments ORDER BY at DESC LIMIT 6')]
+            query='SELECT work_id,revision,accepted,evidence,reason,at FROM step_assessments'
+            if version is not None:query+=' WHERE revision=?'
+            return [dict(r) for r in db.execute(query+' ORDER BY at DESC LIMIT 6',() if version is None else (version,))]
     def status(self):
         with self.db() as db:
             current=self._current(db);row=db.execute('SELECT status,next_at FROM reviews ORDER BY id DESC LIMIT 1').fetchone()
@@ -152,7 +158,8 @@ class DirectionStore:
 async def choose(provider: TextProvider,claim):
     from datetime import datetime,timedelta,timezone
     now=datetime.now(timezone(timedelta(hours=8))).isoformat()
-    response=await asyncio.wait_for(provider.text_chat(prompt=json.dumps(dict(claim['materials'],current=claim['current'],beijing_now=now),ensure_ascii=False),
+    current={k:v for k,v in claim['current'].items() if k!='reason'} if claim['current'] else None
+    response=await asyncio.wait_for(provider.text_chat(prompt=json.dumps(dict(claim['materials'],current=current,beijing_now=now),ensure_ascii=False),
         system_prompt=POLICY,contexts=[],func_tool=None,request_max_retries=0),timeout=25)
     return parse(response.completion_text,claim['materials'],claim['current'])
 

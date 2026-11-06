@@ -47,6 +47,7 @@ def own_experiences(store,now=None,retained=()):
                     if content.get('note')!=record.get('note'):continue
                 payload=dict(activity=record['kind'],outcome='completed',note=str(record.get('note',''))[:500],
                     thought=str(record.get('thought',''))[:250],nature='verified_digital_work_not_physical_experience')
+                if record.get('adapted_from')=='reading':payload['activity_context']='alternative_after_failed_reading'
                 reference=dict(day=run['day'],status='completed',sha256=record['sha256'],completed_at=at)
                 reflection=record.get('reflection')
                 if (isinstance(reflection,dict) and isinstance(reflection.get('evidence'),str)

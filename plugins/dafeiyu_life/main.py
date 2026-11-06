@@ -14,9 +14,10 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .life import TZ, LifeEngine, LifeStore
 from dafeiyu.life.topic_context import relevant as relevant_life, world_profile
+from dafeiyu.life.store import failure_code
 
 
-@register("dafeiyu_life", "Local", "自主兴趣、可暂停的持续项目与数字创作", "0.6.1")
+@register("dafeiyu_life", "Local", "自主兴趣、可暂停的持续项目与数字创作", "0.6.2")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -59,7 +60,7 @@ class JingjingLife(Star):
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                logger.warning("[鲸鲸日常] 本次未完成：%s", type(error).__name__)
+                logger.warning("[鲸鲸日常] 本次未完成：%s", failure_code(error))
             await asyncio.sleep(300)
 
     def actor(self, event):
@@ -95,11 +96,16 @@ class JingjingLife(Star):
         latest = self.public_context()
         return json_response(
             {
-                "version": "0.6.1",
+                "version": "0.6.2",
                 "self_chosen_interests": True,
                 "new_interest_requires_prior_source": False,
                 "model_managed_project_pause": True,
                 "creation_uses_selected_context": True,
+                "reading_source_scope": "public_https_web",
+                "reading_response_complete_before_parse": True,
+                "reading_failures_preserved": True,
+                "step_feedback_scope": "current_intention_version",
+                "planning_knows_daily_execution": True,
                 "enabled": self.store.enabled(),
                 "completed_activities": self.store.count(),
                 "today_status": plan["status"],

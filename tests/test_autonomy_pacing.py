@@ -127,7 +127,7 @@ class AutonomousActivity(unittest.IsolatedAsyncioTestCase):
             result=await choose_activity(NS(text_chat=model),SelfJournal(Path(tmp)),[],['reading','writing'])
             self.assertEqual(result,choice);self.assertEqual(model.await_count,2)
             packet=json.loads(model.call_args.kwargs['prompt'])
-            self.assertEqual(set(packet),{'operator_seed','self_state','recent_works','allowed_kinds','max_activities_today','self_direction'})
+            self.assertEqual(set(packet),{'operator_seed','self_state','recent_works','allowed_kinds','max_activities_today','self_direction','reading_capabilities'})
             self.assertIsNone(packet['self_direction'])
 
     async def test_paused_activity_and_ordinary_night_ticks_do_not_call_provider(self):
