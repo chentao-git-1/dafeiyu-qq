@@ -89,11 +89,10 @@ class PublicMaterial(unittest.TestCase):
         self.assertTrue(self.scope('配这张照片，算了不要图')['text_only'])
 
 class ShortAck(unittest.TestCase):
-    def test_repeated_wake_up_questions_end_without_interview(self):
+    def test_legacy_short_ack_keeps_primary_wording(self):
         prior='要睡一会儿吗？\n睡踏实了吗？'
-        self.assertEqual(close_short_ack('醒啦，脑袋还迷迷糊糊的吗？','我醒了',prior),'醒啦。')
-        self.assertEqual(close_short_ack('醒啦。先缓一缓。睡得好吗？','我醒了',prior),'醒啦。先缓一缓。')
-        self.assertEqual(close_short_ack('睡踏实了吗？','我醒了',prior),'醒啦。')
+        for reply in ('醒啦，脑袋还迷迷糊糊的吗？','醒啦。先缓一缓。睡得好吗？','睡踏实了吗？'):
+            self.assertEqual(close_short_ack(reply,'我醒了',prior),reply)
     def test_real_questions_technical_answers_and_normal_curiosity_survive(self):
         for human,reply,prior in [('我醒了，药怎么吃？','请问是什么药？','早吗？好了吗？'),('HTTP为什么失败','状态码504。还有日志吗？','早吗？好了吗？'),('我醒了','睡踏实了吗？','要睡会儿吗？')]:
             with self.subTest(human=human):self.assertEqual(close_short_ack(reply,human,prior),reply)
@@ -124,9 +123,9 @@ class ConversationalModes(unittest.TestCase):
         for text in ('今天游戏又输了三把','刚下班了','没困呢才睡醒去的'):
             with self.subTest(text=text):self.assertEqual(conversational_mode(text),'sharing')
         self.assertEqual(conversational_mode('喵喵'),'banter')
-        self.assertEqual(close_idle_questions('又输三把，这也太不顺了。是队友太离谱，还是手感不对？','今天游戏又输了三把'),'又输三把，这也太不顺了。')
-        self.assertEqual(close_idle_questions('刚才那句确实像客服。你是在试我吗？','你的人机味好重啊'),'刚才那句确实像客服。')
-        self.assertEqual(close_idle_questions('我说“赢了吗？”是接着上一局问的。现在醒透了吗？','我睡醒了'),'我说“赢了吗？”是接着上一局问的。')
+        self.assertEqual(close_idle_questions('又输三把，这也太不顺了。是队友太离谱，还是手感不对？','今天游戏又输了三把'),'又输三把，这也太不顺了。是队友太离谱，还是手感不对？')
+        self.assertEqual(close_idle_questions('刚才那句确实像客服。你是在试我吗？','你的人机味好重啊'),'刚才那句确实像客服。你是在试我吗？')
+        self.assertEqual(close_idle_questions('我说“赢了吗？”是接着上一局问的。现在醒透了吗？','我睡醒了'),'我说“赢了吗？”是接着上一局问的。现在醒透了吗？')
         self.assertEqual(close_idle_questions('要我帮你看一下吗？','我睡醒了'),'要我帮你看一下吗？')
 
     def test_substantive_requests_take_priority_over_a_casual_prefix(self):
@@ -143,12 +142,11 @@ class ConversationalModes(unittest.TestCase):
             with self.subTest(text=text):self.assertEqual(conversational_mode(text),'feedback')
         self.assertEqual(conversational_mode('你是AI吗？'),'request')
 
-    def test_plain_delivery_hides_internal_status_without_claiming_a_send_outcome(self):
+    def test_delivery_wording_is_owned_by_primary_model(self):
         result=conversational_text('还没确认发出去，回执是unknown，我没法说他已经收到了。','你到底发给他了吗？')
-        self.assertEqual(result,'还没确认发出去，我没法说他已经收到了。')
+        self.assertEqual(result,'还没确认发出去，回执是unknown，我没法说他已经收到了。')
         result=conversational_text('回执是unknown，不能说明已送达。','发了吗？')
-        self.assertIn('还不能确定有没有发出去',result)
-        self.assertNotIn('unknown',result)
+        self.assertEqual(result,'回执是unknown，不能说明已送达。')
 
     def test_technical_quotes_and_non_delivery_status_preserve_their_details(self):
         text='回执是unknown，不能说明已送达。'

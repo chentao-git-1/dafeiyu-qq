@@ -245,7 +245,9 @@ class NativeHooks(unittest.IsolatedAsyncioTestCase):
             self.natural=natural.NaturalChat(self.context)
         self.context.get_registered_star=lambda name:NS(activated=True,star_cls=self.natural) if name=='dafeiyu_natural_chat' else None
         with patch('data.plugins.dafeiyu_dialogue.main.get_astrbot_data_path',return_value=str(self.root)):
-            self.plugin=Dialogue(self.context,{'mode':'active','active_private_users':[OWNER],'generation_contract':False})
+            # These historical review regressions explicitly opt into the retained reviewer.
+            self.plugin=Dialogue(self.context,{'mode':'active','active_private_users':[OWNER],
+                'generation_contract':False,'chat_model_verification':True})
 
     async def asyncTearDown(self):
         gc.collect();self.tmp.cleanup()
@@ -307,12 +309,13 @@ class NativeHooks(unittest.IsolatedAsyncioTestCase):
         await self.plugin.prepare(e,req)
         self.assertEqual(req.func_tool.tools,[])
 
-    async def test_receipt_guard_still_rejects_unscheduled_reminder(self):
+    async def test_legacy_receipt_hook_does_not_replace_primary_wording(self):
         e=event('15:10提醒我下车');req=ProviderRequest(prompt=e.message_str)
         await self.run_hooks(e,req)
         response=NS(completion_text='提醒已经设好了。',tools_call_name=[])
         await self.natural.ground_current_facts(e,response)
-        self.assertIn('没有实际设好',response.completion_text)
+        self.assertEqual(response.completion_text,'提醒已经设好了。')
+        self.assertFalse(e.get_extra('jingjing_reminder_verified',False))
 
     async def test_context_failure_restores_legacy_hooks(self):
         e=event('下班了');req=ProviderRequest(prompt=e.message_str)

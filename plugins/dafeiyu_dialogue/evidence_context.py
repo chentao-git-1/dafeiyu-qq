@@ -74,6 +74,9 @@ class EvidenceContext:
         except (OSError,ValueError,sqlite3.Error):return []
 
     async def provider_call(self, event, prompt, policy, purpose):
+        if not self.model_verification_enabled() and purpose in {
+                'review','verification','learning_check','learning_check_background','learning_state','generation_repair'}:
+            raise RuntimeError('Chat model verification is disabled')
         if SCHEMA_RETRY in policy:
             if event.get_extra('dafeiyu_recovery_attempts',0):raise ValueError('Per-turn recovery budget exhausted')
             event.set_extra('dafeiyu_recovery_attempts',1)
@@ -86,6 +89,8 @@ class EvidenceContext:
         return response.completion_text
 
     async def reviewed(self, event, segments, audience=''):
+        if not self.model_verification_enabled():
+            return ReviewResult(tuple(segments), 'off')
         mode = self.config.get('response_review', 'enforce')
         if mode == 'off':
             return ReviewResult(tuple(segments), 'off')

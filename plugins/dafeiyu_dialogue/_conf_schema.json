@@ -30,15 +30,20 @@
     "description": "单独选择的新链路群号；仍须通过原有群准入和真实@检查",
     "default": []
   },
+  "chat_model_verification": {
+    "type": "bool",
+    "description": "额外聊天核对总开关，默认关闭。关闭时不调用回复审稿、改写复验、记忆二次判定、周期性事项复查或模型格式恢复；本地权限、来源与送达检查保留。旧 response_review 配置不会自行开启此开关。",
+    "default": false
+  },
   "response_review": {
     "type": "string",
-    "description": "active会话：enforce核对，audit只观察，off仅供离线对照。最多两次逻辑核对，修订追加独立检查；结构恢复全轮合计至多一次，核对与验证沿用12秒/8秒预算，主格式恢复最多10秒。最终失败不发草稿。shadow不调用模型。",
+    "description": "仅显式打开 chat_model_verification 后有效；enforce核对、audit只观察、off关闭。默认正常聊天不使用这条额外审稿链。",
     "default": "enforce",
     "options": ["enforce", "audit", "off"]
   },
   "generation_contract": {
     "type": "bool",
-    "description": "active会话通常使用一次主生成；结构失败可有界恢复一次，统一回复、证据引用、学习候选和语音意图",
+    "description": "active会话由主生成给出回复、证据引用、学习候选和语音意图。本地解析结构；只有显式开启 chat_model_verification 才允许额外的模型格式恢复。",
     "default": true
   },
   "learning_v2": {
@@ -53,7 +58,7 @@
   },
   "event_state_batch": {
     "type": "int",
-    "description": "仅learning_v2启用且已确认回复：每3至10轮核对未完结的本人事项；回复格式失败时可提前核对一次当前原话，不创建新事项，计入后台调用",
+    "description": "仅在 chat_model_verification 与 learning_v2 均显式开启时使用；已确认回复后每3至10轮额外检查事项。默认不产生这类模型调用。",
     "default": 3
   },
   "activity_policy_v2": {

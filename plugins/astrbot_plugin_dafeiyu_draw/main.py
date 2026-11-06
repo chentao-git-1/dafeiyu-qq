@@ -22,6 +22,7 @@ from dafeiyu.media.drawing.presentation import drawing_error_text, http_status, 
 import json
 from dafeiyu.media.drawing.intent import IntentContext, continue_prompt
 from dafeiyu.media.drawing.works import WorkHistory
+from dafeiyu.dialogue.action_facts import record_action
 
 
 class DafeiyuDraw(Star):
@@ -105,6 +106,8 @@ class DafeiyuDraw(Star):
                 "本地关键词只提供提示，不决定工具能否调用；即使当前消息没有画图关键词，"
                 "只要你判断需要生成图片，就整理完整画面并调用。用户明确取消或只想讨论时不要调用。"
                 "\n【生图结果与结束】同一轮最多调用一次dafeiyu_draw。"
+                "工具会在本次调用中生成并发送图片，不是安排稍后的后台工作。"
+                "决定画图就调用工具，不要先发送固定等待台词；未调用时不能说已经开始画。"
                 "工具返回拒绝、失败或未完成时，按实际结果简短说明并结束本次画图，"
                 "不再调用、不说工具没响应，也不承诺等下自动重画；新的重画要等用户新要求。"
                 "只有图片真实发送成功才说已发图。用户要拍你的小屋、房间或自拍时，"
@@ -113,6 +116,7 @@ class DafeiyuDraw(Star):
         intent = self._intent(event)
         if intent["mode"] not in ("new", "continue"):
             return
+        event.set_extra('dafeiyu_suppress_progress', True)
         request.system_prompt += (
             "\n【可能的生图表达】本轮出现了常见生图表达，请结合对话自行判断。"
             "决定生图时把主体、场景和风格整理成完整描述，实际调用dafeiyu_draw生成并发送；"
@@ -158,17 +162,18 @@ class DafeiyuDraw(Star):
     async def _draw(self, event, prompt):
         if not self._allowed(event):
             return "这个会话没有启用画图。"
+        event.set_extra('dafeiyu_suppress_progress', True)
         if not self.config.get("enabled") or not self.config.get("api_key"):
             return "画图接口还没有启用。"
         prompt = str(prompt or "").strip()
         if not 2 <= len(prompt) <= 1500:
             return "请给我 2～1500 字画面描述。"
         if self.lock.locked():
-            return "正在画另一张，等画完再来。"
+            return "画图服务正被其他任务占用，这次没有开始生成。"
         now = time.monotonic()
         cooldown = max(0, min(int(self.config.get("cooldown_seconds", 30)), 300))
         if now - self.last.get(event.unified_msg_origin, -1e12) < cooldown:
-            return "刚画过一张，稍等一下再画。"
+            return "两次生图的间隔还没到，这次没有开始生成。"
         if event.get_extra("dafeiyu_draw_attempted", False):
             return "这条请求已经尝试过生成，没有自动重画；先说明本次结果。"
         phase = 'preparing'
@@ -181,7 +186,6 @@ class DafeiyuDraw(Star):
                 work_epoch=None
                 try:work_epoch=await asyncio.to_thread(self.works.begin,str(event.get_sender_id()),event.unified_msg_origin)
                 except Exception as error:logger.warning('Drawing work scope unavailable: %s',type(error).__name__)
-                await event.send(MessageChain(chain=[Plain("画着呢，等一会儿。")]))
                 phase = 'generating'
                 raw, suffix, dimensions = await generate(
                     self.config["api_key"],
@@ -231,10 +235,10 @@ class DafeiyuDraw(Star):
         except Exception as error:
             logger.error('Drawing failed: type=%s phase=%s',type(error).__name__,phase)
             self._error_context().remember(event,error,phase)
-            if phase == 'sending':return '图片已生成，但这次发送没确认成功，我先不重发。'
+            if phase == 'sending':return '图片已生成，发送未确认；无自动重发。'
             if phase == 'sent':return '图片已经发出，后续记录暂时没保存好。'
             if phase == 'image_ready':return '图片已生成，后续处理没完成，暂时没发出。'
-            if phase == 'preparing':return '刚才的进度消息没发成，画图还没开始。'
+            if phase == 'preparing':return '画图准备步骤出错，这次没有开始生成。'
             return '这次画图没完成，暂时还没拿到图片结果。'
 
     @filter.command("画图", alias={"绘图", "draw"})
@@ -253,7 +257,8 @@ class DafeiyuDraw(Star):
         if not prompt:
             yield event.plain_result("用法：/画图 一只在海边摸鱼的蓝色小鲸鱼。")
             return
-        yield event.plain_result(await self._draw(event, prompt))
+        outcome = await self._draw(event, prompt)
+        record_action(event, 'draw', 'completed' if outcome == '图片已发送。' else 'not_confirmed', result=outcome)
 
     @filter.llm_tool(name="dafeiyu_draw")
     async def draw_tool(self, event: AstrMessageEvent, prompt: str) -> str:
@@ -266,6 +271,7 @@ class DafeiyuDraw(Star):
         同一人的“换成蓝色”“再来一张”等可承接上一张，prompt仍需完整描述画面。
         只讨论绘画知识、询问图片内容、明确拒绝生图或没有要求生图时，不要调用。
         一轮只调用一次；工具拒绝或失败后如实说明，不能改写描述反复重试或承诺稍后自动重画。
+        这是同步等待实际图片结果的工具；先调用，不先说固定的等待台词或假装任务已经开始。
 
         Args:
             prompt(string): 画面描述，2～1500 字，包含主体、场景、风格等要求。
@@ -313,30 +319,10 @@ class DafeiyuDraw(Star):
         result.content.append(
             TextContent(
                 type="text",
-                text="本轮生图已结束，只按上面的真实结果接话；不再调用画图，不编造超时或无响应，不承诺稍后自动重画。",
+                text="本轮生图调用已结束，没有后台继续绘图。只按上面的真实结果接话；不再说正在画或让用户继续等，不再调用画图，不编造超时或无响应，不承诺稍后自动重画。",
             )
         )
 
-    @filter.on_decorating_result(priority=sys.maxsize - 45)
     async def ground_drawing_result(self, event: AstrMessageEvent):
-        """Keep failed tool turns from promising a nonexistent retry or image.
-
-        Args:
-            event: The current allowed QQ event and its verified drawing outcome.
-        """
-        outcome = event.get_extra("dafeiyu_draw_outcome", None)
-        if not outcome or outcome == "图片已发送。" or not self._allowed(event):
-            return
-        if event.is_stopped():
-            return
-        result = event.get_result()
-        if result is None or not result.is_llm_result():
-            return
-        text = " ".join(part.text for part in result.chain if isinstance(part, Plain))
-        if re.search(
-            r"(?:我|这就|马上).{0,6}(?:再|重新)(?:试|画|生成)|等(?:下|会儿).{0,8}(?:画|发)|"
-            r"工具.{0,15}(?:没响应|没有响应|无响应|卡住)|(?:画|生成|发).{0,4}(?:好了|成功)|"
-            r"(?:图(?:片)?|插画).{0,8}(?:已(?:经)?(?:发|生成|画)|发给你|发过去)",
-            text,
-        ):
-            result.chain = [Plain(outcome)]
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return

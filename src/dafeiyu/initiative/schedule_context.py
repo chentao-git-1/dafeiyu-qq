@@ -57,6 +57,5 @@ def render(rows, asked=False, unavailable=False):
 
 
 def ground_unavailable(text):
-    if re.search(r'<tool_call|dafeiyu_tasks|(?:等会儿?|稍后|一会儿?|过会儿?).{0,12}(?:再试|再查|再看|通知|告诉你|重试)|(?:没有|没什么).{0,3}(?:提醒|任务|待办)|(?:刚查到|查到了|记录显示)',text,re.S):
-        return '我这会儿没查到提醒列表，暂时没法确认还有哪些。'
+    """Compatibility entry point; wording belongs to the primary model."""
     return text

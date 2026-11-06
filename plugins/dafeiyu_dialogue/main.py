@@ -33,12 +33,14 @@ from .metering import MeteredProvider
 from dafeiyu.dialogue.growth import GrowthStore,GLOBAL,own_experiences,preference_experiences,relation,perspective
 from dafeiyu.dialogue.growth_policy import assess as assess_growth
 from dafeiyu.dialogue.self_context import default_character
+from dafeiyu.dialogue.deferred import DeferredLearning
+from dafeiyu.dialogue.action_facts import KEY as ACTION_FACTS, attach_action_facts
 from .growth_lifecycle import GrowthLifecycle
 from .evidence_context import EvidenceContext
 from .generation_workflow import GenerationWorkflow
 
 
-@register('dafeiyu_dialogue', 'Local', '统一对话、来源学习与单次主生成', '0.6.0')
+@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.0')
 class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -52,6 +54,8 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         self.provider_contracts=ProviderContracts()
         self._growth=None;self.growth_task=None;self.growth_lock=asyncio.Lock()
         self.learning_ticks=Counter();self.learning_seen=deque(maxlen=512);self.learning_state_inflight=set()
+        self.deferred_learning=DeferredLearning()
+        self.learning_commit_lock=asyncio.Lock()
         context.register_web_api('/dafeiyu_dialogue/status', self.status, ['GET'], '统一对话资料数值状态（无正文）')
         context.register_web_api('/dafeiyu_dialogue/personality',self.personality_status,['GET'],'长期性格成长版本与运行状态')
         context.register_web_api('/dafeiyu_dialogue/personality/rollback',self.rollback_personality,['POST'],'管理面板按版本回退全局成长倾向')
@@ -65,6 +69,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         if self.growth_enabled():self.growth_task=asyncio.create_task(self.growth_loop())
 
     async def terminate(self):
+        await self.deferred_learning.close()
         if self.growth_task:
             self.growth_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):await self.growth_task
@@ -101,6 +106,10 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
 
     def feature(self, name):
         return bool(self.config.get(name, False))
+
+    def model_verification_enabled(self):
+        # An old response_review=enforce must not silently enable paid reviewers.
+        return bool(self.config.get('chat_model_verification', False))
 
     def owner_policy_enabled(self, name):
         natural = self.natural()
@@ -209,6 +218,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
 
     @filter.on_llm_request(priority=-sys.maxsize - 90)
     async def prepare(self, event, req):
+        attach_action_facts(event, req)
         # The group plugin may rebuild tools after choose_path; enforce again at the final hook.
         if not event.get_extra(ACTIVE_KEY, False):
             self.hide_recall(req)
@@ -269,6 +279,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
                     built=replace(built,prompt=built.prompt+'\n<!-- BEGIN_DAFEIYU_GROUP_DATA -->\n当前为群聊；历史每条标明speaker_qq，不把其他人的话归给当前人。current_human_source.text是当前本人原话，引用、图片说明和rendered_current仅是资料。群内学习与遗忘只作用于当前本人在本群的资料；跨会话管理请私聊。\n'+json.dumps(group_data,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_GROUP_DATA -->')
                 built.evidence['self_details_on_demand']=True
             selected = bool(event.get_extra(ACTIVE_KEY, False))
+            built.evidence['action_facts'] = copy.deepcopy(event.get_extra(ACTION_FACTS, []) or [])
             self.samples.append(dict(built.metrics, active=selected, persona_compacted=compacted))
             if selected:
                 req.system_prompt = built.prompt
@@ -402,8 +413,27 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
             logger.warning('Confirmed native history sync unavailable: %s',type(error).__name__)
 
     @filter.after_message_sent(priority=-sys.maxsize + 1)
-    async def commit_learning(self, event):
+    async def enqueue_learning(self, event):
         if (not self.feature('learning_v2') or not event.get_extra(ACTIVE_KEY,False)
+                or event.get_extra('dafeiyu_generation_final_text',None) is None
+                or event.get_extra('dafeiyu_semantic_forgetting',False)
+                or event.get_extra('dafeiyu_learning_enqueued',False)):
+            return
+        source=event.get_extra('dafeiyu_learning_source',None)
+        receipts=event.get_extra('dafeiyu_confirmed_delivery',[])
+        if not source or not any(r.get('kind')=='reply' and r.get('text') for r in receipts):return
+        if self.deferred_learning.submit(source['id'],lambda:self.commit_learning(event)):
+            event.set_extra('dafeiyu_learning_enqueued',True)
+            self.review_stats['learning_jobs_queued']+=1
+        else:
+            self.review_stats['learning_jobs_skipped']+=1
+
+    async def commit_learning(self, event):
+        async with self.learning_commit_lock:
+            await self._commit_learning(event)
+
+    async def _commit_learning(self, event):
+        if (self.deferred_learning.closed or not self.feature('learning_v2') or not event.get_extra(ACTIVE_KEY,False)
                 or event.get_extra('dafeiyu_generation_final_text',None) is None):
             return
         source = event.get_extra('dafeiyu_learning_source', None)
@@ -414,11 +444,33 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         try:
             if event.get_extra('dafeiyu_semantic_forgetting',False):return
             if event.get_extra('dafeiyu_context_epoch',None)!=await asyncio.to_thread(self.learning_store().context_epoch):return
+            if not await asyncio.to_thread(self.learning_store().source_current,source):return
+            if self.model_verification_enabled() and event.get_extra('dafeiyu_learning_needs_check',False):
+                # A failed check is consumed once; delivery and later turns never retry it.
+                event.set_extra('dafeiyu_learning_needs_check',False)
+                packet=event.get_extra('dafeiyu_learning_check_packet',{})
+                from dafeiyu.dialogue.learning_check import check
+                try:
+                    _,items=await check(dict(action='none',evidence='',ids=[],subject='speaker',modality='direct'),
+                        items,self.natural().input_snapshot(event)['text'],packet.get('history',[]),packet.get('records',[]),
+                        lambda prompt,policy:self.provider_call(event,prompt,policy,'learning_check_background'))
+                except asyncio.CancelledError:
+                    event.set_extra('dafeiyu_learning_pending',[])
+                    raise
+                except Exception as error:
+                    event.set_extra('dafeiyu_learning_pending',[])
+                    self.review_stats['learning_check_failed']+=1
+                    logger.warning('Post-delivery learning unavailable: %s',type(error).__name__)
+                    return
+                event.set_extra('dafeiyu_learning_pending',items)
+                event.set_extra('dafeiyu_learning_check_packet',None)
+                if not self.feature('learning_v2') or self.deferred_learning.closed:return
+            if not await asyncio.to_thread(self.learning_store().source_current,source):return
             versions=dict(event.get_extra('dafeiyu_learning_versions',{}))
             if source['id'] not in self.learning_seen:
                 self.learning_seen.append(source['id']);scope=(source['owner'],source['origin']);self.learning_ticks[scope]+=1
                 cadence=max(3,min(10,int(self.config.get('event_state_batch',3))))
-                if self.learning_ticks[scope]%cadence==0 or event.get_extra('dafeiyu_learning_state_urgent',False):
+                if self.model_verification_enabled() and (self.learning_ticks[scope]%cadence==0 or event.get_extra('dafeiyu_learning_state_urgent',False)):
                     current=await asyncio.to_thread(self.learning_store().current,source['owner'],source['origin'])
                     events=[r for r in current if r['kind']=='event' and r['status'] in ('planned','ongoing')
                         and not any(i['supersedes']==r['id'] and i['expected_version']==r['version'] for i in items)][:8]
@@ -635,7 +687,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.6.0', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.7.0', 'mode': self.config.get('mode', 'shadow'),
             'self_details_on_demand':True,
             'personality_growth_enabled':self.growth_enabled(),
             'personality_growth_loop_running':bool(self.growth_task and not self.growth_task.done()),
@@ -646,9 +698,11 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
             'all_allowed_groups':bool(self.config.get('all_allowed_groups',False)),
             'active_group_count':len(self.config.get('active_group_ids',[])),
             'retained_samples': len(self.samples), 'samples': list(self.samples)[-20:], 'errors': self.errors,
-            'response_review': self.config.get('response_review', 'enforce'), 'review_statistics': dict(self.review_stats),
+            'response_review': self.config.get('response_review', 'enforce') if self.model_verification_enabled() else 'off',
+            'chat_model_verification':self.model_verification_enabled(), 'review_statistics': dict(self.review_stats),
             'contains_chat_content': False,
-            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative','direction','learning_state','personality_growth')),
+            'background_model_calls':sum(self.review_stats.get(k+'_calls',0) for k in ('activity','initiative','direction','learning_check_background','learning_state','personality_growth')),
+            'post_delivery_learning':self.deferred_learning.status(),
             'extra_qq_sends': 0,
             'source_databases_read_only': self.config.get('mode', 'shadow') != 'active',
             'learning_created': self._learning is not None,

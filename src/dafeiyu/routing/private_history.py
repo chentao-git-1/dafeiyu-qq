@@ -112,36 +112,8 @@ def resolve_target(text, contexts, contacts):
 
 
 def received_reply_text(label, received, question):
-    """Present verified text briefly, retaining evidence details when requested."""
-    detailed = bool(
-        re.search(
-            r"几[点时]|什么(?:时候|时间)|哪[天日]|时间|日期|原话|原文|记录|核对|截图|证据|先后|前后|之后|以后|之前|昨[晚天]|今天|那[条句]|新消息|刚[才刚]",
-            question,
-        )
-    )
-    content = str(received.get("text") or "").strip()
-    if not content:
-        return label + "有回过，不过这条记录没有可转述的文字。"
-    if re.fullmatch(r"(?:\[(?:图片|语音|视频|文件|转发)\]\s*)+", content):
-        media = "、".join(dict.fromkeys(re.findall(r"\[([^\]]+)\]", content)))
-        when = "这段记录里最近一次是" + received["at"] + "，" if detailed else ""
-        return (
-            label + "有回过，" + when + "发来的是" + media + "，这条记录没有文字内容。"
-        )
-    limit = 240 if detailed else 100
-    prefix = label + "有回过，"
-    if detailed:
-        prefix += "这段记录里最近一次是" + received["at"] + "：\n"
-    else:
-        prefix += "说的是："
-    excerpt = content[:limit]
-    return (
-        prefix
-        + "“"
-        + excerpt
-        + "”"
-        + ("（后面还有内容）" if len(content) > limit else "。")
-    )
+    """Compatibility projection of receipt facts, without conversation wording."""
+    return json.dumps(dict(contact=label, received=received), ensure_ascii=False)
 
 
 def reply_position(report):
@@ -158,19 +130,11 @@ def reply_position(report):
 
 
 def latest_reply_text(report, question):
-    """Describe the latest outgoing turn without passing off an old reply as new."""
-    label = report.get('contact', '对方')
-    if PAST_REPLY.search(question):
+    """Compatibility projection; retain receipt ordering without writing a reply."""
+    if PAST_REPLY.search(question) or reply_position(report) == 'no_sent_anchor':
         return None
-    position = reply_position(report)
-    if position == 'no_sent_anchor':
-        return None
-    if position == 'order_uncertain':
-        return label + '有消息，不过收发时间落在同一秒，还不能确认是不是接着刚发的那条。'
-    if position == 'no_later_message_in_window':
-        return '最近这条发出后，还没查到' + label + '的新消息。' + ('之前有聊过，但那是这条发出以前的。' if report.get('last_received') else '')
-    text = received_reply_text(label, report['last_received'], question)
-    return '这条发出以后，' + text.replace(label + '有回过，', label + '发来新消息，', 1)
+    return json.dumps(dict(contact=report.get('contact'), position=reply_position(report),
+        last_sent=report.get('last_sent'), last_received=report.get('last_received')), ensure_ascii=False)
 
 
 class PrivateHistory:
@@ -287,63 +251,5 @@ class PrivateHistory:
                 )
 
     async def correct(self, event, text, contacts, bot):
-        """Replace unsupported receipt claims with a fresh, scoped account.
-
-        Args:
-            event: The authenticated owner's private message event.
-            text: Candidate generated response.
-            contacts: Verified, allowed friends.
-            bot: The current QQ client.
-
-        Returns:
-            A corrected response, or None when no correction is required.
-        """
-        claims = [
-            part
-            for part in re.findall(r"[^。！？!?；;\n]+[。！？!?；;\n]?", text)
-            if not re.search(
-                r"[？?]|如果|假如|要是|是否|有没有|是不是|你说|截图里", part
-            )
-            and not re.match(
-                r"\s*(?:好的?[，, ]*)?(?:我|我们)(?:已经|刚才|刚刚|也|先|又|就|都|还)?(?:回(?:复)?了|回过|发了|说了)",
-                part,
-            )
-            and (STATUS.search(part) or TECHNICAL.search(part))
-        ]
-        if not claims:
-            return None
-        contexts = event.get_extra("dafeiyu_history_contexts", [])
-        target = resolve_target(" ".join(claims), contexts, contacts)
-        if not target:
-            if not any(TECHNICAL.search(part) for part in claims):
-                if not INTENT.search(str(event.message_str or "")):
-                    return None
-                self.stats["corrected_answers"] += 1
-                return "你说的是谁呀？我看看有没有回。"
-            self.stats["corrected_answers"] += 1
-            return "刚才那句我说得太肯定了，具体怎么回事我还不清楚。"
-        proofs = dict(event.get_extra("dafeiyu_private_history", {}) or {})
-        report = proofs.get(target)
-        technical = any(TECHNICAL.search(part) for part in claims)
-        negative = any(NEGATIVE.search(part) for part in claims)
-        if not report or report.get('read_status') != 'ok' or technical:
-            report = await self.read(bot, target, contacts)
-        proofs[target] = report
-        event.set_extra("dafeiyu_private_history", proofs)
-        self.stats["corrected_answers"] += 1
-        label = report.get("contact", "对方")
-        if report.get("read_status") != "ok":
-            return "我这会儿还没查到和" + label + "的最新消息，还不能确认有没有回复。"
-        current = latest_reply_text(report, str(event.message_str or ''))
-        if current:
-            return current
-        if not technical and not negative:
-            return None
-        received = report.get("last_received")
-        if received:
-            return received_reply_text(label, received, str(event.message_str or ""))
-        return (
-            "我看了和"
-            + label
-            + "最近的聊天，这一段里没找到对方发来的消息，还不能确定之前有没有回过。"
-        )
+        """Retired text override; current evidence is provided before generation."""
+        return None

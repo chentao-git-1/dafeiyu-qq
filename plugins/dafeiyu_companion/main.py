@@ -18,7 +18,7 @@ from astrbot.core.cron.manager import _normalize_crontab_day_of_week
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from dafeiyu.initiative.spontaneous_store import InitiativeStore
 from .spontaneous import InitiativeEngine
-from dafeiyu.initiative.schedule_context import ASK as SCHEDULE_ASK, snapshot as schedule_snapshot, render as schedule_render, without_context as without_schedule, ground_unavailable
+from dafeiyu.initiative.schedule_context import ASK as SCHEDULE_ASK, snapshot as schedule_snapshot, render as schedule_render, without_context as without_schedule
 try:
     from dafeiyu.runtime.diagnostics import phase, metric
 except ImportError:
@@ -50,7 +50,7 @@ def social_can_notify(uid):
         return True
 
 
-@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.7.0')
+@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.7.1')
 class Companion(Star):
     def __init__(self,context:Context):
         super().__init__(context)
@@ -130,7 +130,7 @@ class Companion(Star):
     async def status(self):
         jobs=await self.context.cron_manager.list_jobs()
         ours=[j for j in jobs if (j.payload or {}).get('dafeiyu_companion')]
-        return json_response({**self.initiative.status(),'version':'0.7.0','spontaneous_owner_only':True,
+        return json_response({**self.initiative.status(),'version':'0.7.1','spontaneous_owner_only':True,
             'initiative_semantic_fact_and_novelty_review':True,
             'initiative_sources':['verified_work','confirmed_event','own_intention','current_private_discussion'],
             'initiative_loop_running':self.initiative_task is not None and not self.initiative_task.done(),
@@ -328,12 +328,9 @@ class Companion(Star):
         event.set_extra('jingjing_schedule_unavailable',cached['unavailable'])
         req.system_prompt+=schedule_render(cached['rows'],bool(SCHEDULE_ASK.search(event.message_str or '')),cached['unavailable'])
 
-    @filter.on_llm_response(priority=sys.maxsize-102)
     async def ground_schedule_response(self,event,response):
-        if (event.get_extra('jingjing_schedule_unavailable',False) and SCHEDULE_ASK.search(event.message_str or '')
-                and not getattr(response,'tools_call_name',None)):
-            text=str(getattr(response,'completion_text','') or '')
-            if text:response.completion_text=ground_unavailable(text)
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
     @filter.on_llm_tool_respond()
     async def invalidate_schedule_context(self,event,tool,arguments,result):

@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import datetime as dt
-import hashlib
 import json
 import re
 import sys
@@ -19,14 +18,15 @@ from astrbot.core.message.components import Plain, Image, Reply, At, Record
 from dafeiyu.memory.state import Episodes, FAMILY, OWNER, TZ, forbidden, key, mood_cue
 from dafeiyu.memory.interaction import InteractionStore, parse_feedback, preference_context, repetition_context, settings_text
 from dafeiyu.memory.image_chat import image_mode, image_instructions
-from dafeiyu.memory.continuity import verified_names, decode_history, context_block, grounded_correction, pending_turn, DELAY
-from dafeiyu.memory.spoken_style import style_context, conversational_text, close_short_ack, close_idle_questions, MARKER as SPOKEN_START, END as SPOKEN_END
+from dafeiyu.memory.continuity import verified_names, decode_history, context_block, pending_turn, DELAY
+from dafeiyu.memory.spoken_style import style_context, MARKER as SPOKEN_START, END as SPOKEN_END
 from dafeiyu.memory.self_profile import self_profile, profile_context
 from dafeiyu.memory.exchanges import ExchangeStore, recall_context, forget_spec
-from dafeiyu.memory.grounding import FactStore, evidence_context, ground_response, concise_reaction, search_succeeded, scheduled_job_id
+from dafeiyu.memory.grounding import FactStore, evidence_context, search_succeeded, scheduled_job_id
 from dafeiyu.memory.media import ImageCollection, media_intent
-from dafeiyu.memory.recall_guard import asks_for_recall, history_evidence, known_current_fact, long_term_evidence, own_life_question, related, uncertain_reply
+from dafeiyu.memory.recall_guard import asks_for_recall, history_evidence, known_current_fact, long_term_evidence, own_life_question, related
 from dafeiyu.memory.memory import MemoryCoordinator
+from dafeiyu.dialogue.action_facts import record_action
 from dafeiyu.memory.prompt_blocks import without_block
 try:
     from data.plugins.dafeiyu_runtime.delivery import receipts as confirmed_receipts, reply_text
@@ -52,7 +52,7 @@ RULES = '''
 from dafeiyu.memory.content import content_text
 
 
-@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.10.0')
+@register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.11.0')
 class NaturalChat(Star):
     dialogue_context_protocol = 4
 
@@ -233,18 +233,18 @@ class NaturalChat(Star):
             collection=self.image_collection()
             if intent=='forget':
                 collection.forget(uid,event.unified_msg_origin)
-                await event.send(MessageChain(chain=[Plain('已清空我这边为你保留的图片收藏。')]))
+                record_action(event, 'image_collection', 'cleared')
             else:
                 path=await collection.save(uid,event.unified_msg_origin)
-                if intent=='send':await event.send(MessageChain(chain=[Image.fromFileSystem(str(path))]))
-                else:await event.send(MessageChain(chain=[Plain('这张已经存好啦，可以把原图发回给你。')]))
+                if intent=='send':
+                    await event.send(MessageChain(chain=[Image.fromFileSystem(str(path))]))
+                record_action(event, 'image_collection', 'sent' if intent=='send' else 'saved')
         except ValueError as error:
-            await event.send(MessageChain(chain=[Plain(str(error))]))
+            record_action(event, 'image_collection', 'rejected', reason=str(error))
         except Exception as error:
             logger.warning('Explicit image operation unconfirmed: %s',type(error).__name__)
             # Sending may have succeeded; never automatically repeat the image.
-            await event.send(MessageChain(chain=[Plain('这次图片处理或发送没有确认完成，我先不重复发送。')]))
-        event.stop_event()
+            record_action(event, 'image_collection', 'unconfirmed', error_type=type(error).__name__)
 
     @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE, priority=sys.maxsize+80)
     async def interaction_controls(self, event):
@@ -271,8 +271,7 @@ class NaturalChat(Star):
         if semantic:
             learned=await asyncio.to_thread(controller.learning_store().current,uid,event.unified_msg_origin,False)
             if learned:message+='\n语义学习的情境偏好：\n'+'\n'.join(r['summary']+'；适用条件：'+(r['condition'] or '未限定') for r in learned[:12])
-        await event.send(MessageChain(chain=[Plain(message)]))
-        event.stop_event()
+        record_action(event, 'interaction_preferences', 'reset' if text.endswith('恢复默认') else 'read', settings=message)
 
     @filter.on_llm_request(priority=-1000001)
     async def natural_delivery_context(self, event, req):
@@ -400,54 +399,17 @@ class NaturalChat(Star):
             style+='\n【这轮收尾】直接接住本人刚说的话后收住，不再追问或重复确认；只有执行请求确实缺少必要信息时才澄清。'
         req.system_prompt=base+'\n'+SPOKEN_START+style+'\n'+SPOKEN_END
 
-    @filter.on_llm_response(priority=sys.maxsize-101)
     async def conversational_response(self,event,response):
-        if event.get_extra('dafeiyu_dialogue_v2',False):return
-        if not event.get_extra('jingjing_style_prepared',False) or getattr(response,'tools_call_name',None):return
-        text=str(getattr(response,'completion_text','') or '')
-        if text:
-            human=self.input_snapshot(event)['text']
-            text=conversational_text(text,human)
-            text=close_idle_questions(text,human,event.get_extra('jingjing_any_tool',False))
-            if not event.get_extra('jingjing_any_tool',False):
-                text=close_short_ack(text,human,event.get_extra('jingjing_assistant_tail',''))
-            text=concise_reaction(text,human,event.get_extra('jingjing_any_tool',False))
-            response.completion_text=text
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
-    @filter.on_decorating_result(priority=sys.maxsize-71)
     async def conversational_result(self,event):
-        if event.get_extra('dafeiyu_dialogue_v2',False):return
-        if not event.get_extra('jingjing_style_prepared',False):return
-        result=event.get_result()
-        if not result or not (result.is_llm_result() or event.get_extra('dafeiyu_sing_outcome',None)):return
-        for part in result.chain:
-            if isinstance(part,Plain):part.text=conversational_text(part.text,self.input_snapshot(event)['text'])
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
-    @filter.on_llm_response(priority=sys.maxsize-100)
     async def ground_current_facts(self,event,response):
-        if event.get_extra('dafeiyu_generation_contract',False):return
-        if not event.get_extra('jingjing_style_prepared',False):return
-        text=str(getattr(response,'completion_text','') or '')
-        if not text:return
-        if (event.get_extra('jingjing_unsupported_recall',False) and not getattr(response,'tools_call_name',None)
-                and not event.get_extra('jingjing_any_tool',False)):
-            response.completion_text=uncertain_reply(event.get_sender_id(),getattr(event.message_obj,'message_id',''))
-            return
-        corrected=grounded_correction(text,self.input_snapshot(event)['text'],
-            event.get_extra('jingjing_confirmed_names',{}),str(event.get_sender_id()),
-            event.get_extra('jingjing_negative_delivery_question',''),event.get_extra('jingjing_actual_chat',[]))
-        reminder_verified=event.get_extra('jingjing_reminder_verified',False)
-        proofs=event.get_extra('jingjing_reminder_times',None)
-        if reminder_verified and proofs is not None:
-            claimed=re.findall(r'(?<!\d)([0-2]?\d:[0-5]\d)',corrected)
-            if not claimed and re.search(r'提醒|喊我|叫我',self.input_snapshot(event)['text']):
-                claimed=re.findall(r'(?<!\d)([0-2]?\d:[0-5]\d)',self.input_snapshot(event)['text'])
-            reminder_verified=all(value.zfill(5) in proofs for value in claimed)
-        corrected=ground_response(corrected,self.input_snapshot(event)['text'],
-            event.get_extra('jingjing_current_facts',{}),event.get_extra('jingjing_search_verified',False),
-            reminder_verified,bool(re.search(r'小屋故事|想象的小屋',event.get_extra('jingjing_assistant_tail',''))))
-        if corrected!=text:
-            response.completion_text='' if getattr(response,'tools_call_name',None) else corrected
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
     @filter.on_agent_done(priority=-1000001)
     async def save_grounded_reply(self,event,run_context,response):
@@ -651,38 +613,13 @@ class NaturalChat(Star):
     async def note_tool(self,event,tool,tool_args):
         event.set_extra('jingjing_any_tool',True)
 
-    @filter.on_decorating_result(priority=sys.maxsize-31)
     async def shape_short_reaction(self,event):
-        if event.get_extra('dafeiyu_dialogue_v2',False):return
-        try:self.actor(event)
-        except ValueError:return
-        source=str(event.message_str or '').strip()
-        if not re.fullmatch(r'哈{2,12}[！!。，,\s]*',source) or event.get_extra('jingjing_any_tool',False):return
-        result=event.get_result()
-        if not result or not result.is_llm_result():return
-        text=' '.join(p.text for p in result.chain if isinstance(p,Plain))
-        if re.search(r'[?？]|笑什么|怎么啦|发生什么|说给我|说来听|什么好笑|分享.*(?:我|下)|我.*好奇',text):
-            identity=str(event.get_sender_id())+str(getattr(event.message_obj,'message_id',''))
-            choices=('嘿嘿，一起乐。','好嘛，被你带着乐了。','哈哈，接住这份快乐。','嘿嘿。')
-            choice=choices[int(hashlib.sha256(identity.encode()).hexdigest()[:8],16)%len(choices)]
-            result.chain=[Plain(choice)]+[p for p in result.chain if not isinstance(p,Plain)]
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
-    @filter.on_decorating_result(priority=sys.maxsize-30)
     async def prevent_unconfirmed_memory_claim(self,event):
-        if event.get_extra('dafeiyu_generation_valid',False):return
-        try:self.actor(event)
-        except ValueError:return
-        source=str(event.message_str or '')
-        if not re.search(r'记住|记下|记得|保存',source):return
-        if event.get_extra('jingjing_episode_saved',[]) or event.get_extra('jingjing_fact_write_confirmed',False) or event.get_extra('jingjing_rapport_changes',None):return
-        result=event.get_result()
-        if not result or not result.is_llm_result():return
-        pattern=r'(?:已经|已|都)?(?:帮你|给你|替你)?(?:记(?:住|下|好|牢)(?:了|啦|咯)|保存好了|存好了|会记住)(?:[，。！!、\s]*)'
-        for part in result.chain:
-            if isinstance(part,Plain):
-                match=re.search(pattern,part.text)
-                if match and not re.search(r'没|未|不',part.text[max(0,match.start()-3):match.start()]):
-                    part.text=part.text[:match.start()]+'这件事还没有确认保存好。'+part.text[match.end():]
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
     @filter.llm_tool(name='jingjing_episodes')
     async def episodes(self,event,action:str,topic:str='',evidence:str='',kind:str='event',phase:str='ongoing',episode_id:int=0,event_day:str='',query:str='',owner_qq:str='')->str:

@@ -63,13 +63,13 @@ class IntentStore:
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             prior=db.execute('SELECT * FROM attempts WHERE request_key=?',(key,)).fetchone()
-            if prior:return json.loads(prior['result']) if prior['result'] else {'status':'in_flight','reply':'这条请求已经在生成，先等这一条结果。'}
+            if prior:return json.loads(prior['result']) if prior['result'] else {'status':'in_flight','reply':'相同请求已占用；未重复执行。'}
             active=db.execute("SELECT 1 FROM attempts WHERE status='generating' AND at>?",(now-180,)).fetchone()
-            if active:return {'status':'busy','reply':'现在还有一首正在生成，先等它完成。'}
+            if active:return {'status':'busy','reply':'生成通道占用；本次未开始生成。'}
             recent=db.execute('SELECT at FROM attempts WHERE target=? ORDER BY at DESC LIMIT 1',(target,)).fetchone()
             if recent and now-recent['at']<cooldown:
                 seconds=max(1,int(cooldown-(now-recent['at'])+0.999))
-                return {'status':'cooldown','reply':'刚唱过一段，约 '+str(seconds)+' 秒后可以再唱。'}
+                return {'status':'cooldown','reply':'冷却剩余 '+str(seconds)+' 秒；本次未开始生成。'}
             db.execute('INSERT INTO attempts VALUES (?,?,?,?,?)',(key,target,now,'generating',None))
             db.execute('DELETE FROM attempts WHERE at<?',(now-7*86400,))
         return None

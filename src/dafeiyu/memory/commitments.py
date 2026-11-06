@@ -9,30 +9,5 @@ IDEA = re.compile(r'^(?:我)?(?:想|打算|希望|可以考虑)|^(?:等你|你.{
 
 
 def ground_commitments(text, human, notification_ok=False):
-    if '```' in text or re.search(r'翻译|逐字|原文|摘录|复述|台词|写.{0,8}(?:小说|故事|对白)|假如|假设', human):
-        return text
-    if re.search(r'在(?:我的|我想象的)?小屋故事里|在我想象的(?:小屋|故事)里', text):
-        return text
-    prefix = '\x00'
-    while prefix in text:prefix += '\x00'
-    quotes = []
-    def protect(match):
-        quotes.append(match[0]);return prefix + str(len(quotes)-1) + prefix
-    masked = QUOTED.sub(protect, text)
-    pieces = re.split(r'(?<=[，,。！？!\n])', masked)
-    kept, removed, art = [], False, False
-    for piece in pieces:
-        clause = piece.strip()
-        if IDEA.search(clause):
-            kept.append(piece);continue
-        artwork = bool(ART_DELIVERY.search(clause) or WORKING.search(clause))
-        if artwork or not notification_ok and LATER.search(clause):
-            removed = True;art = art or artwork
-        else:
-            kept.append(piece)
-    if not removed:return text
-    result = ''.join(kept).strip().rstrip('，,')
-    for i, quote in enumerate(quotes):result = result.replace(prefix + str(i) + prefix, quote)
-    if not result or re.fullmatch(r'(?:嗯|好|好的|好呀|那就这么定了)[。！!\s]*', result):
-        return '这幅作品还只是个想法，还没实际开始。' if art else '后续还没有实际安排好。'
-    return result
+    """Compatibility entry point; wording belongs to the primary model."""
+    return text

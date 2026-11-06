@@ -390,10 +390,11 @@ class SingleGeneration(unittest.IsolatedAsyncioTestCase):
         self.context.get_using_provider_async.return_value=NS(text_chat=call)
         response=NS(completion_text=envelope('哦，取消了。',[update],
             claims=[dict(kind='memory',span='没有出现在正文的错误片段',evidence_ids=[eid])]),tools_call_name=[])
-        await self.plugin.review_response(e,response);self.assertEqual(call.await_count,2)
+        await self.plugin.review_response(e,response);self.assertEqual(call.await_count,1)
         self.assertEqual(response.completion_text,'哦，取消了。')
         e.set_extra('dafeiyu_confirmed_delivery',[dict(kind='reply',text=response.completion_text)])
         await self.plugin.commit_learning(e)
+        self.assertEqual(call.await_count,2)
         self.assertEqual(store.current(OWNER,ORIGIN)[0]['status'],'cancelled')
         # Human observations remain valid if a later wording review fails; an
         # actual fallback delivery, not an unsent draft, is still required.

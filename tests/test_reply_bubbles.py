@@ -128,12 +128,13 @@ class BriefReview(unittest.IsolatedAsyncioTestCase):
     run_hooks=f.NativeHooks.run_hooks
     ready=base.SingleGeneration.ready
 
-    async def test_multi_paragraph_casual_reply_below_old_threshold_is_still_reviewed(self):
+    async def test_multiple_paragraphs_alone_do_not_trigger_rewriting(self):
         event,_=await self.ready('在吗？')
         self.plugin.reviewed=AsyncMock(return_value=NS(segments=('在呀。',)))
-        response=NS(completion_text=base.envelope('在呀。\n\n旧手帐那页还空着，我又想起了那张画。'),tools_call_name=[])
+        body='在呀。\n\n突然觉得，发呆也可以有点意思。'
+        response=NS(completion_text=base.envelope(body),tools_call_name=[])
         await self.plugin.review_response(event,response)
-        self.plugin.reviewed.assert_awaited_once();self.assertEqual(response.completion_text,'在呀。')
+        self.plugin.reviewed.assert_not_awaited();self.assertEqual(response.completion_text,body)
 
 
 if __name__=='__main__':unittest.main()

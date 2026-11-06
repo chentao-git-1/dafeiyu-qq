@@ -35,7 +35,7 @@ def social_can_notify(uid):
         return True
 
 
-@register('dafeiyu_message_routes', 'Local', 'QQ目标映射与有据可查的私聊状态', '0.2.0')
+@register('dafeiyu_message_routes', 'Local', 'QQ目标映射与有据可查的私聊状态', '0.2.1')
 class MessageRoutes(Star):
     def __init__(self, context):
         super().__init__(context)
@@ -56,7 +56,7 @@ class MessageRoutes(Star):
         groups=await self.directory(event)
         return json_response({'groups':groups,'contacts':contacts,'last_request':self.audit,
             "private_history":dict(self.private_history.stats, enabled=True, owner_private_only=True,
-                source="NapCat.get_friend_msg_history",version="0.2.0")})
+                source="NapCat.get_friend_msg_history",version="0.2.1")})
 
     @staticmethod
     def cross_voice_request(text, groups, contexts, contacts=None):
@@ -281,42 +281,13 @@ class MessageRoutes(Star):
         event.set_extra("dafeiyu_private_history", proofs)
         return json.dumps(report, ensure_ascii=False)
 
-    @filter.on_decorating_result(priority=sys.maxsize-40)
     async def ground_private_status(self, event):
-        if (not self.is_owner_private_message(event) or event.is_stopped()
-                or event.get_extra('dafeiyu_generation_contract',False)):
-            return
-        result = event.get_result()
-        if not result or not result.is_llm_result():
-            return
-        text = " ".join(part.text for part in result.chain if isinstance(part, Plain))
-        contacts = event.get_extra("dafeiyu_history_contacts", None)
-        if contacts is None:
-            contacts = await self.private_directory(event)
-        platform = self.context.get_platform("aiocqhttp")
-        if platform is None or platform.meta().id != PLATFORM:
-            return
-        corrected = await self.private_history.correct(event, text, contacts, platform.bot)
-        if corrected:
-            result.chain = [Plain(corrected)]
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
-    @filter.on_using_llm_tool(priority=sys.maxsize-20)
     async def ground_owner_tool_message(self, event, tool, arguments):
-        if (not self.is_owner_private_message(event) or getattr(tool,"name","") != "send_message_to_user"
-                or not isinstance(arguments,dict) or arguments.get("session") != event.unified_msg_origin
-                or event.get_extra('dafeiyu_generation_contract',False)):
-            return
-        messages = arguments.get("messages", [])
-        text = text_content(messages)
-        contacts = event.get_extra("dafeiyu_history_contacts", None)
-        if contacts is None:
-            contacts = await self.private_directory(event)
-        platform = self.context.get_platform("aiocqhttp")
-        if platform is None or platform.meta().id != PLATFORM:
-            return
-        corrected = await self.private_history.correct(event, text, contacts, platform.bot)
-        if corrected:
-            arguments["messages"] = [{"type":"plain","text":corrected}]
+        """Retired text override; delivery authorization stays in the routing guard."""
+        return
 
     @filter.on_using_llm_tool(priority=sys.maxsize-10)
     async def normalize_group_target(self, event, tool, arguments):

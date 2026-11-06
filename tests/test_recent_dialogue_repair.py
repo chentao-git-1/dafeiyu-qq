@@ -37,7 +37,7 @@ class RecentDialogueRepair(unittest.IsolatedAsyncioTestCase):
         await routes.ground_owner_tool_message(e,NS(name='send_message_to_user'),args)
         routes.private_history.correct.assert_not_awaited();self.assertEqual(args['messages'][0]['text'],'保留语义回复')
         e.set_extra('dafeiyu_generation_contract',False);await routes.ground_private_status(e)
-        routes.private_history.correct.assert_awaited_once();self.assertEqual(result.chain[0].text,'旧私聊状态')
+        routes.private_history.correct.assert_not_awaited();self.assertEqual(result.chain[0].text,'那条空间评论的回复状态还需要核实。')
 
     async def test_only_complete_paired_native_tool_history_becomes_attributed_past_evidence(self):
         native=tool_history();rows=historical_tools(native)

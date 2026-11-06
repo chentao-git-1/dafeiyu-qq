@@ -1,4 +1,4 @@
-"""Read and monitor the existing DeepSeek account without using a chat model."""
+"""Read account balances; compose each authorized notice once without reviewers."""
 import asyncio
 import contextlib
 import json
@@ -18,8 +18,10 @@ from dafeiyu.balance.reply_context import MARKER, notice_records, latest_notice,
 
 from dafeiyu.balance.watch import (
     BalanceWatch, INTERVAL, OWNER, BOT, HELP_THRESHOLD, balance_snapshot,
-    notice_text,
+    notice_facts,
 )
+from dafeiyu.dialogue.action_facts import record_action
+from data.plugins.dafeiyu_runtime.natural_output import notification_text
 
 ENDPOINT = 'https://api.deepseek.com/user/balance'
 QUERY = re.compile(
@@ -263,8 +265,17 @@ class DafeiyuBalance(Star):
                         continue
                 if not self.watch.reserve(action):
                     continue
-                sent_text=notice_text(action,format(amount,'f'))
                 try:
+                    session='dafeiyu-qq:FriendMessage:'+action['qq']
+                    first_attempt=self.watch.state['cycle']['notices'][action['key']]['attempts']==1
+                    sent_text=await notification_text(self.context, session, 'account_balance',
+                        notice_facts(action,format(amount,'f')), allow_model=bool(available and amount>0 and first_attempt))
+                    current=self.context.get_config(session)
+                    if (self.stopping or not self.private_allowed(action['qq'],current)
+                            or action['kind']=='help' and (action['qq'] in store().bots()
+                                or not social_can_notify(action['qq'],self.watch.clock()))):
+                        self.watch.complete(action,'skipped')
+                        continue
                     # Account notifications are independent of model reply quotas.
                     reply = await asyncio.wait_for(bot.send_private_msg(
                         user_id=int(action['qq']),
@@ -306,11 +317,11 @@ class DafeiyuBalance(Star):
 
     async def status(self):
         return json_response(dict(
-            self.watch.status(), version='0.3.2', monitored_account='deepseek',
+            self.watch.status(), version='0.3.3', monitored_account='deepseek',
             loop_running=self.task is not None and not self.task.done(),
             next_check_at=self.next_check_at, owner_qq=OWNER,
             helper_count_per_cycle=2, helper_hours='09:00–21:00 Asia/Shanghai',
-            uses_chat_model=False, uses_tts=False,
+            uses_chat_model=True, notice_model_calls_max=1, uses_tts=False,
             confirmed_notice_context=True,
         ))
 
@@ -364,36 +375,25 @@ class DafeiyuBalance(Star):
         if intent == 'pause':
             async with self.lock:
                 paused = self.watch.pause()
-            reply = ('好，爸爸先忙着充，鲸鲸两小时内不催，也不去喊别人～'
-                     if paused else '现在没有低余额提醒，鲸鲸先不催饭～')
+            record_action(event, 'balance_notifications', 'paused' if paused else 'inactive', pause_hours=2 if paused else 0)
         elif intent == 'status':
             info = self.watch.status()
-            balance = info['last_balance_cny']
-            reply = ('DeepSeek 可用余额：{} 元。'.format(balance) if balance is not None else '余额还没检查到。')
-            reply += '低于 1.00 元提醒爸爸，低于 0.70 元进入亲友提醒。'
-            if cycle and cycle['status'] == 'low':
-                if cycle.get('pause_until', 0) > time.time():
-                    reply += '爸爸正在处理，催促已暂停。'
-                else:
-                    reply += '当前处于低余额提醒中。'
-            else:
-                reply += '当前没有催饭提醒。'
-            if info['last_error']:
-                reply += '最近一次检查没成功，显示的是上次查到的余额。'
+            record_action(event, 'balance_notifications', 'read', balance_cny=info['last_balance_cny'],
+                last_error=info['last_error'], last_checked_at=info['last_checked_at'],
+                owner_threshold_cny='1.00', helper_threshold_cny='0.70',
+                pause_until=cycle.get('pause_until') if cycle else None, active=bool(cycle and cycle['status']=='low'))
         else:
             if intent == 'resume':
                 async with self.lock:
                     self.watch.resume()
             outcome = await self.run_once()
             if outcome is None:
-                reply = '这次余额没查到，鲸鲸先不把它当成没钱或已经到账，稍后再查。'
+                record_action(event, 'balance_check', 'failed')
             elif outcome['owner_notified']:
                 event.stop_event()
                 return
             else:
-                reply = '刚查过，DeepSeek 可用余额 {} 元，提醒已按实际余额更新。'.format(outcome['amount'])
-        await event.send(MessageChain(chain=[Plain(reply)]))
-        event.stop_event()
+                record_action(event, 'balance_check', 'completed', balance_cny=outcome['amount'], available=outcome['available'])
 
     def _allowed(self, event):
         if event.get_platform_name() != 'aiocqhttp':

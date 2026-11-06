@@ -66,11 +66,11 @@ class FakeQQ:
 class ReplyOrder(unittest.IsolatedAsyncioTestCase):
     def test_old_reply_is_not_a_reply_after_new_send(self):
         value = h.latest_reply_text(report(), '叔叔刚才那条回了吗？')
-        self.assertIn('发出后', value);self.assertIn('还没查到', value);self.assertNotIn('纸船', value)
+        self.assertEqual(json.loads(value)['position'],'no_later_message_in_window')
 
     def test_equal_second_remains_uncertain_and_later_incoming_is_an_arrival(self):
-        self.assertIn('不能确认', h.latest_reply_text(report(NOW, NOW), '叔叔回了吗'))
-        self.assertIn('发出以后', h.latest_reply_text(report(NOW, NOW-60), '叔叔回了吗'))
+        self.assertEqual(json.loads(h.latest_reply_text(report(NOW,NOW),'叔叔回了吗'))['position'],'order_uncertain')
+        self.assertEqual(json.loads(h.latest_reply_text(report(NOW,NOW-60),'叔叔回了吗'))['position'],'later_message')
 
     def test_explicit_past_question_and_missing_sent_anchor_are_not_recast(self):
         self.assertIsNone(h.latest_reply_text(report(), '以前叔叔回过什么'))
@@ -83,7 +83,7 @@ class ReplyOrder(unittest.IsolatedAsyncioTestCase):
             e.set_extra('dafeiyu_private_history', {FRIEND: report()})
             bot = NS(call_action=AsyncMock())
             actual = await h.PrivateHistory().correct(e, candidate, contacts, bot)
-            self.assertIn('还没查到', actual);self.assertNotIn('旧纸船', actual);bot.call_action.assert_not_awaited()
+            self.assertIsNone(actual);bot.call_action.assert_not_awaited()
 
 
 class Wording(unittest.TestCase):
@@ -99,10 +99,10 @@ class Wording(unittest.TestCase):
         self.assertEqual(s.close_idle_questions(candidate, '又输了三把'), candidate)
         self.assertIn('不顺手指导', s.style_context('食堂买饭吃'))
 
-    def test_unscheduled_artwork_and_later_delivery_are_not_promised(self):
+    def test_legacy_commitment_guard_never_substitutes_a_template(self):
         for text in ('雪压着的小叶子挺好。画完先给你看。', '嗯，那你先忙，我慢慢画。', '稍后我会通知你。', '好。到时候提醒你。画完先给你看。'):
             actual = g.ground_response(text, '好的')
-            self.assertNotIn('画完先给你看', actual);self.assertNotIn('我慢慢画', actual);self.assertNotIn('稍后我会通知', actual)
+            self.assertEqual(actual,text)
 
     def test_ideas_quotes_fiction_user_work_and_verified_notification_survive(self):
         for text, human in [('我想画一片叶子。', '你想画什么'), ('她说“画完先给你看”。', '接着聊'),
@@ -261,7 +261,8 @@ class Outbound(unittest.IsolatedAsyncioTestCase):
         payload['dafeiyu_target'] = OTHER;e.set_extra('jingjing_reminder_verified', False)
         await natural.verify_execution(e, NS(name='dafeiyu_tasks'), {'action': 'create'}, result)
         reply.completion_text = '稍后我会通知你。';await natural.ground_current_facts(e, reply)
-        self.assertNotIn('稍后我会通知你', reply.completion_text)
+        self.assertFalse(e.get_extra('jingjing_reminder_verified'))
+        self.assertEqual(reply.completion_text,'稍后我会通知你。')
 
     async def test_runtime_lock_wait_and_numeric_prompt_measurements_survive_reload(self):
         with patch.object(r, 'get_astrbot_data_path', return_value=str(self.root)):

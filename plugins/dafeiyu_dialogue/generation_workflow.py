@@ -18,6 +18,8 @@ class GenerationWorkflow:
         if event.get_extra('dafeiyu_generation_final_text',None)==response.completion_text:return
         event.set_extra('dafeiyu_generation_valid',False)
         event.set_extra('dafeiyu_learning_valid',False)
+        event.set_extra('dafeiyu_learning_needs_check',False)
+        event.set_extra('dafeiyu_learning_check_packet',None)
         stage='format'
         try:
             generated = parse_generation(response.completion_text,recover_claims=True,recover_metadata=True)
@@ -72,7 +74,7 @@ class GenerationWorkflow:
                 if candidates or privacy['action']!='none':
                     recover=True;event.get_extra('dafeiyu_dialogue_evidence',{})['learning_proposals_rejected']=True
                 privacy=dict(action='none',evidence='',ids=[],subject='speaker',modality='direct');items=[];candidates=[]
-            if candidates or privacy['action']!='none':
+            if privacy['action']!='none' and self.model_verification_enabled():
                 from dafeiyu.dialogue.learning_check import check
                 from dafeiyu.memory.content import content_text
                 old_privacy,old_items=privacy,candidates
@@ -91,6 +93,13 @@ class GenerationWorkflow:
                     if privacy!=old_privacy:event.get_extra('dafeiyu_dialogue_evidence',{})['learning_control_rejected']=True
                 if event.get_extra('dafeiyu_context_epoch',None)!=await asyncio.to_thread(self.learning_store().context_epoch):
                     raise ValueError('Privacy changed during source verification')
+            elif items and self.model_verification_enabled():
+                from dafeiyu.memory.content import content_text
+                event.get_extra('dafeiyu_dialogue_evidence',{})['learning_pending_confirmation']=True
+                event.set_extra('dafeiyu_learning_needs_check',True)
+                event.set_extra('dafeiyu_learning_check_packet',dict(
+                    history=[content_text(m.get('content')) for m in event.get_extra('dafeiyu_dialogue_history',[])
+                        if m.get('role')=='user'][-2:],records=copy.deepcopy(materials.get('learned_context',[]))))
             pending = event.get_extra('dafeiyu_learning_source', None)
             if pending:
                 stage='privacy'
@@ -107,13 +116,12 @@ class GenerationWorkflow:
                 self.review_stats['privacy_removed'] += removed
             # Check factual claims and history-primed casual replies before delivery.
             stage='review'
-            if recover and self.config.get('response_review','enforce')!='enforce':
+            if self.model_verification_enabled() and recover and self.config.get('response_review','enforce')!='enforce':
                 raise ValueError('Metadata recovery requires enforced semantic review')
             historical_social=bool(materials.get('self_details_on_demand')
                 and set(generated.focus)&{'social','feedback'} and event.get_extra('dafeiyu_dialogue_history',[]))
-            if (recover or 'self' in generated.focus or 'action' in generated.focus or len(generated.reply)>80
+            if self.model_verification_enabled() and (recover or 'self' in generated.focus or 'action' in generated.focus
                     or historical_social
-                    or '\n\n' in generated.reply
                     or generated.claims or tool_rows
                     or materials.get('historical_tool_results')):
                 checked = await self.reviewed(event, [generated.reply], event.unified_msg_origin)
@@ -135,12 +143,12 @@ class GenerationWorkflow:
             self.review_stats['contract_turns'] += 1
             if sent:
                 await self.natural().remember_delivered_reply(event)
-                await self.commit_learning(event)
+                await self.enqueue_learning(event)
         except asyncio.CancelledError:
             response.completion_text = UNAVAILABLE
             raise
         except Exception as error:
-            if (stage=='format' and not event.get_extra('dafeiyu_recovery_attempts',0)
+            if (self.model_verification_enabled() and stage=='format' and not event.get_extra('dafeiyu_recovery_attempts',0)
                     and not event.get_extra('dafeiyu_confirmed_delivery',[])
                     and not (event.get_extra('dafeiyu_reply_delivery',{}) or {}).get('expired')):
                 event.set_extra('dafeiyu_recovery_attempts',1)

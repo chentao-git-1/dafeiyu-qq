@@ -168,7 +168,7 @@ class Native(unittest.IsolatedAsyncioTestCase):
     async def test_short_wake_up_delivery_closes_only_idle_question_tail(self):
         with patch.object(n,'get_astrbot_data_path',return_value=self.tmp.name):
             natural=n.NaturalChat(self.context)
-            for human,tool_used,expected in [('我醒了',False,'醒啦。'),('我醒了',True,'醒啦，脑袋还迷迷糊糊的吗？'),('我醒了，能帮我查提醒吗',False,'醒啦，脑袋还迷迷糊糊的吗？')]:
+            for human,tool_used,expected in [('我醒了',False,'醒啦，脑袋还迷迷糊糊的吗？'),('我醒了',True,'醒啦，脑袋还迷迷糊糊的吗？'),('我醒了，能帮我查提醒吗',False,'醒啦，脑袋还迷迷糊糊的吗？')]:
                 e=event(human);e.set_extra('jingjing_style_prepared',True);e.set_extra('jingjing_assistant_tail','要睡一会儿吗？\n睡踏实了吗？');e.set_extra('jingjing_any_tool',tool_used)
                 response=NS(completion_text='醒啦，脑袋还迷迷糊糊的吗？',tools_call_name=[])
                 await natural.conversational_response(e,response);self.assertEqual(response.completion_text,expected)
@@ -219,12 +219,15 @@ class Native(unittest.IsolatedAsyncioTestCase):
         e.send=send
         with patch.object(d,'generate',new=AsyncMock(return_value=(PNG,'.png',(1,1)))) as generate:
             result=await obj._draw(e,'一只蓝鲸')
-        self.assertIn('图片已生成',result);self.assertIn('发送没确认',result);self.assertEqual(len(attempts),1);self.assertEqual(generate.await_count,1)
+        self.assertIn('图片已生成',result);self.assertIn('发送未确认',result);self.assertEqual(len(attempts),1);self.assertEqual(generate.await_count,1)
 
-    async def test_failed_progress_has_not_started_generation(self):
+    async def test_first_send_is_the_generated_image_and_failure_is_not_progress(self):
         obj=self.drawing();e=event('画一只蓝鲸');e.send=AsyncMock(side_effect=RuntimeError('synthetic-send'))
-        with patch.object(d,'generate',new=AsyncMock()) as generate:result=await obj._draw(e,'一只蓝鲸')
-        self.assertIn('画图还没开始',result);generate.assert_not_awaited()
+        with patch.object(d,'generate',new=AsyncMock(return_value=(PNG,'.png',(1,1)))) as generate:
+            result=await obj._draw(e,'一只蓝鲸')
+        self.assertIn('图片已生成',result);self.assertIn('发送未确认',result)
+        generate.assert_awaited_once();e.send.assert_awaited_once()
+        self.assertTrue(any(isinstance(part,Image) for part in e.send.await_args.args[0].chain))
 
     async def test_real_http_client_keeps_429_metadata_without_network(self):
         drawing=importlib.import_module('data.plugins.astrbot_plugin_dafeiyu_draw.drawing')

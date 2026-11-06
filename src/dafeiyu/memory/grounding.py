@@ -145,45 +145,10 @@ def contradictory_transfer(text):
 
 
 def ground_response(text, human, facts=None, search_ok=False, reminder_ok=False, story_known=False):
-    if FICTION.search(human) or '```' in text:return text
-    facts = facts or {}
-    if re.search(r'我.{0,6}(?:在哪|哪里|哪站|哪儿).{0,4}(?:下|出站)|我.{0,5}(?:在|是).{1,12}下(?:车)?(?:吗|[?？])',human):
-        if facts.get('destination'):
-            return '你确认的是在'+facts['destination']+'下车，列车终点和你的下车站要分开看。'
-        if facts.get('terminus'):
-            return '列车终点是'+facts['terminus']+'，但你票上的下车站我还没确认，不能直接当成同一站。'
-    if contradictory_transfer(text):
-        return '这组到站和换乘时间前后对不上，需要重新核实，先别按它安排换乘。'
-    live_query=bool(re.search(r'实时|最新|车次|列车|时刻|换乘|发车|票价|汇率|天气|新闻|官网|联网|网上|搜索|搜一下|搜一搜|检索|来源|网页|资料',human+text))
-    if live_query and not search_ok and re.search(r'(?:^|[。！\n])\s*(?:好[，,])?(?:我)?(?:刚(?:刚)?|已经)?(?:查到了|查完了|查过了|搜到了|查了)|几个来源都一致|这时刻表是查来的',text):
-        known = '你确认在'+facts['destination']+'下车；' if facts.get('destination') else ''
-        return known+'这次还没拿到可核实的查询结果，我先不报未经确认的车次和时刻。' if re.search(r'车次|时刻|换乘|下车|发车',human+text) else '这次还没拿到可靠的查询结果，不能把猜测说成已经查证。'
-    timed_request=bool(re.search(r'提醒|喊我|叫我',human))
-    confirms=bool(REMINDER_CONFIRM.search(text) or timed_request and re.search(r'设好了|已设好|已经设置|已经安排|安排好了',text))
-    if not reminder_ok and (PROMISE.search(text) or confirms):
-        pieces = re.split(r'(?<=[。！？\n])',text)
-        pieces = [p for p in pieces if not PROMISE.search(p) and not REMINDER_CONFIRM.search(p) and not (timed_request and re.search(r'设好了|已设好|已经设置|已经安排|安排好了',p))]
-        text = ''.join(pieces).strip()+'\n这条提醒还没有实际设好。' if timed_request or confirms else ''.join(pieces).strip() or '好。'
-    text = re.sub(r'[^。！？\n]*(?:下车透口气|下车散步|下车溜达)[^。！？\n]*[。！？]?', '先按票面和车站提示安排，不为透气临时下车。',text)
-    if proactive_question(human):
-        text = re.sub(r'[^。！？\n]*(?:这条|这次|刚才).{0,6}回(?:复)?得?晚了[^。！？\n]*[。！？]?', '',text).strip()
-    text=re.sub(r'我跟你这边的事我都记得|我(?:永远|全都|全部)(?:会)?记得(?:你(?:说过)?的)?(?:每句话|所有事|一切)?','我会记住一些重要的事，细节也可能会漏',text)
-    if (not story_known and not re.search(r'故事|想象|画里|插画|设定',text)
-            and re.search(r'盆沿.{0,8}(?:压|拿)|(?:铅笔|叶子).{0,6}(?:叶脉|压平)|我(?:刚|正|正在|刚才)?给小芽浇水',text)):
-        text='在我的小屋故事里，'+text
-    return ground_commitments(text,human,notification_ok=reminder_ok) or '在呢。'
+    """Compatibility entry point; wording belongs to the primary model."""
+    return text
 
 
 def concise_reaction(text, human, had_tool=False):
-    if had_tool or FICTION.search(human) or '```' in text:return text
-    if len(human)>32 or re.search(r'帮我|请你|提醒|怎么|为什么|能不能|[?？]',human):return text
-    if not (SHORT.fullmatch(human.strip()) or SHORT_PRAISE.fullmatch(human.strip()) or PRAISE.search(human)):
-        return text
-    if re.fullmatch(r'喵+[。！!\s]*',human) and re.search(r'不是猫|可是鲸鱼',text):
-        return '喵——鲸鱼也学一声。'
-    pieces = [p.strip() for p in re.split(r'(?<=[。！？\n])',text) if p.strip()]
-    bad = re.compile(r'刷手机|洗把脸|先打两把|先别|记得跟我|我就安心|哪道题|下一页|这页手帐|别叹气|我知道你|你肯定|你一定')
-    kept = [p for p in pieces if not bad.search(p) and not re.search(r'[?？]',p)]
-    if not kept:
-        return '晚安，睡个好觉。' if '晚安' in human or '睡了' in human else '嗯，收到啦。'
-    return ''.join(kept[:2])
+    """Compatibility entry point; wording belongs to the primary model."""
+    return text

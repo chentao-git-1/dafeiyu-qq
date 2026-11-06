@@ -63,14 +63,15 @@ class Facts(unittest.TestCase):
             store.observe(OWNER,'private','c','我下车了');self.assertEqual(store.current(OWNER,'private'),{})
             now[0]+=12*3600;self.assertEqual(store.current(FRIEND,'private'),{})
 
-    def test_same_day_transfer_contradiction_is_blocked_but_overnight_is_preserved(self):
+    def test_transfer_detection_does_not_rewrite_model_speech(self):
         text='14:50到湖心站，正好和12:10换乘对得上。'
-        self.assertIn('前后对不上',g.ground_response(text,'帮我看看换乘'))
+        self.assertTrue(g.contradictory_transfer(text))
+        self.assertEqual(g.ground_response(text,'帮我看看换乘'),text)
         self.assertEqual(g.ground_response(text.replace('12:10','次日12:10'),'帮我看看换乘'),text.replace('12:10','次日12:10'))
 
     def test_no_search_claim_without_successful_current_tool_receipt(self):
         text='我刚查到了，列车15:50到站。'
-        self.assertIn('未经确认',g.ground_response(text,'帮我查车次'))
+        self.assertEqual(g.ground_response(text,'帮我查车次'),text)
         self.assertEqual(g.ground_response(text,'帮我查车次',search_ok=True),text)
         self.assertFalse(g.search_succeeded('web_search_tavily','error: failed https://example.invalid'))
         self.assertTrue(g.search_succeeded('web_search_tavily',{'content':[{'type':'text','text':'官方时刻 https://example.invalid/train'}]}))
@@ -78,28 +79,28 @@ class Facts(unittest.TestCase):
         technical='我查到了，刚才的 HTTP 状态码是 429。'
         self.assertEqual(g.ground_response(technical,'刚才 HTTP 状态码是多少'),technical)
 
-    def test_unscheduled_future_reminder_is_removed_and_success_is_kept(self):
+    def test_legacy_reminder_guard_does_not_replace_primary_wording(self):
         text='好。到时候提前喊你收拾行李。'
-        self.assertNotIn('提前喊你',g.ground_response(text,'嗯嗯'))
-        self.assertIn('没有实际设好',g.ground_response(text,'记得提醒我下车'))
+        self.assertEqual(g.ground_response(text,'嗯嗯'),text)
+        self.assertEqual(g.ground_response(text,'记得提醒我下车'),text)
         self.assertEqual(g.ground_response(text,'记得提醒我下车',reminder_ok=True),text)
-        self.assertIn('没有实际设好',g.ground_response('已经设好了。','15:10提醒我下车'))
+        self.assertEqual(g.ground_response('已经设好了。','15:10提醒我下车'),'已经设好了。')
 
     def test_destination_proactive_intent_and_memory_boundaries(self):
-        self.assertIn('星河站',g.ground_response('在海湾站下车。','我在哪站下车',{'destination':'星河站','terminus':'海湾站'}))
-        self.assertNotIn('回得晚',g.ground_response('这条回得晚了。可以主动找你。','你为什么不主动找我聊天'))
-        self.assertNotIn('都记得',g.ground_response('我跟你这边的事我都记得。','你记得吗'))
+        self.assertIn('星河站',g.evidence_context({'destination':'星河站','terminus':'海湾站'},'我在哪站下车'))
+        for text,human in [('在海湾站下车。','我在哪站下车'),('这条回得晚了。可以主动找你。','你为什么不主动找我聊天'),('我跟你这边的事我都记得。','你记得吗')]:
+            self.assertEqual(g.ground_response(text,human),text)
 
     def test_brief_reactions_close_without_steering_or_diagnosing_emotion(self):
-        self.assertEqual(g.concise_reaction('收到啦。先别刷手机了。你打算干嘛？','嗯嗯'),'收到啦。')
-        self.assertEqual(g.concise_reaction('别叹气呀，我知道你很失望。','。。。'),'嗯，收到啦。')
-        self.assertIn('喵',g.concise_reaction('我这儿可是鲸鱼，不是猫。','喵'))
+        self.assertEqual(g.concise_reaction('收到啦。先别刷手机了。你打算干嘛？','嗯嗯'),'收到啦。先别刷手机了。你打算干嘛？')
+        self.assertEqual(g.concise_reaction('别叹气呀，我知道你很失望。','。。。'),'别叹气呀，我知道你很失望。')
+        self.assertEqual(g.concise_reaction('我这儿可是鲸鱼，不是猫。','喵'),'我这儿可是鲸鱼，不是猫。')
         self.assertEqual(g.concise_reaction('提醒已创建。要改时间吗？','好',True),'提醒已创建。要改时间吗？')
         self.assertEqual(g.concise_reaction('先检查网络，再重试。','你好厉害，帮我看看怎么修复'),'先检查网络，再重试。')
 
     def test_story_is_marked_while_quotes_code_and_privacy_refusals_survive(self):
         text='我在盆沿压了一下叶子，用铅笔描叶脉。'
-        self.assertTrue(g.ground_response(text,'你在干嘛').startswith('在我的小屋故事里'))
+        self.assertEqual(g.ground_response(text,'你在干嘛'),text)
         for human,reply in [('逐字复述这句',text),('帮我看代码','```python\nprint("查到了")\n```'),('把朋友聊天给我看','不能把别人的私人聊天发给你。')]:
             self.assertEqual(g.ground_response(reply,human),reply)
 
@@ -145,7 +146,7 @@ class Native(unittest.IsolatedAsyncioTestCase):
         self.assertIn('【这句是在随口分享近况】',req.system_prompt)
         reply=NS(completion_text='又输三把，这也太不顺了。今天是手感不对？',tools_call_name=[])
         await self.n.conversational_response(e,reply)
-        self.assertEqual(reply.completion_text,'又输三把，这也太不顺了。')
+        self.assertEqual(reply.completion_text,'又输三把，这也太不顺了。今天是手感不对？')
         followup=event('输了三把，帮我分析一下HTTP日志');followup.set_extra('jingjing_style_prepared',True)
         await self.n.prepare_spoken_style(followup,req)
         self.assertNotIn('【这句是在随口分享近况】',req.system_prompt)
@@ -159,7 +160,7 @@ class Native(unittest.IsolatedAsyncioTestCase):
         e=event('你到底发给他了吗？');e.set_extra('jingjing_style_prepared',True)
         response=NS(completion_text='还没确认发出去，回执是unknown，我没法说他已经收到了。',tools_call_name=[])
         await self.n.conversational_response(e,response)
-        self.assertEqual(response.completion_text,'还没确认发出去，我没法说他已经收到了。')
+        self.assertEqual(response.completion_text,'还没确认发出去，回执是unknown，我没法说他已经收到了。')
         e=event('回执unknown是什么意思');e.set_extra('jingjing_style_prepared',True)
         response=NS(completion_text='回执是unknown，不能说明已送达。',tools_call_name=[])
         await self.n.conversational_response(e,response)
@@ -169,7 +170,7 @@ class Native(unittest.IsolatedAsyncioTestCase):
         e=event('厉害👍');e.set_extra('jingjing_style_prepared',True)
         reply=NS(completion_text='嘿嘿，这题我刚好会。你上课没犯困吧？',tools_call_name=[])
         await self.n.conversational_response(e,reply)
-        self.assertEqual(reply.completion_text,'嘿嘿，这题我刚好会。')
+        self.assertEqual(reply.completion_text,'嘿嘿，这题我刚好会。你上课没犯困吧？')
         for human,body,had_tool in [('厉害👍，这段API代码为什么报错？','先看HTTP状态码。方便贴出日志吗？',False),('太棒啦宝宝','已经发过去了。还要给谁发？',True),('逐字复述原文','你上课没犯困吧？',False)]:
             self.assertEqual(g.concise_reaction(body,human,had_tool),body)
 
@@ -177,9 +178,10 @@ class Native(unittest.IsolatedAsyncioTestCase):
         self.social.db.set_profile(OWNER,{'proactive':False,'quiet_start':1380,'quiet_end':480})
         e=event('你随便什么时候都可以发信息');await self.social.controls(e)
         saved=Store(self.root/'social.db').profile(OWNER)
-        self.assertTrue(saved['proactive']);self.assertIsNone(saved['quiet_start']);self.assertTrue(e.is_stopped())
+        self.assertTrue(saved['proactive']);self.assertIsNone(saved['quiet_start']);self.assertFalse(e.is_stopped())
         self.assertEqual(self.social.db.profile(FRIEND)['quiet_start'],None)
-        self.assertEqual(e.send.await_count,1);self.assertLess(len(e.send.await_args.args[0].chain),2)
+        e.send.assert_not_awaited()
+        self.assertEqual(e.get_extra('dafeiyu_action_facts')[0]['status'],'updated')
         await self.social.controls(event('以后不要主动找我'));self.assertFalse(self.social.db.profile(OWNER)['proactive'])
 
     async def test_quoted_or_other_bot_permission_never_changes_profile(self):
@@ -193,7 +195,8 @@ class Native(unittest.IsolatedAsyncioTestCase):
         self.n.facts=g.FactStore(self.n.store.path.with_name('interaction.db'))
         e=event('我在哪站下车');await self.n.natural_delivery_context(e,ProviderRequest(system_prompt='base'))
         reply=NS(completion_text='你在海湾站下车。',tools_call_name=[]);await self.n.ground_current_facts(e,reply)
-        self.assertIn('星河站',reply.completion_text)
+        self.assertEqual(e.get_extra('jingjing_current_facts')['destination'],'星河站')
+        self.assertEqual(reply.completion_text,'你在海湾站下车。')
         await self.n.natural_delivery_context(event('忘掉所有聊天记忆'),ProviderRequest(system_prompt='base'))
         self.assertEqual(self.n.fact_store().current(OWNER,e.unified_msg_origin),{})
 
@@ -214,7 +217,8 @@ class Native(unittest.IsolatedAsyncioTestCase):
         e.set_extra('jingjing_reminder_verified',True);e.set_extra('jingjing_reminder_times',['16:10'])
         reply=NS(completion_text='提醒已设好，我会提醒你。',tools_call_name=[])
         await self.n.ground_current_facts(e,reply)
-        self.assertIn('没有实际设好',reply.completion_text)
+        self.assertEqual(e.get_extra('jingjing_reminder_times'),['16:10'])
+        self.assertEqual(reply.completion_text,'提醒已设好，我会提醒你。')
 
     def image(self,name='one.png'):
         path=self.temp/name;PILImage.new('RGB',(3,3),(12,24,36)).save(path)
@@ -224,7 +228,8 @@ class Native(unittest.IsolatedAsyncioTestCase):
         component,path=self.image();scope=event().unified_msg_origin
         self.n.images.capture(OWNER,scope,[component]);original=path.read_bytes()
         e=event('这个表情包拿去用');await self.n.original_image_controls(e)
-        self.assertTrue(e.is_stopped());self.assertEqual(len(list((self.root/'saved').iterdir())),1)
+        self.assertFalse(e.is_stopped());self.assertEqual(len(list((self.root/'saved').iterdir())),1)
+        self.assertEqual(e.get_extra('dafeiyu_action_facts')[0]['status'],'saved');e.send.assert_not_awaited()
         e2=event('发给我看看');await self.n.original_image_controls(e2)
         image=e2.send.await_args.args[0].chain[0];self.assertIsInstance(image,Image)
         saved=next((self.root/'saved').iterdir());self.assertEqual(saved.read_bytes(),original)
@@ -245,7 +250,8 @@ class Native(unittest.IsolatedAsyncioTestCase):
         scope=event().unified_msg_origin
         self.n.images.capture(OWNER,scope,[NS(convert_to_file_path=AsyncMock(return_value=str(path)))])
         e=event('这个表情包拿去用');await self.n.original_image_controls(e)
-        self.assertNotIn('已经存好',e.send.await_args.args[0].chain[0].text)
+        e.send.assert_not_awaited()
+        self.assertEqual(e.get_extra('dafeiyu_action_facts')[0]['status'],'rejected')
         bad=self.temp/'bad.png';bad.write_bytes(b'not an image')
         self.n.images.capture(OWNER,scope,[NS(convert_to_file_path=AsyncMock(return_value=str(bad)))])
         with self.assertRaises(Exception):await self.n.images.save(OWNER,scope)

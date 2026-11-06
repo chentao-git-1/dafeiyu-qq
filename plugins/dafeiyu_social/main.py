@@ -19,6 +19,8 @@ from .access import store, activity
 from dafeiyu.social.activity import KNOWN_BOTS, privacy_command
 from dafeiyu.social.store import DEFAULT, OWNER, SELF, TZ, can_notify_profile, clock_minutes
 from dafeiyu.social.cards import render_card
+from dafeiyu.dialogue.action_facts import record_action
+from data.plugins.dafeiyu_runtime.natural_output import notification_text
 
 QUOTED = re.compile(r'```.*?```|`[^`]*`|“[^”]*”|「[^」]*」|『[^』]*』|"[^"]*"',re.S)
 
@@ -127,10 +129,7 @@ class DafeiyuSocial(Star):
         for qzone_path in (self.data / 'plugin_data/astrbot_plugin_qzone').glob('posts_*.db'):
             activity().purge_drafts(qzone_path)
         if source and source.get('command'):
-            reply = ('好，这段不会用作未发布日记的素材。' if source['command'] == 'segment' else
-                     '记住了，以后不把你的聊天用于公开日记，未发布的相关素材也已清除。')
-            await event.send(MessageChain(chain=[Plain(reply)]))
-            event.stop_event()
+            record_action(event, 'public_diary_material', 'revoked', scope=source['command'], unpublished_material_removed=True)
         elif source:
             event.set_extra('dafeiyu_activity_input', source)
 
@@ -189,19 +188,17 @@ class DafeiyuSocial(Star):
             intent,changes=setting_change(text)
             if intent:
                 result=self.db.set_profile(uid,changes) if intent=='set' else self.db.profile(uid)
-                reply=profile_text(result) if command.startswith(('聊天设置','我的设置')) else (
-                    '记住啦，你允许我主动来找你聊天；我会有分寸，不连续打扰你。' if changes.get('proactive') is True else
-                    '记住了，以后不主动打扰你。' if changes.get('proactive') is False else '记住啦，之后按你刚说的偏好来。')
-                await event.send(MessageChain(chain=[Plain(reply)]));event.stop_event();return
+                record_action(event, 'chat_preferences', 'updated' if intent=='set' else 'read', profile=result)
+                return
             if command.split(' ',1)[0] in ('机器人名单','机器人标记','机器人解除'):
                 if uid!=OWNER:raise ValueError('只有爸爸能管理机器人名单。')
                 args=shlex.split(command)
-                if args[0]=='机器人名单':reply='机器人名单：\n'+('\n'.join(qq+' '+name for qq,name in self.db.bots().items()) or '暂未标记。')
+                if args[0]=='机器人名单':pass
                 elif args[0] in ('机器人标记','机器人解除') and len(args)>=2:
                     self.db.set_bot(uid,args[1],' '.join(args[2:]),remove=args[0]=='机器人解除')
-                    reply='机器人标记已更新。互聊每组最多三轮，之后冷却三十分钟；真人叫鲸鲸会重新接话。'
                 else:raise ValueError('用法：/机器人名单、/机器人标记 QQ 名称、/机器人解除 QQ。')
-                await event.send(MessageChain(chain=[Plain(reply)]));event.stop_event();return
+                record_action(event, 'bot_contacts', 'read' if args[0]=='机器人名单' else 'updated', contacts=self.db.bots(), max_rounds=3, cooldown_minutes=30)
+                return
             natural=re.fullmatch(r'记住(?:我的|(.{1,16})的)生日(?:是|在)?\s*((?:\d{4}年)?\d{1,2}月\d{1,2}日)[。！!]?',text)
             if natural:
                 label=natural[1] or '我'
@@ -215,12 +212,15 @@ class DafeiyuSocial(Star):
                 row=self.db.get_date(uid,int(args[1]))
                 if row is None:raise ValueError('没有可查看的这个日期记录。')
                 path=await asyncio.to_thread(render_card,row,self.data/'plugin_data/dafeiyu_social/cards',' '.join(args[2:]))
-                await event.send(MessageChain(chain=[Image.fromFileSystem(str(path))]));event.stop_event();return
+                await event.send(MessageChain(chain=[Image.fromFileSystem(str(path))]))
+                record_action(event, 'greeting_card', 'sent', record_id=row['id'])
+                return
             if len(args)==1 or args[1]=='列表':
                 rows=self.db.dates(uid)
-                reply='日期记录（公历）：\n'+('\n'.join('{}：{} {} {:02d}-{:02d} {}'.format(r['id'],r['name'],'生日' if r['kind']=='birthday' else '纪念日',r['month'],r['day'],r['title']) for r in rows) or '还没有记录。')
+                record_action(event, 'calendar', 'read', records=rows, calendar='公历')
             elif args[1]=='删除' and len(args)==3:
-                self.db.delete_date(uid,int(args[2]));reply='已删除这条日期及之后的提醒。'
+                self.db.delete_date(uid,int(args[2]))
+                record_action(event, 'calendar', 'deleted', record_id=int(args[2]))
             elif args[1]=='设置':
                 kind='birthday' if args[0]=='生日' else 'anniversary'
                 rest=args[2:]
@@ -232,12 +232,10 @@ class DafeiyuSocial(Star):
                 numbers=list(map(int,date.split('-')))
                 year=numbers[0] if len(numbers)==3 else None
                 row=self.db.set_date(uid,target,name,kind,numbers[-2],numbers[-1],year,' '.join(rest[1:]))
-                reply='记下了，编号 {}：{} {:02d}-{:02d}{}。按公历在前一天和当天白天提醒爸爸；2 月 29 日在平年按 2 月 28 日提醒。'.format(row['id'],row['name'],row['month'],row['day'],' '+row['title'] if row['title'] else ' 生日')
+                record_action(event, 'calendar', 'saved', record=row, calendar='公历', notice_days_before=[1,0], leap_day_in_common_year='02-28')
             else:raise ValueError('用法：/生日 设置 03-21；/纪念日 设置 10-26 认识鲸鲸；/生日 列表；/生日 删除 编号。')
-            await event.send(MessageChain(chain=[Plain(reply)]));event.stop_event()
         except (ValueError,IndexError) as error:
-            await event.send(MessageChain(chain=[Plain(str(error) or '参数不完整，请检查命令。')]))
-            event.stop_event()
+            record_action(event, 'social_settings', 'rejected', reason=str(error) or '参数不完整')
 
     @filter.on_llm_request(priority=100000)
     async def preference_context(self,event,request):
@@ -258,7 +256,10 @@ class DafeiyuSocial(Star):
         result=event.get_result()
         if result:
             result.chain=[part for part in result.chain if not any(part is image for image in automatic)]
-            if not result.chain:result.chain=[Plain('嗯，我在。')]
+            if not any(not isinstance(part, At) for part in result.chain):
+                result.chain=[]
+                event.set_extra('dafeiyu_intentionally_silent', True)
+                event.stop_event()
         event.set_extra('meme_manager_pending_images',None)
         event.set_extra('found_emotions',None)
         event.set_extra('meme_manager_semantic_selected_ids',None)
@@ -309,9 +310,17 @@ class DafeiyuSocial(Star):
             current=self.db.get_date(OWNER,row['id'])
             if not current or current['revision']!=row['revision']:continue
             if not self.db.reserve_notice(action['key']):continue
-            what='生日' if row['kind']=='birthday' else '纪念日“'+row['title']+'”'
-            text='爸爸，{}是{}的{}，鲸鲸替你记着呢～需要祝福卡的话，私信我 /生日卡 {} 就好。'.format('明天' if action['days_before'] else '今天',row['name'],what,row['id'])
             try:
+                text=await notification_text(self.context, session, 'calendar', dict(
+                    recipient='爸爸', name=row['name'], occasion=row['kind'], title=row['title'],
+                    date='{:02d}-{:02d}'.format(row['month'],row['day']), days_before=action['days_before']))
+                current=self.db.get_date(OWNER,row['id'])
+                allowed={str(x) for x in self.context.get_config(session)['platform_settings'].get('id_whitelist',[])}
+                if (not current or current['revision']!=row['revision'] or session not in allowed
+                        or 'dafeiyu-qq:FriendMessage:'+row['target'] not in allowed
+                        or not can_notify_profile(self.db.profile(OWNER),time.time())):
+                    self.db.finish_notice(action['key'],'skipped')
+                    continue
                 sent=await asyncio.wait_for(bot.send_private_msg(user_id=int(OWNER),message=[{'type':'text','data':{'text':text}}]),timeout=12)
                 message_id=sent.get('message_id') if isinstance(sent,dict) else None
                 confirmed=(not isinstance(message_id,bool) and isinstance(message_id,(int,str))
@@ -332,4 +341,4 @@ class DafeiyuSocial(Star):
             await asyncio.sleep(60)
 
     async def status(self):
-        return json_response({'version':'0.2.1','stats':self.stats,'bots':self.db.bots(),'calendar_records':len(self.db.dates(OWNER)),'calendar_running':self.task is not None and not self.task.done(),'bot_round_limit':3,'bot_cooldown_seconds':1800,'calendar_timezone':'Asia/Shanghai'})
+        return json_response({'version':'0.2.2','stats':self.stats,'bots':self.db.bots(),'calendar_records':len(self.db.dates(OWNER)),'calendar_running':self.task is not None and not self.task.done(),'bot_round_limit':3,'bot_cooldown_seconds':1800,'calendar_timezone':'Asia/Shanghai'})

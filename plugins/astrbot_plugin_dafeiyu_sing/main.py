@@ -10,15 +10,15 @@ import uuid
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.message_components import At, Plain, Record
+from astrbot.api.message_components import Plain, Record
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.api.web import json_response
 from astrbot.core.agent.message import TextPart
-from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from dafeiyu.media.singing.intent import IntentStore, request_key, FOLLOW, intent_kind
 from dafeiyu.media.singing.singing import SingingError, SingingGate, synthesize
+from dafeiyu.dialogue.action_facts import record_action
 
 OWNER='7000000001'
 BOT='7000000002'
@@ -133,8 +133,8 @@ class DafeiyuSing(Star):
         event.set_extra('dafeiyu_sing_intent',result)
         return result
 
-    def _outcome(self,event,status,reply,**details):
-        result={'operation':'sing','status':status,'reply':reply,**details}
+    def _outcome(self,event,status,detail,**details):
+        result={'operation':'sing','status':status,'detail':detail,**details}
         event.set_extra('dafeiyu_sing_outcome',result)
         return result
 
@@ -150,7 +150,7 @@ class DafeiyuSing(Star):
             '紧接着选曲问题的“你自己选”“一首好听的”也是继续请求，后台会校验上下文。'
             '工具返回blocked_intent表示未识别到明确请求；cooldown表示尚未开始生成且在冷却，不能说唱到一半或通道关闭；'
             'sent表示已发出歌声，正常接住刚唱完的事，不突然说“在呢，接下来聊点啥”。'
-            '不要在调用前发一段猜测成败的前言；生成开始后工具会发送真实进度。给别人唱时必须使用真实收件人，不能发到爸爸当前窗口充数。')
+            '工具同步返回最终结果；调用前不发送等待台词，调用后根据真实结果自然回复。给别人唱时必须使用真实收件人，不能发到爸爸当前窗口充数。')
         if info.get('kind')=='request':
             block+='\n本轮人类唱歌请求已确认，目标会话：'+info['target']+'。需要写词时写短原创歌词，然后实际调用一次dafeiyu_sing。'
             # Keep the current action adjacent to the current user turn. Old
@@ -172,7 +172,7 @@ class DafeiyuSing(Star):
             return self._outcome(event,'disabled_service','唱歌服务还没有完成启用配置。')
         info=self._prepare_intent(event)
         if info['kind']=='target_error':return self._outcome(event,'target_unresolved',info['reply'])
-        if info['kind']!='request':return self._outcome(event,'blocked_intent','这句还没有确认要开始唱歌，我先不生成。想让我唱时，直接说“唱首歌”就行；这不是通道关闭。')
+        if info['kind']!='request':return self._outcome(event,'blocked_intent','未识别到明确唱歌请求；未生成或发送。')
         try:target,label=self._target(event,target_qq)
         except ValueError as error:return self._outcome(event,'target_unresolved',str(error))
         lyrics=str(lyrics or '').strip();maximum=max(2,min(int(self.config.get('max_lyrics_chars',160)),300))
@@ -181,13 +181,12 @@ class DafeiyuSing(Star):
         if not key:return self._outcome(event,'blocked_intent','这条请求的消息编号不完整，本次没有生成或发送。')
         previous=self.intents.reserve(key,target,int(self.config.get('cooldown_seconds',90)))
         if previous:
-            status=previous['status'];reply=previous['reply']
+            status=previous['status'];reply=previous.get('detail',previous.get('reply',''))
             if status=='sent':reply='这条请求的歌声已经发过，先不重复生成或发送。'
             return self._outcome(event,status,reply,target=target)
         outcome=None
         try:
             async with self.gate.enter(target,int(self.config.get('cooldown_seconds',90))):
-                await event.send(MessageChain(chain=[Plain('我来唱一小段，等我一下。')]))
                 try:
                     audio,duration=await synthesize(self.config['api_key'],lyrics,self.config.get('voice','茉莉'),style,int(self.config.get('timeout_seconds',75)))
                 except SingingError as error:outcome=self._outcome(event,'generation_failed',str(error),target=target)
@@ -200,37 +199,26 @@ class DafeiyuSing(Star):
                     try:
                         if target==event.unified_msg_origin:await event.send(chain)
                         elif not await self.context.send_message(target,chain):raise RuntimeError('No target platform')
-                    except Exception:outcome=self._outcome(event,'delivery_unknown','歌声生成了，但这次发送没有确认成功，我先不重复发送。',target=target)
+                    except Exception:outcome=self._outcome(event,'delivery_unknown','音频已生成，发送未确认；无自动重发。',target=target)
                     else:
-                        reply='唱好啦，已经把这段歌发给'+label+'了。' if label else '唱好啦，这段已经发出来了。'
-                        outcome=self._outcome(event,'sent',reply,target=target,duration_seconds=round(duration,1))
+                        outcome=self._outcome(event,'sent','音频发送成功。',target=target,recipient_label=label,duration_seconds=round(duration,1))
                         logger.info('Singing sent target=%s duration=%.1fs bytes=%s',target,duration,len(audio))
         except SingingError as error:outcome=self._outcome(event,'busy',str(error),target=target)
         except BaseException as error:
-            outcome=self._outcome(event,'generation_unknown','这次唱歌处理没有确认完成，我先不自动重试。',target=target)
+            outcome=self._outcome(event,'generation_unknown','处理结果未确认；无自动重试。',target=target)
             self.intents.finish(key,outcome)
             if not isinstance(error,Exception):raise
             logger.warning('Singing operation unconfirmed: %s',type(error).__name__)
         self.intents.finish(key,outcome)
         return outcome
 
-    @filter.on_llm_response(priority=sys.maxsize-80)
     async def ground_singing_result(self,event,response):
-        if 'dafeiyu_sing' in (getattr(response,'tools_call_name',None) or []):
-            response.completion_text='';return
-        outcome=event.get_extra('dafeiyu_sing_outcome',None)
-        if outcome and not getattr(response,'tools_call_name',None):response.completion_text=outcome['reply']
-        elif event.get_extra('dafeiyu_sing_action_requested',False) and not getattr(response,'tools_call_name',None):
-            response.completion_text='这次还没有开始生成歌声，刚才只回了话。'
-        elif event.get_extra('dafeiyu_sing_current_enabled',None) is not None and re.fullmatch(r'(?:现在|你|这边|这里)?(?:会|能|可以)唱(?:歌)?了?吗[？?。\s]*',self._text(event)):
-            response.completion_text='能，已经可以唱了。' if event.get_extra('dafeiyu_sing_current_enabled') else '这个会话目前还没有开放唱歌。'
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
-    @filter.on_decorating_result(priority=sys.maxsize-70)
     async def final_singing_status(self,event):
-        outcome=event.get_extra('dafeiyu_sing_outcome',None);result=event.get_result()
-        if not outcome or not result or not result.is_llm_result():return
-        result.chain=[p for p in result.chain if isinstance(p,At)]+[Plain(outcome['reply'])]
-        result.result_content_type=ResultContentType.GENERAL_RESULT
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
     @filter.command('唱歌',alias={'sing'})
     async def sing_command(self,event:AstrMessageEvent):
@@ -240,7 +228,7 @@ class DafeiyuSing(Star):
         if not raw:
             yield event.plain_result('用法：/唱歌 歌词。每次最多160字，也可以让我写一小段再唱。');return
         result=await self._sing(event,raw)
-        yield event.plain_result(result['reply'])
+        record_action(event, 'sing', result['status'], result=result)
 
     @filter.llm_tool(name='dafeiyu_sing')
     async def sing_tool(self,event:AstrMessageEvent,lyrics:str,style:str='',target_qq:str='')->str:
@@ -257,6 +245,6 @@ class DafeiyuSing(Star):
         return json.dumps(await self._sing(event,lyrics,style,target_qq),ensure_ascii=False)
 
     async def status(self):
-        return json_response({'version':'0.1.2','enabled':bool(self.config.get('enabled') and self.config.get('api_key')),
+        return json_response({'version':'0.1.3','enabled':bool(self.config.get('enabled') and self.config.get('api_key')),
             'allowed_private_users':self.config.get('allowed_private_users',[]),'allowed_groups':self.config.get('allowed_groups',[]),
             'scoped_followup_intent':True,'durable_single_attempt':True,'grounded_tool_results':True})

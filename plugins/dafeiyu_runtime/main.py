@@ -34,6 +34,7 @@ from .ops import load_state, problem, result
 from .reliability import LoopWatchdog, ReplyReliability
 from dafeiyu.runtime.diagnostics import CURRENT, KEY, Journal, Turn, active, phase, request_metrics
 from .private_outbound import PrivateOutbound
+from dafeiyu.dialogue.action_facts import attach_action_facts, system_notice
 
 WRITES = {
     "dafeiyu_cognition",
@@ -240,7 +241,7 @@ class DafeiyuRuntime(Star):
                 "progress_after_seconds": self.replies.progress_after,
                 "send_timeout_seconds": self.replies.send_timeout,
                 "progress_notice_cooldown_seconds": self.replies.progress_cooldown,
-                "version": "0.3.4",
+                "version": "0.3.5",
                 "outbound_history": self.outbound.status(),
                 "session_wait_diagnostics": session_lock_manager.acquire_lock is getattr(self, 'session_lock_wrapper', None),
                 "reply_diagnostics": {'enabled': True, 'retained_turns': self.diagnostics.status()['retained_turns'], 'contains_chat_content': False},
@@ -412,7 +413,7 @@ class DafeiyuRuntime(Star):
                 and "audio" not in modalities
             ):
                 await event.send(
-                    event.plain_result("这条语音我还没听清，发文字给我好不好？")
+                    event.plain_result(system_notice('audio_input', dict(status='unsupported', text_input_available=True)))
                 )
                 self.replies.stats["audio_not_understood"] += 1
                 event.stop_event()
@@ -441,6 +442,7 @@ class DafeiyuRuntime(Star):
     @filter.on_llm_request(priority=-sys.maxsize - 100)
     async def reply_requested(self, event, request):
         if self.allowed(event) and not event.is_stopped():
+            attach_action_facts(event, request)
             self.replies.expect(event)
             request_metrics(request, event)
 

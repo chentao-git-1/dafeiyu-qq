@@ -87,7 +87,7 @@ class DrawingContinuity(unittest.IsolatedAsyncioTestCase):
             with patch.object(module,'generate',AsyncMock(return_value=(b'actual image','.png',(1024,1024)))):
                 self.assertEqual(await draw._draw(e,'太阳照着嫩芽'),'图片已发送。')
             self.assertEqual(len(draw.conversation_works(f.OWNER,f.ORIGIN)),1)
-            failed=f.event('再画一个');failed.send=AsyncMock(side_effect=[None,RuntimeError('send failed')])
+            failed=f.event('再画一个');failed.send=AsyncMock(side_effect=RuntimeError('send failed'))
             with patch.object(module,'generate',AsyncMock(return_value=(b'another image','.png',(1024,1024)))):
                 await draw._draw(failed,'另一张作品')
             self.assertEqual(len(draw.conversation_works(f.OWNER,f.ORIGIN)),1)
@@ -166,13 +166,13 @@ class ReplyPacing(unittest.IsolatedAsyncioTestCase):
     run_hooks=f.NativeHooks.run_hooks
     ready=base.SingleGeneration.ready
 
-    async def test_long_casual_answer_is_reviewed(self):
-        e,_=await self.ready('嗨，聊什么呢')
-        long='我比较喜欢淡蓝色，让我觉得画面很干净。'*9
-        short='我想试试淡蓝配橘黄，应该挺亮。'
-        self.plugin.reviewed=AsyncMock(return_value=NS(segments=(short,)))
-        r=NS(completion_text=base.envelope(long),tools_call_name=[])
-        await self.plugin.review_response(e,r);self.assertEqual(r.completion_text,short);self.plugin.reviewed.assert_awaited_once()
+    async def test_action_claim_requires_review_even_in_a_short_reply(self):
+        e,_=await self.ready('你帮我发了吗')
+        checked='还没有确认发出去。'
+        self.plugin.reviewed=AsyncMock(return_value=NS(segments=(checked,)))
+        raw=json.loads(base.envelope('已经发好了。'));raw['focus']=['action']
+        r=NS(completion_text=json.dumps(raw),tools_call_name=[])
+        await self.plugin.review_response(e,r);self.assertEqual(r.completion_text,checked);self.plugin.reviewed.assert_awaited_once()
 
     async def test_short_answer_needs_no_extra_call(self):
         e,_=await self.ready('哈哈');self.plugin.reviewed=AsyncMock()

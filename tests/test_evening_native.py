@@ -98,7 +98,8 @@ class Native(unittest.IsolatedAsyncioTestCase):
         for uid in ('7000000011', '7000000012'):
             e = event('音乐好听', uid=uid); await self.social.activity_input(e); append_receipt(e, '回复')
         e = event('以后别公开我的聊天', mid='deny'); await self.social.activity_input(e)
-        self.assertTrue(e.is_stopped()); self.assertEqual(e.send.await_count, 1)
+        self.assertFalse(e.is_stopped()); e.send.assert_not_awaited()
+        self.assertEqual(e.get_extra('dafeiyu_action_facts')[0]['status'],'revoked')
         self.assertTrue(self.social.db.profile('7000000011')['proactive'])
         self.assertEqual(len(access.activity().public_topics()), 1)
 

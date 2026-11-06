@@ -58,7 +58,7 @@ def reply_scope(raw, is_group, session_id):
     return hashlib.sha256("|".join(identity).encode()).hexdigest(), user, group
 
 
-@register("dafeiyu_event_limits", "Local", "DeepSeek峰谷回复限流与恢复提示", "0.2.2")
+@register("dafeiyu_event_limits", "Local", "DeepSeek峰谷回复限流与恢复提示", "0.2.3")
 class EventLimits(Star):
     def __init__(self, context):
         super().__init__(context)
@@ -194,9 +194,9 @@ class EventLimits(Star):
                 self.notice_until.popitem(last=False)
             minutes = max(1, math.ceil((retry_at - now) / 60))
             text = (
-                "这个群这半小时的回复次数用完啦，大约{}分钟后恢复。"
+                "【系统状态】本群半小时回复额度已用完，约{}分钟后恢复。"
                 if reason == "group"
-                else "这半小时给你的回复次数用完啦，大约{}分钟后恢复。"
+                else "【系统状态】本会话半小时回复额度已用完，约{}分钟后恢复。"
             ).format(minutes)
             token = NOTICE_TURN.set(turn)
             try:

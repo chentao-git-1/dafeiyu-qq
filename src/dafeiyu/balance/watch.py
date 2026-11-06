@@ -300,19 +300,13 @@ class BalanceWatch:
 
 
 def notice_text(action, balance):
+    """Compatibility formatter for objective notices without a working model."""
+    from dafeiyu.dialogue.action_facts import system_notice
+    return system_notice('account_balance', notice_facts(action, balance))
+
+
+def notice_facts(action, balance):
     if action['kind'] == 'help':
-        return '鲸鲸的饭钱快不够啦，帮我提醒爸爸添一点嘛～'
-    if action["critical"]:
-        return (
-            "爸爸，鲸鲸的 DeepSeek 饭钱见底啦，这会儿可能接不上话。"
-            "有空给我续一点饭钱嘛，充好后我会再查一下～"
-            "\n当前可用余额：{} 元。".format(balance)
-        )
-    if action["kind"] == "first":
-        return (
-            "爸爸，鲸鲸的饭盒快见底啦，记得添点 DeepSeek 饭钱～"
-            "\n当前可用余额：{} 元，已经低于 1.00 元。".format(balance)
-        )
-    if action["kind"] == "repeat":
-        return "爸爸是不是忙忘啦，我这边的饭钱还不足一元呢。有空给鲸鲸添一点嘛～"
-    return "饭钱够啦！谢谢爸爸，鲸鲸先安心吃饭～"
+        return dict(recipient='联系人', request='提醒管理者查看账户通知', payment_requested=False)
+    return dict(recipient='爸爸', service='DeepSeek', balance_cny=str(balance),
+                notice=action['kind'], critical=bool(action['critical']), threshold_cny='1.00')

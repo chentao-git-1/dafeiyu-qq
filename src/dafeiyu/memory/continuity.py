@@ -129,31 +129,5 @@ def context_block(names, uid, history, human_text):
 
 
 def grounded_correction(text, human_text, names, uid, negative_question='', history=None):
-    """Narrow corrections for contradictions proven by current evidence."""
-    if negative_question and (re.search(r'那就好|那太好|那我就放心|这就好|我.{0,5}(?:再|重)(?:发|唱|送)|已.{0,4}(?:重发|再发)',text)
-            or not re.search(r'(?:没|未).{0,3}(?:收到|听到|送到|发到)|还没到',text)):
-        return '那就是你那边还没收到。'
-    if DELAY.search(human_text):
-        invented=r'你没(?:接|回|答)|等你(?:接|回|答)|故意(?:不回|晾)|刚(?:看到|看见|收到|刷到)|现在才(?:收到|看到)'
-        if re.search(invented,text):
-            text=re.sub(r'[^。！？\n]*(?:'+invented+r')[^。！？\n]*[。！？]?', '刚才回复晚了。',text,count=1)
-        pending=pending_turn(history or [])
-        if pending and not re.search(r'唱|歌|嗓|音乐',pending+human_text) and re.search(r'唱|这嗓子|歌喉|那首歌',text):
-            return '刚才回复晚了，没及时接上你那句“'+pending+'”。'
-    current=names.get(str(uid))
-    name_topic=bool(re.search(r'称呼|叫我|叫你|叫法|名字|谁.{0,8}(?:说|教)|姓|雨阿姨|雨姐姐',human_text)) and not re.search(r'小说|故事|角色|举例|假设|翻译|台词',human_text)
-    if current and current['source'].startswith('owner_memory:') and name_topic:
-        if re.search(r'姓',human_text):
-            return '“'+current['name']+'”是爸爸给的聊天称呼，不代表我知道你的真实姓氏。'
-        if re.search(r'谁|怎么知道|没.{0,5}(?:提|说).{0,5}名字',human_text):
-            previous=current.get('previous_names',[])
-            if previous and any(row['name'] in human_text for row in previous):
-                return '以前“'+previous[0]['name']+'”是爸爸给的叫法，后来他改成“'+current['name']+'”，现在我按新的叫。'
-            return '“'+current['name']+'”是爸爸告诉我的聊天称呼；你的真实姓名，我不能靠这个猜。'
-        if re.search(r'爸爸没.{0,6}(?:提|说)|没人教|没人.{0,6}(?:说|提)|我(?:自己)?(?:瞎)?(?:编|猜)|称呼.{0,8}没.{0,5}定|该叫你什么.{0,8}没.{0,5}定',text):
-            return '“'+current['name']+'”是爸爸告诉我的聊天称呼，我现在按这个叫。'
-    match=re.fullmatch(r'(?:你(?:有|认识|认了)?|有)?几个(叔叔|阿姨|姐姐|妹妹|哥哥|弟弟)[？?。\s]*',human_text)
-    if match:
-        labels=list(dict.fromkeys(row['name'] for row in names.values() if row['name'].endswith(match[1])))
-        return '目前确认这样称呼的有'+str(len(labels))+'位：'+'、'.join(labels)+'。' if labels else '目前还没有确认过这个称呼。'
+    """Compatibility entry point; wording belongs to the primary model."""
     return text

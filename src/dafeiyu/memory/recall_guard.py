@@ -65,6 +65,5 @@ def own_life_question(query, context, now=None):
 
 
 def uncertain_reply(uid, mid):
-    choices = ('那句我这次没对上，你提醒我一下？', '具体那句我记不准了，你给我接一句。', '我怕把那次记岔了，你提醒我一下是哪一段？')
-    index = int(hashlib.sha256((str(uid)+':'+str(mid)).encode()).hexdigest()[:8],16) % len(choices)
-    return choices[index]
+    """Compatibility entry point; wording belongs to the primary model."""
+    return ''

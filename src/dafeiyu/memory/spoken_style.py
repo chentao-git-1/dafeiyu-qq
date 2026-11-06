@@ -49,59 +49,15 @@ def style_context(human_text, *, recent_assistant=''):
     return RULES
 
 def close_idle_questions(text,human_text,had_tool=False):
-    """Keep a casual reaction instead of adding an unrelated interview."""
-    if had_tool or '```' in text or conversational_mode(human_text) not in ('sharing','banter','feedback'):return text
-    prefix='\x00'
-    while prefix in text:prefix+='\x00'
-    quotes=[]
-    def protect(match):
-        quotes.append(match[0]);return prefix+str(len(quotes)-1)+prefix
-    masked=QUOTED.sub(protect,text)
-    pieces=[part for part in re.split(r'(?<=[。！!?？\n])',masked) if part.strip()]
-    statements=[part for part in pieces if not re.search(r'[?？]',part) or RHETORICAL.search(part)]
-    if not statements or len(statements)==len(pieces):return text
-    result=''.join(statements).strip()
-    for index,quote in enumerate(quotes):result=result.replace(prefix+str(index)+prefix,quote)
-    return result
+    """Compatibility entry point; wording belongs to the primary model."""
+    return text
 
 
 def close_short_ack(text,human_text,recent_assistant=''):
-    """After repeated questions, a bare wake-up update needs no third interview."""
-    if len(re.findall(r'[?？]',recent_assistant))<2:return text
-    if not re.fullmatch(r'(?:我)?(?:醒了|睡醒了|起了|起床了)[呀啊啦哦呢。！!，,\s]*',str(human_text or '').strip()):return text
-    if not re.search(r'[?？]',text) or technical_turn(human_text) or '```' in text:return text
-    statements=[part for part in re.split(r'(?<=[。！!?？\n])',text) if part.strip() and not re.search(r'[?？]',part)]
-    if statements:return ''.join(statements).strip()
-    greeting=re.match(r'^(?:嗯[，, ]*)?((?:醒(?:了|啦|咯)|睡醒了|起床了)[呀啊哦呢啦]*)[，,。！!\s]',text)
-    return greeting[1]+'。' if greeting else '醒啦。'
+    """Compatibility entry point; wording belongs to the primary model."""
+    return text
 
 
 def conversational_text(text,human_text):
-    """Remove known execution narration, preserving result polarity and content."""
-    if technical_turn(human_text) or '```' in text:return text
-    replacements=(
-        (r'(?:啊[，,]\s*)?(?:这次|刚才)没唱成[，,]\s*工具那边(?:没给过|没通过)', '刚才还没开始唱'),
-        (r'工具说当前没有明确指令[，,]\s*就没生成', '刚才没接准你的意思，还没开始唱'),
-        (r'需要我用发消息的工具再给([^。！？?\n]{1,16})送一遍吗', r'要再给\1发一遍吗'),
-        (r'(?:发送工具|工具|接口)(?:回的是|返回的是|返回|显示|说)(?:“|「|\")?发送成功(?:”|」|\")?', '已经发过去了'),
-        (r'(?:发送工具|工具|接口)(?:回的是|返回的是|返回|显示|说)(?:“|「|\")?(?:发送结果不明|发送未确认)(?:”|」|\")?', '还不能确定有没有发出去'),
-        (r'(?:工具调用|工具执行|接口调用)(?:失败|出错)了?', '这次没弄好'),
-        (r'(?:唱歌接口|唱歌服务)(?:暂时失败|暂时不可用|暂时用不了)(?:（HTTP \d{3}）)?', '这次没唱出来'),
-        (r'这次唱歌生成超时了', '这次没能及时唱出来'),
-        (r'画图接口暂时失败（HTTP (?:408|504)），没有自动重试[。；;]?', '这次画图请求超时了，还没拿到图片结果。'),
-        (r'画图接口暂时失败（HTTP \d{3}），没有自动重试[。；;]?', '这次画图没完成，暂时还没拿到图片。'),
-        (r'MiMo 唱歌密钥无效或没有模型权限，请管理员检查', '这次没唱出来，得先检查一下唱歌的设置'),
-        (r'我(?:先|现在)?(?:调用|使用)(?:一下)?(?:工具)?(?:来)?(?:核实|查询)(?:一下)?(?:记录)?', '我看看刚才的记录'),
-        (r'本轮(?:已经|已)确认', '已经确认'),
-        (r'这个会话还没有开放唱歌权限', '这边暂时还不能唱歌'),
-        (r'唱歌服务还没有完成启用配置', '这边暂时还不能唱歌'),
-    )
-    if re.search(r'发送|发给|发过去|发出去|收到|送达|私信|消息|发了',str(human_text or '')+text):
-        replacements=(
-            (r'((?:还|暂时)?(?:不|没|无法)[^，,。！？\n]{0,12}(?:确定|确认)[^，,。！？\n]{0,12})[，,]\s*(?:发送)?回执(?:是|为)\s*unknown\b',r'\1'),
-            (r'(?:发送)?回执(?:是|为)\s*unknown\b','还不能确定有没有发出去'),
-        )+replacements
-    chunks=re.split(r'(`[^`\n]*`|“[^”]*”|「[^」]*」|『[^』]*』|"[^"\n]*")',text)
-    for index in range(0,len(chunks),2):
-        for pattern,replacement in replacements:chunks[index]=re.sub(pattern,replacement,chunks[index])
-    return ''.join(chunks)
+    """Compatibility entry point; wording belongs to the primary model."""
+    return text

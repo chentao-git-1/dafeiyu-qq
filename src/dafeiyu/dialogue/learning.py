@@ -117,6 +117,15 @@ class LearningStore:
                        (sid, turn.actor, turn.origin, turn.message_id, digest(human), epoch, turn.observed_at))
             return dict(db.execute('SELECT * FROM learning_sources WHERE id=?', (sid,)).fetchone())
 
+    def source_current(self, source):
+        """Reject revoked, superseded or committed work before spending a model call."""
+        with self.db() as db:
+            row = db.execute('SELECT * FROM learning_sources WHERE id=?', (source['id'],)).fetchone()
+            return bool(row and not row['revoked']
+                and all(row[key] == source[key] for key in ('owner', 'origin', 'human_hash', 'epoch'))
+                and row['epoch'] == self._epoch(db, source['owner'])
+                and not db.execute('SELECT 1 FROM learning_commits WHERE source_id=?', (source['id'],)).fetchone())
+
     def current(self, owner, origin, include_events=True):
         with self.db() as db:
             group=':GroupMessage:' in origin

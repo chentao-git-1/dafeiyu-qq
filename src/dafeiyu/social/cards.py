@@ -13,7 +13,7 @@ def render_card(row, directory, message=''):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     directory.chmod(0o700)
-    text = str(message).strip() or ('愿新的一岁有好多开心的小事，也有一直惦记你的人。鲸鲸把这份祝福送给你～' if row['kind'] == 'birthday' else '把值得记住的日子认真收藏，也把之后的日子一起慢慢过好。鲸鲸陪你记着～')
+    text = str(message).strip()
     if len(text) > 80 or any(ord(c) < 32 and c != '\n' for c in text):
         raise ValueError('祝福语请控制在 80 字以内。')
     image = Image.new('RGB', (1000,700))
@@ -22,8 +22,8 @@ def render_card(row, directory, message=''):
         t = y / 699
         draw.line((0,y,999,y), fill=tuple(round(a*(1-t)+b*t) for a,b in zip((241,251,255),(208,235,248))))
     draw.rounded_rectangle((35,35,965,665), radius=32, outline=(151,199,220), width=2)
-    draw.text((70,65), '鲸鲸的小小祝福', font=ImageFont.truetype(FONT,26), fill=(57,105,132))
-    draw.text((68,125), '生日快乐' if row['kind']=='birthday' else '纪念日快乐', font=ImageFont.truetype(BOLD,74), fill=(25,78,112))
+    draw.text((70,65), '哦鲸鲸', font=ImageFont.truetype(FONT,26), fill=(57,105,132))
+    draw.text((68,125), '生日' if row['kind']=='birthday' else '纪念日', font=ImageFont.truetype(BOLD,74), fill=(25,78,112))
     label = row['name'] if row['kind']=='birthday' else row['title']
     label_font = ImageFont.truetype(FONT,37)
     while draw.textlength('送给 '+label,font=label_font)>650:

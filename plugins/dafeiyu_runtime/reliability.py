@@ -15,9 +15,9 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 from .delivery import RECEIPTS_KEY, append_receipt
 from dafeiyu.runtime.diagnostics import phase
+from dafeiyu.dialogue.action_facts import system_notice
 
 STATE_KEY = "dafeiyu_reply_delivery"
-PROGRESS_TEXTS = {"画着呢，等一会儿。", "我来唱一小段，等我一下。"}
 
 
 class MediaDeliveryFailed(RuntimeError):
@@ -122,45 +122,8 @@ class ReplyReliability:
             return False
 
     async def _progress(self, event, state):
-        # Queueing and intentionally skipped inputs are not model processing.
-        await state["processing_started"].wait()
-        await asyncio.sleep(self.progress_after)
-        delivered = False
-        async with state["send_lock"]:
-            if (
-                not state["admitted"]
-                or state["completed"]
-                or state["sends"]
-                or state["send_started"]
-                or state["expired"]
-                or event.is_stopped()
-            ):
-                return
-            now = time.monotonic()
-            key = event.unified_msg_origin
-            if (
-                now - self.notice_times.get(key, float("-inf"))
-                < self.progress_cooldown
-            ):
-                self.stats["progress_suppressed"] += 1
-                return
-            # Reserve before awaiting so simultaneous turns in one chat cannot
-            # all send the same notice. Failed notices also receive a cooldown.
-            self.notice_times[key] = now
-            self.notice_times.move_to_end(key)
-            while len(self.notice_times) > 256:
-                self.notice_times.popitem(last=False)
-            delivered = await self._notice(
-                event, "我还在处理这条消息，等我一下。", notify_quota=False
-            )
-            if delivered:
-                state["sends"] += 1
-                self.stats["progress_notices"] += 1
-        # Quota callbacks call event.send(), so run them after releasing its lock.
-        if not delivered and event.is_stopped():
-            notify = getattr(AiocqhttpMessageEvent, "_dafeiyu_reply_notice", None)
-            if notify is not None:
-                await notify(event)
+        """Retired compatibility hook; do not replace or preface model speech."""
+        return
 
     async def send(self, event, message):
         state = self.state(event)
@@ -186,14 +149,12 @@ class ReplyReliability:
                 if state and state["expired"]:
                     self.stats["late_sends_blocked"] += 1
                     return
-                purpose='notice' if plain in PROGRESS_TEXTS and not has_media else 'reply'
-                result = await self._send_direct(event, message,purpose=purpose)
+                result = await self._send_direct(event, message,purpose='reply')
                 if result is False:return
                 if state:
                     state["sends"] += 1
-                    if has_media or plain not in PROGRESS_TEXTS:
-                        state["final_sends"] += 1
-                        state["completed"] = True
+                    state["final_sends"] += 1
+                    state["completed"] = True
         except Exception as error:
             if type(error).__name__ == "ReplyLimitExceeded":
                 event.stop_event()
@@ -220,12 +181,9 @@ class ReplyReliability:
                 ).strip()
             )
             fallback_purpose = 'reply' if text else 'notice'
-            if text:
-                text = "这条没确认发出去，我先用文字说：\n" + text
-            elif any(isinstance(part, Record) for part in components):
-                text = "语音这次没确认发出去，我先不重复发送。"
-            else:
-                text = "图片这次没确认发出去，我先不重新生成，免得重复。"
+            if not text:
+                text = system_notice('media_delivery', dict(status='unconfirmed',
+                    media='audio' if any(isinstance(part, Record) for part in components) else 'image', retry=False))
             fallback = [part for part in components if isinstance(part, At)][:1]
             fallback.append(Plain(text))
             try:
@@ -274,7 +232,6 @@ class ReplyReliability:
                 completed.exception()
 
         task.add_done_callback(finished)
-        progress = asyncio.create_task(self._progress(event, state))
         try:
             done, _ = await asyncio.wait({task}, timeout=self.timeout)
             if not done:
@@ -283,11 +240,7 @@ class ReplyReliability:
                 task.cancel()
                 self.stats["timeouts"] += 1
                 if state["admitted"] and not state["completed"]:
-                    text = (
-                        "这次等得有点久，还没拿到最终结果，我先不重复操作。"
-                        if state["write_started"]
-                        else "这条没能及时处理完，我先停一下，免得一直让你等。"
-                    )
+                    text = system_notice('reply', dict(status='timeout', operation_unconfirmed=state['write_started'], retry=False))
                     await self._notice(event, text)
                 await asyncio.wait({task}, timeout=2)
                 return
@@ -299,7 +252,7 @@ class ReplyReliability:
             ):
                 self.stats["partial_deliveries"] += 1
                 await self._notice(
-                    event, "这条回复有一部分没确认发出去，我先不重复发送。"
+                    event, system_notice('reply', dict(status='partial_delivery', retry=False))
                 )
             elif state["completed"]:
                 self.stats["completed"] += 1
@@ -311,7 +264,7 @@ class ReplyReliability:
                 self.stats["filtered"] += 1
             else:
                 self.stats["empty_fallbacks"] += 1
-                await self._notice(event, "刚才这条没能回上来，我这边处理出了点问题。")
+                await self._notice(event, system_notice('reply', dict(status='empty_result')))
         except asyncio.CancelledError:
             state["expired"] = True
             task.cancel()
@@ -325,19 +278,12 @@ class ReplyReliability:
             ):
                 self.stats["partial_deliveries"] += 1
                 await self._notice(
-                    event, "这条回复有一部分没确认发出去，我先不重复发送。"
+                    event, system_notice('reply', dict(status='partial_delivery', retry=False))
                 )
             elif state["admitted"] and not state["completed"] and not event.is_stopped():
                 self.stats["empty_fallbacks"] += 1
-                await self._notice(event, "刚才这条没处理好，我先停一下。")
+                await self._notice(event, system_notice('reply', dict(status='failed', retry=False)))
         finally:
-            progress.cancel()
-            try:
-                await progress
-            except asyncio.CancelledError:
-                pass
-            except Exception as error:
-                logger.warning("QQ progress notice failed: %s", type(error).__name__)
             self.stats["active"] -= 1
 
     async def close(self):
