@@ -1,0 +1,43 @@
+{
+  "deployed": true,
+  "commit": "7d7107db595d3780e6f88e31c79e6eafcd67fa87",
+  "version": "v3.1.3.post14",
+  "server": "Tencent",
+  "verified_at_beijing": "2026-11-06T14:28:24.776250+08:00",
+  "container_healthy": true,
+  "qq_platform_running": true,
+  "model_owned_content": true,
+  "text_review": false,
+  "image_review": false,
+  "content_similarity_filter": false,
+  "fixed_topic_selection": false,
+  "fixed_length_target": false,
+  "generation_attempts": 1,
+  "private_chat_source": false,
+  "old_writing_prompt_cleared": true,
+  "other_configuration_preserved": true,
+  "core_and_other_plugins_preserved": true,
+  "publication_ledger_preserved": true,
+  "confirmed_posts_unchanged": true,
+  "next_publications": [
+    {
+      "day": "2026-11-06",
+      "run_at_beijing": "2026-11-06T22:27:35+08:00",
+      "status": "scheduled"
+    }
+  ],
+  "source_files_verified": 10,
+  "sqlite_backups": 29,
+  "local_clean_tests": 97,
+  "production_image_tests": 106,
+  "paid_model_test_calls": 0,
+  "real_image_test_calls": 0,
+  "qzone_test_posts": 0,
+  "qq_test_messages": 0,
+  "old_failed_days_requeued": false,
+  "existing_reliability_preserved": true,
+  "final_checked_at_beijing": "2026-11-06T14:30:14.082657+08:00",
+  "startup_import_errors": 0,
+  "chat_verification_still_disabled": true,
+  "read_only_verification": true
+}
