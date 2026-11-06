@@ -1,0 +1,17 @@
+{
+  "passed": true,
+  "current_intention_version": 14,
+  "stored_historical_assessments": 1,
+  "current_step_assessments": 0,
+  "completed_activities": 10,
+  "today_activity_status": "completed",
+  "legacy_alternative_contexts": 1,
+  "reading_source_scope": "public_https_web",
+  "revisit_sources_allowed": true,
+  "live_data_modified": false,
+  "network": "none",
+  "model_calls": 0,
+  "search_or_fetch_requests": 0,
+  "commit": "fed0821f93c01049254ff4577f78b30ea58d6db7",
+  "checked_at_beijing": "2026-11-06T15:51:04.668965+08:00"
+}
