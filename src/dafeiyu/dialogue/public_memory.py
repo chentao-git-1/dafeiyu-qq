@@ -28,21 +28,42 @@ def own_space_items(read, config, turn, now):
     path,uin=config['path'],str(config['uin'])
     rows=read(path,"SELECT tid,text,images,create_time,comments FROM posts WHERE uin=? AND status='approved' "
         "AND tid IS NOT NULL AND tid<>'' ORDER BY create_time DESC,tid",(uin,))
-    items=[];posts={};own_replies=set()
+    items=[];posts={};own_replies=set();photos={}
+    if read(path,"SELECT 1 FROM sqlite_master WHERE name='qzone_photo_observations'",()):
+        for photo in read(path,'''SELECT s.*,o.caption FROM qzone_photo_sources s
+                JOIN qzone_photo_observations o ON o.sha=s.sha WHERE o.status='ready'
+                ORDER BY s.observed_at DESC,s.sha''',()):
+            try:
+                from dafeiyu.media.photo_memory import parse_caption
+                if timestamp(photo['observed_at'],now) is None:continue
+                photo['description']=parse_caption(photo['caption'])
+                photos.setdefault(str(photo['post_tid']),{}).setdefault(photo['ordinal'],photo)
+            except (ValueError,TypeError):continue
     comments_allowed=not turn.is_group and turn.actor==str(config.get('comments_owner',''))
     for row in rows:
         at=timestamp(row['create_time'],now)
         if at is None:continue
         tid=str(row['tid']);posts[tid]=row
+        remembered=photos.get(tid,{})
         body=str(row['text'] or '')
         pieces=[body[i:i+1400] for i in range(0,len(body),1400)] or ['']
         for i,piece in enumerate(pieces):
             data=dict(channel='QQ空间',kind='自己发布的动态',tid=tid,text=piece,
                 published_at=dt.datetime.fromtimestamp(at,TZ).isoformat(),image_count=len(array(row['images'])),
                 visual_content='not_inspected',live_visibility='not_checked',part=i+1,parts=len(pieces))
+            if remembered:
+                data.update(visual_content='remembered_observations',described_image_numbers=[i+1 for i in sorted(remembered)])
             items.append(MemoryItem('qzone:post:'+tid+':'+str(i),uin,turn.platform+':Qzone:'+uin,
                 'public','publication',json.dumps(data,ensure_ascii=False),at,'confirmed_own_publication',
                 turn.platform+':public',occurred_at=at,status='published'))
+        for ordinal,photo in sorted(remembered.items()):
+            data=dict(channel='QQ空间照片',kind='自己动态里的照片内容',post_tid=tid,image_number=ordinal+1,
+                image_sha256=photo['sha'],post_excerpt=body[:160],published_at=dt.datetime.fromtimestamp(at,TZ).isoformat(),
+                observed_at=dt.datetime.fromtimestamp(photo['observed_at'],TZ).isoformat(),description=photo['description'],
+                description_source='actual_image_observation',captured_via=photo['capture_kind'],live_visibility='not_checked')
+            items.append(MemoryItem('qzone:photo:'+tid+':'+str(ordinal)+':'+photo['sha'],uin,turn.platform+':Qzone:'+uin,
+                'public','publication_photo',json.dumps(data,ensure_ascii=False),at,'confirmed_own_publication',
+                turn.platform+':public',occurred_at=at,status='visually_described'))
         if not comments_allowed:continue
         for comment in array(row['comments']):
             if not isinstance(comment,dict):continue

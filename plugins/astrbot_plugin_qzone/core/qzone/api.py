@@ -79,6 +79,8 @@ class QzoneAPI(QzoneHttpClient):
 
     async def publish(self, post: Post, *, before_publish=None) -> ApiResponse:
         """发表说说, 返回tid"""
+        post._published_images=[]
+        imgs=[]
         ctx = await self.session.get_ctx()
         data: dict[str, Any] = {
             "syn_tweet_verson": "1",
@@ -125,7 +127,9 @@ class QzoneAPI(QzoneHttpClient):
             params={"g_tk": ctx.gtk2, "uin": ctx.uin},
             data=data,
         )
-        return ApiResponse.from_raw(raw)
+        response=ApiResponse.from_raw(raw)
+        if response.ok and response.data.get('tid'):post._published_images=imgs
+        return response
 
     async def like(self, post: Post) -> ApiResponse:
         """

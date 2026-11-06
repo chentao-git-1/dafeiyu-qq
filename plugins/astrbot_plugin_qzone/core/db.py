@@ -229,6 +229,10 @@ class PostDB:
     async def delete(self, post_id: int) -> int:
         """删除稿件"""
         async with aiosqlite.connect(self.db_path) as db:
+            photos=await (await db.execute("SELECT 1 FROM sqlite_master WHERE name='qzone_photo_sources'")).fetchone()
+            if photos:
+                await db.execute('DELETE FROM qzone_photo_sources WHERE post_tid IN (SELECT tid FROM posts WHERE id=?)',(post_id,))
+                await db.execute('DELETE FROM qzone_photo_observations WHERE sha NOT IN (SELECT sha FROM qzone_photo_sources)')
             cur = await db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
             await db.commit()
             return cur.rowcount

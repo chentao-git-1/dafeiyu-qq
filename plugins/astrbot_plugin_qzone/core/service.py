@@ -434,6 +434,11 @@ class PostService:
                 await editorial.record_published(post)
             except Exception as error:
                 logger.warning('Confirmed post editorial metadata was not saved: %s', type(error).__name__)
+        memory=getattr(self,'photo_memory',None)
+        pictures=post._published_images;post._published_images=[]
+        if memory is not None:
+            try:memory.published(post,pictures)
+            except Exception as error:logger.warning('Published photo memory not queued: %s',type(error).__name__)
         return post
 
     async def delete_post(self, post: Post):

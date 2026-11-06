@@ -13,6 +13,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from .core.campus_wall import CampusWall
 from .core.own_space import OwnSpace
+from .core.photo_memory import PhotoMemory
 from .core.auto_replies import AutoReplies
 from .core.config import PluginConfig
 from .core.db import PostDB
@@ -52,6 +53,8 @@ class QzonePlugin(Star):
         self.sender = Sender(self.cfg)
         # 操作服务
         self.service = PostService(self.qzone, self.session, self.db, self.llm)
+        self.photo_memory=PhotoMemory(self.cfg)
+        self.service.photo_memory=self.photo_memory
         # 表白墙
         self.campus_wall = CampusWall(self.cfg, self.service, self.db, self.sender)
         # 自动评论模块
@@ -64,6 +67,7 @@ class QzonePlugin(Star):
         context.register_web_api('/dafeiyu_qzone/auto_replies', self.auto_replies_status, ['GET'], 'QQ空间自动回评状态')
         context.register_web_api('/dafeiyu_qzone/editorial', self.editorial_status, ['GET'], 'QQ空间文案与配图优化状态')
         context.register_web_api('/dafeiyu_qzone/own_read', self.own_read_status, ['GET'], '自己的空间读取状态')
+        context.register_web_api('/dafeiyu_qzone/photo_memory',self.photo_memory_status,['GET'],'已发布照片的视觉记忆状态（无正文）')
         # This deployment uses private QQ commands; do not expose page write APIs.
 
     @staticmethod
@@ -93,6 +97,7 @@ class QzonePlugin(Star):
     async def initialize(self):
         """插件加载时触发"""
         await self.db.initialize()
+        await self.photo_memory.initialize()
         await self.llm.editorial.initialize()
         self._capture_page_client()
 
@@ -547,6 +552,7 @@ class QzonePlugin(Star):
 
     async def terminate(self):
         """插件卸载时"""
+        await self.photo_memory.terminate()
         if self.auto_replies:
             await self.auto_replies.terminate()
         if self.qzone:
@@ -861,6 +867,9 @@ class QzonePlugin(Star):
     async def own_read_status(self):
         return json_response({'enabled': True, 'fixed_uin': 7000000002, 'read_only': True, 'short_followup_context': True, 'confirmed_social_sources': True, 'last': self.own_space.last})
 
+    async def photo_memory_status(self):
+        return json_response(await self.photo_memory.status())
+
     @filter.on_decorating_result(priority=sys.maxsize-32)
     async def ground_own_space_recall(self,event):
         await self.own_space.ground_social_reply(event)
@@ -870,15 +879,16 @@ class QzonePlugin(Star):
         await self.own_space.prepare(event,req)
 
     @filter.llm_tool(name='dafeiyu_qzone_read_own')
-    async def read_own_space(self,event,pos:int=0,count:int=3,include_images:bool=False):
+    async def read_own_space(self,event,pos:int=0,count:int=3,include_images:bool=False,image_index:int=0):
         """读取鲸鲸自己7000000002的QQ空间正文、时间和配图，不查询聊天对象的空间，不点赞、评论或发消息。
 
         Args:
             pos(number): 从第几条开始，0是最新，最大30
             count(number): 最多读几条，1到5；爸爸私信可同时读取最新评论
-            include_images(boolean): 问配图、图片画面时必须true，把真实配图交给视觉模型理解；默认false只读正文
+            include_images(boolean): 问配图、照片画面时true；已有视觉记忆直接复用，缺失时实际看图并保存内容；默认false只读正文
+            image_index(number): 所选动态内的第几张照片，从0开始，最大8；照片编号不能混用
         """
-        try:return await self.own_space.result(event,pos,count,include_images)
+        try:return await self.own_space.result(event,pos,count,include_images,image_index)
         except ValueError as error:return str(error)
         except Exception:return '自己的空间这次没有读成功，不能据此断言没有发布或编造内容。'
 

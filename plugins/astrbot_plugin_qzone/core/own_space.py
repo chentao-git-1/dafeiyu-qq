@@ -74,16 +74,17 @@ class OwnSpace:
     @staticmethod
     def view(post,comments=False):
         row={'tid':str(post.tid),'uin':BOT,'time_beijing':datetime.fromtimestamp(post.create_time,TZ).isoformat(),
-            'text':post.text[:1500],'image_count':len(post.images),'images':post.images[:3]}
+            'text':post.text[:1500],'image_count':len(post.images),'images':post.images[:9]}
         if comments:row['comments']=[{'author_qq':str(c.uin),'text':c.content[:180],'parent_id':c.parent_tid,'comment_id':c.tid} for c in post.comments[-8:]]
         return row
     def local_records(self,pos,count):
         with sqlite3.connect('file:'+str(self.plugin.cfg.db_path)+'?mode=ro',uri=True) as c:
             rows=c.execute("SELECT tid,text,images,create_time FROM posts WHERE uin=? AND tid IS NOT NULL AND tid<>'' AND status='approved' ORDER BY create_time DESC LIMIT ? OFFSET ?",(BOT,count,pos)).fetchall()
-        return [{'tid':r[0],'uin':BOT,'text':r[1][:1500],'images':json.loads(r[2])[:3],'image_count':len(json.loads(r[2])),
+        return [{'tid':r[0],'uin':BOT,'text':r[1][:1500],'images':json.loads(r[2])[:9],'image_count':len(json.loads(r[2])),
             'time_beijing':datetime.fromtimestamp(r[3],TZ).isoformat()} for r in rows]
-    async def read(self,pos=0,count=3,comments=False,include_images=False):
+    async def read(self,pos=0,count=3,comments=False,include_images=False,image_index=0):
         pos=max(0,min(int(pos),30));count=max(1,min(int(count),5))
+        image_index=max(0,min(int(image_index),8))
         key=(pos,count,comments)
         async with self.lock:
             cached=self.cache.get(key)
@@ -103,6 +104,8 @@ class OwnSpace:
                                 parsed=QzoneParser.parse_feeds([detail.data])
                                 if parsed and int(parsed[0].uin)==BOT and str(parsed[0].tid)==str(posts[0].tid):posts[0]=parsed[0];detail_ok=True
                         except Exception:pass
+                    if getattr(self.plugin,'photo_memory',None) is not None:
+                        for post in posts:await self.plugin.db.save(post)
                     payload={'source':'actual_own_qzone','live_verified':True,'checked_at':time.time(),
                         'posts':[self.view(p,comments) for p in posts],'comment_detail_confirmed':detail_ok,'from_cache':False}
                     self.cache[key]=payload
@@ -111,16 +114,30 @@ class OwnSpace:
                     payload={'source':'local_published_record','live_verified':False,'checked_at':time.time(),
                         'posts':self.local_records(pos,count),'notice':'空间实时读取未成功；以下仅为过去发布记录，不能断言仍可见或评论最新。'}
         image=None
-        if include_images and payload['live_verified'] and payload['posts'] and payload['posts'][0]['images']:
-            try:image=await fetch_image(payload['posts'][0]['images'][0])
-            except Exception:payload['image_notice']='配图下载未成功，本轮只读到文字和图片数量，不能编造画面。'
+        if include_images and payload['posts'] and image_index<len(payload['posts'][0]['images']):
+            memory=getattr(self.plugin,'photo_memory',None);first=payload['posts'][0];remembered=None
+            first.pop('photo_memory',None)
+            try:
+                if memory is not None:remembered=await memory.lookup(first['tid'],image_index)
+                if remembered is None and payload['live_verified']:
+                    image=await fetch_image(first['images'][image_index])
+                    if memory is not None:
+                        remembered=await memory.describe(first['tid'],image_index,image,'own_space_read')
+                        # This path already attempted vision. Do not cause another caption call.
+                        image=None
+                if remembered:
+                    first['photo_memory']=dict(remembered,image_number=image_index+1,current_live_image_rechecked=False)
+                elif memory is not None:payload['photo_memory_unavailable']=True
+            except Exception:
+                payload['photo_memory_unavailable']=True
+                if memory is not None:image=None
         payload['image_attached']=image is not None
         self.last={k:payload[k] for k in ('source','live_verified','checked_at','image_attached')}
         return payload,image
-    async def result(self,event,pos,count,include_images):
+    async def result(self,event,pos,count,include_images,image_index=0):
         uid=self.allowed(event)
         comments=uid=='7000000001' and event.is_private_chat()
-        payload,picture=await self.read(pos,count,comments,include_images)
+        payload,picture=await self.read(pos,count,comments,include_images,image_index)
         if re.search(r'新朋友|叔叔|阿姨|哪几位|哪几个人|哪些人|都有谁|是谁',str(event.message_str or '')):
             evidence=await self.social_evidence(event,payload)
             if evidence is not None:

@@ -41,7 +41,7 @@ from .generation_workflow import GenerationWorkflow
 from .public_sharing import PublicSharing
 
 
-@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.4')
+@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.5')
 class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicSharing, Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -617,7 +617,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             evidence=event.get_extra('dafeiyu_dialogue_evidence',{})
             if section=='publications':
                 snapshot=await asyncio.to_thread(self.catalog().read,turn,time.time())
-                rows=sorted((r for r in snapshot.items if r.kind in ('publication','public_interaction')),
+                rows=sorted((r for r in snapshot.items if r.kind in ('publication','publication_photo','public_interaction')),
                     key=lambda r:(r.recorded_at,r.id),reverse=True)
                 chosen=[];size=0
                 for row in rows:
@@ -722,7 +722,8 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.7.4', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.7.5', 'mode': self.config.get('mode', 'shadow'),
+            'publication_photo_content_recall':True,
             'public_space_memory_enabled':bool(self.catalog().public_space),
             'public_inspiration_in_primary_generation':True,
             'public_inspiration_extra_model_calls':0,

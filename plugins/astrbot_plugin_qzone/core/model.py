@@ -105,6 +105,8 @@ class Comment(BaseModel):
 class Post(pydantic.BaseModel):
     """稿件"""
 
+    _published_images: list[bytes] = pydantic.PrivateAttr(default_factory=list)
+
     id: int | None = None
     """稿件ID"""
     tid: str | None = None
