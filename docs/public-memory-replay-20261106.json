@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "commit": "d2100595788f85a79a698de3d39167ef341c97ab",
+  "checked_at_beijing": "2026-11-06T21:36:42.772229+08:00",
+  "confirmed_posts": 15,
+  "publication_memory_parts": 15,
+  "interaction_records": 26,
+  "existing_activity_rows_preserved": true,
+  "migration_idempotent": true,
+  "publications_retrievable": true,
+  "group_comment_acl_preserved": true,
+  "qzone_source_read_only": true,
+  "network": "none",
+  "model_calls": 0,
+  "live_database_writes": 0,
+  "qq_sends": 0,
+  "qzone_posts": 0
+}
