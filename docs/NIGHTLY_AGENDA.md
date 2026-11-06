@@ -1,6 +1,6 @@
 # 夜间规划与白天行程
 
-2026-11-06：核心 0.3.0、日常 0.7.0、统一对话 0.7.1。部署结果核验后记录。
+2026-11-06 **17:11（北京时间）已上线并核验通过**：核心 0.3.0、日常 0.7.0、统一对话 0.7.1。代码 `9f6208e64967c349249c23eb9eaf6d5ac06a4fa3` 已推送 main。见 [部署证据](nightly-agenda-deployment-20261106.json) 与 [离线数据回放](nightly-agenda-offline-replay-20261106.json)。
 
 用户选择北京时间 23:00 规划、次日 09:00–21:00 执行；活动数量交给模型决定。夜间启用后，周期性的旧打算评估由一次次日规划替代。模型自行选择阅读、写作、服务可用时的绘画，决定时间和条数，也可以安排休息或返回空计划。没有每天一项或三项的固定配额，也不再沿用旧模式每七项才可绘画的轮换限制。
 
@@ -32,3 +32,7 @@
 .\.venv312\Scripts\python.exe scripts/run_tests.py test_nightly_agenda.py test_interest_development.py test_self_direction.py test_execution_autonomy.py test_autonomy_pacing.py test_personality_growth.py test_interest_loop.py test_topic_variety.py test_persona_native.py test_evening_native.py
 .\.venv312\Scripts\python.exe scripts/run_tests.py --core
 ```
+
+生产镜像断网通过同样的 130 项检查。另用现有自有活动记录的副本回放跨日排程，验证一次预留、多个条目、白天才可执行、过期不补跑、计划不进入已完成经历，原有 10 项作品及每日运行行保持。回放没有调用模型、搜索、提取或生图，未修改正式数据。
+
+上线前一致备份 29 个数据库，替换并核对 13 个源文件；仅为日常插件启用上述四项行程配置，其他配置、私有画像、记忆、作品和空间排程保留。最终 AstrBot healthy、QQ running、启动导入错误 0。部署时 11 月 7 日的正式计划为 not_planned、条目 0，首次夜间规划安排在 11 月 6 日 23:00；没有将测试行程写入正式库或提前触发模型。
