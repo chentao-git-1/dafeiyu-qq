@@ -16,7 +16,7 @@ from .life import TZ, LifeEngine, LifeStore
 from dafeiyu.life.topic_context import relevant as relevant_life, world_profile
 
 
-@register("dafeiyu_life", "Local", "带来源的持续项目、反思与海边小屋故事", "0.6.0")
+@register("dafeiyu_life", "Local", "自主兴趣、可暂停的持续项目与数字创作", "0.6.1")
 class JingjingLife(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -95,6 +95,11 @@ class JingjingLife(Star):
         latest = self.public_context()
         return json_response(
             {
+                "version": "0.6.1",
+                "self_chosen_interests": True,
+                "new_interest_requires_prior_source": False,
+                "model_managed_project_pause": True,
+                "creation_uses_selected_context": True,
                 "enabled": self.store.enabled(),
                 "completed_activities": self.store.count(),
                 "today_status": plan["status"],

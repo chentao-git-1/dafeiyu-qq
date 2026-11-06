@@ -9,12 +9,12 @@ import time
 from dafeiyu.ports import TextProvider
 
 
-POLICY = '''为AI角色选择一次自己的数字活动。输入仅含操作员种子偏好、真实作品、带来源反思和持续项目，不含人的私聊。结合尚未解决的问题、已做过什么和现在可用的材料，选择继续项目、开一个有理由的新方向，或者暂不行动。不要按次数轮播、随机抽签或为了“有生活”硬凑。
-grown_dispositions若存在只含机器人自己的全局长期倾向，可参考其中的适用情境和反向分寸发展兴趣；它不证明活动已完成，不改变每日额度、工具范围、身份和权限。operator_seed是起点，不强制每次选同样的题目。
-operator_seed.id也是明确可引用的兴趣来源；尚无作品或项目时，可以从自己的兴趣提出一个具体问题，开始原创文字或受控阅读，不必先有成品才允许创作。创作构思不要求外部事实证据；阅读问题会交给工具查证，不提前编知识或网址。已有项目值得继续时接着推进，不重复建立同一个方向。none仍然是允许的真实选择，不把没有历史成品误解成无法自主开始。
+POLICY = '''为自己的数字活动作一次选择。资料是已有经历和可用工具，不是一张必须逐项完成的任务单。决定现在想继续什么、尝试什么、暂放什么，或不行动；选题与表达方式由你决定。
+operator_seed和grown_dispositions记录起点及过去特定情境中的偏好，不规定今后只能喜欢什么，也不要求每次体现同一种性格。新兴趣可以直接从此刻的好奇或创作想法开始；没有引用旧材料时source_ids可以为空，不必借用旧作品或初始偏好来证明这个想法。引用材料时只填实际提供的编号，想象不充当外部事实或已完成活动。
+项目没有解完也可以放下，暂停不意味着问题已解决。project_updates可将已有项目设为paused或active，每项写project_id、expected_version、status；不修改的项目不用列出。继续或恢复已有项目用它的project_id，新项目留空；none也可以同时暂停项目。阅读失败只说明那次没读到资料，可以换方法、换兴趣或休息，原创文字不必再围绕这次失败。没有新想法也可以继续原兴趣，不为了变化而凑内容。
 self_direction是自己此前保存的打算，只是意向。适合且工具允许时可以推进它的next_step，direction_version填其version且kind与它一致；source_ids仍取operator:seed或recent_works/reflections中的作品编号，不填direction的编号。可以暂不推进或做其他方向，此时direction_version为0。不能为完成打算绕开allowed_kinds或把阅读失败后的文字替代称作完成了原阅读步骤。
 已有兴趣是起点，不要求每次围绕同一作品或同一世界。可从真实资料、表达方式或尚未解决的问题发展新的具体方向，也可以保持或暂放；不按固定清单轮播。use_world只在本次确实想延续已有虚构世界时为true，阅读或其他活动不必附故事；false不妨碍自由创作其他原创文字。
-只输出JSON：{"kind":"reading|writing|drawing|none","project_id":"已有项目编号或空串","expected_version":0,"title":"项目标题","question":"这次具体想弄清或表达什么","source_ids":["实际提供的来源编号"],"reason":"简短依据","direction_version":0,"use_world":false}。新项目expected_version为0；继续原项目保留其编号和版本。none时其他文字可为空，source_ids为空。阅读只给研究问题，不生成网址；工具会受控搜索和核验。绘画只有allowed_kinds允许才选择。没有合适材料、没有想推进的事或预算不足可none。不得把未执行的选择说成已完成，不生成联系、发布、改权限或花费的新授权。'''
+只输出JSON：{"kind":"reading|writing|drawing|none","project_id":"已有项目编号或空串","expected_version":0,"title":"项目标题","question":"这次具体想弄清或表达什么","source_ids":[],"reason":"自己的选择理由","direction_version":0,"use_world":false,"project_updates":[]}。新项目expected_version为0；继续原项目保留其编号和版本，已暂停的项目也可恢复。none时其他文字可为空，source_ids为空。阅读只给研究问题，不生成网址；工具会受控搜索和核验。绘画只有allowed_kinds允许才选择。没有想推进的事或预算不足可none。不得把未执行的选择说成已完成，不生成联系、发布、改权限或花费的新授权。'''
 
 
 class SelfJournal:
@@ -79,15 +79,26 @@ class SelfJournal:
                 (json.dumps(choice, ensure_ascii=False), day))
 
     def begin_project(self, choice):
-        if choice['kind'] == 'none':
-            return None
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
-            if choice['project_id']:
+            projects = [dict(row) for row in db.execute('SELECT * FROM projects')]
+            validate_project_updates(choice, projects)
+            old = None
+            if choice['kind'] != 'none' and choice['project_id']:
                 old = db.execute('SELECT * FROM projects WHERE id=?', (choice['project_id'],)).fetchone()
-                if not old or old['version'] != choice['expected_version'] or old['status'] != 'active':
+                if not old or old['version'] != choice['expected_version'] or old['status'] not in ('active', 'paused'):
                     raise ValueError('Project version changed')
-                return dict(old)
+            for change in choice.get('project_updates', []):
+                db.execute('UPDATE projects SET status=?,version=version+1,updated=? WHERE id=?',
+                    (change['status'], self.clock(), change['project_id']))
+            if choice['kind'] == 'none':
+                return None
+            if old:
+                current = db.execute('SELECT * FROM projects WHERE id=?', (old['id'],)).fetchone()
+                if current['status'] == 'paused':
+                    db.execute("UPDATE projects SET status='active',version=version+1,updated=? WHERE id=?",
+                        (self.clock(), old['id']))
+                return dict(db.execute('SELECT * FROM projects WHERE id=?', (old['id'],)).fetchone())
             pid = 'project:' + hashlib.sha256((choice['title']+'\n'+choice['question']).encode()).hexdigest()[:20]
             db.execute('INSERT OR IGNORE INTO projects VALUES(?,?,?,?,?,?,?)',
                 (pid, choice['title'], choice['question'], 'active', 1,
@@ -127,15 +138,64 @@ def validate_reflection(reflection, note):
             or any(not isinstance(reflection[k], str) for k in reflection)
             or not 2 <= len(reflection['insight']) <= 250 or len(reflection['next_question']) > 200
             or not reflection['evidence'] or reflection['evidence'] not in note
-            or reflection['status'] not in ('active', 'completed')):
+            or reflection['status'] not in ('active', 'paused', 'completed')):
         raise ValueError('Reflection lacks an attributed basis')
+
+
+def validate_project_updates(choice, projects):
+    updates = choice.get('project_updates', [])
+    offered = {p['id']: p for p in projects}
+    if not isinstance(updates, list) or len(updates) > len(offered):
+        raise ValueError('Invalid project updates')
+    seen = set()
+    for change in updates:
+        if (not isinstance(change, dict) or set(change) != {'project_id', 'expected_version', 'status'}
+                or not isinstance(change['project_id'], str) or change['project_id'] in seen
+                or type(change['expected_version']) is not int or change['status'] not in ('active', 'paused')):
+            raise ValueError('Invalid project update')
+        old = offered.get(change['project_id'])
+        if (not old or old['version'] != change['expected_version'] or old['status'] not in ('active', 'paused')
+                or choice['kind'] != 'none' and change['project_id'] == choice['project_id'] and change['status'] != 'active'):
+            raise ValueError('Project update version or selection changed')
+        seen.add(change['project_id'])
+
+
+def interest_context(journal, records):
+    """One latest work/reflection per project in the overview; originals remain stored."""
+    state = journal.view()
+    known = {'operator:seed', *[r['id'] for r in records]}
+    state['projects'] = [p for p in state['projects'] if all(s in known for s in p['sources'])]
+    projects = {p['id'] for p in state['projects']}
+    reflections = {}
+    for row in state['reflections']:
+        if row['project_id'] in projects and row['work_id'] in known:
+            reflections.setdefault(row['project_id'], row)
+    state['reflections'] = list(reflections.values())
+    works = {}
+    titles = {}
+    for row in state['projects']:
+        titles.setdefault(row['title'], []).append(row['id'])
+    for row in records:
+        legacy = titles.get(row.get('project'), [])
+        key = row.get('project_id') or (legacy[0] if len(legacy) == 1 else row.get('project')) or row['id']
+        works.setdefault(key, row)
+    return state, list(works.values())
+
+
+def creation_context(journal, records, choice, project):
+    """A new idea receives only materials the model selected, not every old project."""
+    known = {r['id'] for r in records}
+    reflections = [r for r in journal.view()['reflections']
+        if r['project_id'] == project['id'] and r['work_id'] in known][:1]
+    selected = set(choice['source_ids']) | {r['work_id'] for r in reflections}
+    return [r for r in records if r['id'] in selected], {'project': project, 'reflections': reflections}
 
 
 def parse_choice(raw, packet):
     from dafeiyu.dialogue.retrieval import json_object
     choice = json_object(raw)
     fields={'kind', 'project_id', 'expected_version', 'title', 'question', 'source_ids', 'reason'}
-    if not fields<=set(choice) or set(choice)-fields-{'direction_version','use_world'}:
+    if not fields<=set(choice) or set(choice)-fields-{'direction_version','use_world','project_updates'}:
         raise ValueError('Unexpected activity decision')
     if type(choice.get('use_world',False)) is not bool:raise ValueError('Invalid fiction choice')
     if choice['kind'] not in {*packet['allowed_kinds'], 'none'} or type(choice['expected_version']) is not int:
@@ -149,17 +209,18 @@ def parse_choice(raw, packet):
     offered.update(r['work_id'] for r in packet['self_state']['reflections'])
     if any(not isinstance(i, str) or i not in offered for i in choice['source_ids']):
         raise ValueError('Invented activity source')
+    validate_project_updates(choice, packet['self_state']['projects'])
     version=choice.get('direction_version',0);direction=packet.get('self_direction') or {}
     if type(version) is not int or version<0 or version and (version!=direction.get('version')
             or direction.get('status')!='intent' or choice['kind']!=direction.get('kind')):
         raise ValueError('Unknown or mismatched intention step')
     if choice['kind'] == 'none':
         return choice
-    if not choice['title'] or not choice['question'] or not choice['source_ids']:
+    if not choice['title'].strip() or not choice['question'].strip() or not choice['reason'].strip():
         raise ValueError('Activity lacks a reason or question')
     if choice['project_id']:
         old = next((p for p in packet['self_state']['projects'] if p['id'] == choice['project_id']), None)
-        if not old or old['version'] != choice['expected_version'] or old['status'] != 'active':
+        if not old or old['version'] != choice['expected_version'] or old['status'] not in ('active', 'paused'):
             raise ValueError('Unknown project')
     elif choice['expected_version'] != 0:
         raise ValueError('New project has no old version')
@@ -169,8 +230,9 @@ def parse_choice(raw, packet):
 async def choose_activity(provider: TextProvider, journal, records, allowed_kinds, availability=None,growth=None,outcomes=None):
     from dafeiyu.memory.self_profile import self_profile
     from dafeiyu.dialogue.review import structured_result
-    packet = {'operator_seed': {'id':'operator:seed','profile':self_profile()}, 'self_state': journal.view(),
-        'recent_works': [{k: r[k] for k in ('id', 'day', 'kind', 'note', 'thought', 'source')} for r in records],
+    state, overview = interest_context(journal, records)
+    packet = {'operator_seed': {'id':'operator:seed','profile':self_profile()}, 'self_state': state,
+        'recent_works': [{k: r[k] for k in ('id', 'day', 'kind', 'note', 'thought', 'source')} for r in overview],
         'allowed_kinds': list(allowed_kinds), 'max_activities_today': 1}
     if availability:packet['availability']=availability
     if growth:packet['grown_dispositions']=growth

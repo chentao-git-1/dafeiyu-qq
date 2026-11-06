@@ -8,21 +8,21 @@ from pathlib import Path
 import sqlite3
 import time
 
-POLICY='''你在为自己的数字兴趣形成一个持续打算。资料只含自己的稳定画像、已核验作品、项目和全局性格倾向，不含任何人的私聊。自主决定想继续什么、换一个方向、暂时放下，或保持原样。可以从种子兴趣提出新问题；不按次数轮播，不为了显得有自主性硬凑。
+POLICY='''你在为自己的数字兴趣形成一个持续打算。资料只含自己的稳定画像、已核验作品、项目和全局性格倾向，不含任何人的私聊。自主决定想继续什么、换一个方向、暂时放下，或保持原样。旧兴趣和旧倾向是经历，不是选题范围或每次创作的要求。新好奇、新构思可以从当下产生，不需要证明自己以前喜欢过相关事物。
+未解的问题可以暂放，不必先解决才开始别的兴趣。阅读失败也不要求下一次继续写这次失败或等待答案；可以换方法、换内容，或不行动。是否继续由你决定，不必按次数轮播或为了变化硬凑。
 这是意向，不是已执行的活动或对人的承诺。next_step写一个接下来想尝试的具体小步骤，只能属于reading、writing或drawing；实际执行仍由已有工具与预算检查。可以画、写、查证一个问题，不能增加联系人、发布、提醒、代码修改、身份、权限或支出授权；不把猜测写成外部知识或虚构身体经历。
 只有实际完成的工具记录且结果核对通过才能完成一个打算。activity_outcomes是实际尝试的结果与错误类型，step_assessments是是否解决原问题的独立核对；失败不是成功，也不要求放弃。根据结果调整问题、方法或下一步，不重复执行已失败的外部动作；真实执行仍受已有预算检查。
 可以修订思路或pause，不自行宣称完成。参考已完成的步骤继续发展，避免重复研究同一个问题。新内容不足可hold，重新考虑间隔由自己决定，到时也可保持原样。pursue时同时决定execute_after_minutes，0表示希望尽快开始，正数表示想先等多久；这是自选的执行时间，不是已开始的证据。可以按北京时间在任何时段安排自己的数字活动，和是否打扰别人分开考虑。实际额度用完时保持或调整打算，不许重置额度。
-只输出JSON：decision(pursue/pause/hold)、expected_version(精确等于current.version，没有时0)、title(最多80字)、question(最多200字)、next_step(最多200字)、kind(reading/writing/drawing或空串)、source_ids(给出的资料编号数组)、source_quote(逐字摘自其中一项note)、reason(最多250字)、reconsider_after_minutes(整数1到1440)、execute_after_minutes(整数0到1440)。pursue时标题、问题、小步骤、来源和摘录非空；pause或hold时这些内容可空。不能输出工具调用。'''
+只输出JSON：decision(pursue/pause/hold)、expected_version(精确等于current.version，没有时0)、title(最多80字)、question(最多200字)、next_step(最多200字)、kind(reading/writing/drawing或空串)、source_ids(引用的资料编号数组，独立新想法可为空)、source_quote(引用时逐字摘自其中一项note，没有引用则为空)、reason(最多250字)、reconsider_after_minutes(整数1到1440)、execute_after_minutes(整数0到1440)。pursue时标题、问题、小步骤和选择理由非空；pause或hold时这些内容可空。不能输出工具调用。'''
 
 
 def packet(store,journal,growth=None):
     from dafeiyu.memory.self_profile import self_profile
+    from .planning import interest_context
     works=store.verified_records(60)
+    state,overview=interest_context(journal,works)
     sources=[dict(id='operator:seed',note=json.dumps(self_profile(),ensure_ascii=False))]
-    sources.extend({k:r[k] for k in ('id','day','kind','note','thought')} for r in works[:12])
-    state=journal.view();known={r['id'] for r in works}
-    state['reflections']=[r for r in state['reflections'] if r['work_id'] in known]
-    state['projects']=[r for r in state['projects'] if all(s in known or s=='operator:seed' for s in r['sources'])]
+    sources.extend({k:r[k] for k in ('id','day','kind','note','thought')} for r in overview[:12])
     outcomes=store.outcomes() if callable(getattr(store,'outcomes',None)) else []
     sources.extend(dict(id=r['id'],note=r['note']) for r in outcomes)
     return dict(sources=sources,self_state=state,character_growth=growth or {},
@@ -51,9 +51,10 @@ def parse(raw,materials,current):
     if not isinstance(ids,list) or len(ids)>8 or any(not isinstance(i,str) or i not in offered for i in ids):
         raise ValueError('Unknown intention source')
     if obj['decision']=='pursue' and (obj['kind'] not in ('reading','writing','drawing')
-            or not all(obj[k].strip() for k in ('title','question','next_step','source_quote')) or not ids
-            or not any(obj['source_quote'] in offered[i] for i in ids)):
-        raise ValueError('Intention lacks a source or a concrete step')
+            or not all(obj[k].strip() for k in ('title','question','next_step','reason'))
+            or ids and (not obj['source_quote'] or not any(obj['source_quote'] in offered[i] for i in ids))
+            or not ids and obj['source_quote']):
+        raise ValueError('Intention lacks a concrete step or misattributes a source')
     if obj['decision']=='pause' and not current:raise ValueError('No intention to pause')
     return obj
 
@@ -114,7 +115,7 @@ class DirectionStore:
             if choice['decision']=='pursue':
                 self._append(db,{k:choice[k] for k in ('title','question','next_step','kind','source_ids','reason')}|
                     dict(status='active',completed_work=None,execute_at=now+choice.get('execute_after_minutes',0)*60),now)
-            elif choice['decision']=='pause':self._append(db,dict(current,status='paused'),now)
+            elif choice['decision']=='pause':self._append(db,dict(current,status='paused',reason=choice['reason']),now)
             elif current and current['status']=='active' and 'execute_at' not in current:
                 self._append(db,dict(current,execute_at=now+choice.get('execute_after_minutes',0)*60),now)
             db.execute('UPDATE reviews SET status=?,next_at=? WHERE id=?',
