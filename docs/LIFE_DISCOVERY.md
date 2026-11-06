@@ -1,5 +1,7 @@
 # 自主探索与生活内容
 
+2026-11-06 **18:14（北京时间）已部署并核验**。核心 0.3.1、日常 0.7.1、统一对话 0.7.1，代码 `a9f8e89efe41eae0e4ff3665834a65b096ee0174` 已推送 main。见 [部署证据](life-variety-deployment-20261106.json)。
+
 当前用户希望生活更丰富，仍由模型选择兴趣、数量和安排，不使用固定话题表或强制轮换。新增能力保持北京时间 23:00 规划、次日 09:00–21:00 执行。
 
 此前规划只带每个项目的最近一条作品，旧项目实际重复了多少次不可见；日常只有阅读、写作和绘画，阅读直接打开搜索的第一个有效结果。允许新兴趣的提示并没有提供先浏览、再选择的活动过程。
@@ -28,3 +30,7 @@
 .\.venv312\Scripts\python.exe scripts/run_tests.py test_life_discovery.py test_nightly_agenda.py test_interest_loop.py test_interest_development.py test_personality_growth.py test_topic_variety.py
 .\.venv312\Scripts\python.exe scripts/run_tests.py test_self_direction.py test_execution_autonomy.py test_autonomy_pacing.py test_core_architecture.py test_persona_native.py test_evening_native.py
 ```
+
+本地与生产镜像断网检查各 138 项通过。用线上自有活动副本回放，确认原有 10 项活动保留、分布计数完整、依赖关系持久化、未完成探索不能成为素材，计划仍不算已完成经历。
+
+上线前备份 29 个数据库，只替换 10 个源文件并配置上述生活方向；原记忆、作品、空间发布账本和其他配置保留。AstrBot healthy、QQ running、启动导入错误 0。本次付费模型测试、真实检索提取测试、生图和 QQ／空间试发均为 0。18:14 只读核验时，明日 11 月 7 日的正式行程仍为 `not_planned`，留待今晚 23:00 正常生成；没有把模拟发现或测试行程写入正式库。能力已上线，实际题材丰富程度继续以之后正常产生的活动为准。
