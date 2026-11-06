@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "legacy_work_records": 9,
+  "legacy_fields_preserved": true,
+  "old_artwork_not_relabelled": true,
+  "photo_framing_persisted": true,
+  "real_production_provenance_retained": true,
+  "private_scope_and_forgetting_preserved": true,
+  "live_database_writes": 0,
+  "model_calls": 0,
+  "image_calls": 0,
+  "qq_sends": 0,
+  "network": "none",
+  "commit": "027e032f49250607301d7a063551b38adeba41e7",
+  "checked_at_beijing": "2026-11-06T20:14:57.451780+08:00"
+}
