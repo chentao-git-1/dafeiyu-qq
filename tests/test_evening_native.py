@@ -241,21 +241,22 @@ class Diary(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(daily.DiaryCancelled): await obj.publish(post,before_publish=guard)
         obj._upload_image.assert_awaited_once(); obj.request.assert_not_awaited()
 
-    async def test_writer_rejects_unfounded_or_private_output_without_public_write(self):
+    async def test_writer_keeps_primary_wording_without_keyword_screening(self):
         obj = llm.LLMAction.__new__(llm.LLMAction); obj.editorial=self.editorial
         obj.cfg=NS(llm=NS(post_provider_id='fake',post_prompt='写简短动态'),client=object())
-        provider=Mock(spec=Provider);provider.text_chat=AsyncMock(return_value=NS(completion_text='爸爸今天带我出门去见朋友了，真开心。'))
+        text='“月亮”这个比喻，我还想接着写。'
+        provider=Mock(spec=Provider);provider.text_chat=AsyncMock(return_value=NS(completion_text=text))
         obj._get_provider=lambda *a:provider
-        with self.assertRaises(ValueError): await obj.generate_post(diary=True,now=self.now.timestamp())
-        self.assertEqual(provider.text_chat.await_count,2)
+        self.assertEqual(await obj.generate_post(diary=True,now=self.now.timestamp()),text)
+        self.assertEqual(provider.text_chat.await_count,1)
 
-    async def test_review_uncertainty_rejects_otherwise_innocent_text(self):
+    async def test_writer_does_not_call_independent_reviewer(self):
         obj=llm.LLMAction.__new__(llm.LLMAction);obj.editorial=self.editorial
         obj.cfg=NS(llm=NS(post_provider_id='fake',post_prompt='写简短动态'),client=object())
         provider=Mock(spec=Provider);provider.text_chat=AsyncMock(side_effect=[NS(completion_text=self.text),NS(completion_text='{"ok":false}')]*2)
         obj._get_provider=lambda *a:provider
-        with self.assertRaises(ValueError): await obj.generate_post(diary=True,now=self.now.timestamp())
-        self.assertEqual(provider.text_chat.await_count,4)
+        self.assertEqual(await obj.generate_post(diary=True,now=self.now.timestamp()),self.text)
+        self.assertEqual(provider.text_chat.await_count,1)
 
     async def test_window_expiry_during_images_has_zero_post_writes(self):
         async def delayed(*a,**kw): self.now=self.now.replace(hour=22,minute=30); return []
@@ -277,7 +278,7 @@ class Diary(unittest.IsolatedAsyncioTestCase):
         provider = Mock(spec=Provider);provider.text_chat=AsyncMock(side_effect=[NS(completion_text=self.text),NS(completion_text='{"ok":true}')])
         obj._get_provider=lambda *a:provider;obj._build_request_context=AsyncMock(side_effect=AssertionError('full persona must not enter diary'))
         result = await obj.generate_post(diary=True,now=self.now.timestamp())
-        self.assertEqual(result,self.text);self.assertEqual(provider.text_chat.await_count,2)
+        self.assertEqual(result,self.text);self.assertEqual(provider.text_chat.await_count,1)
         payload=str(provider.text_chat.await_args_list)
         self.assertNotIn('紫丁香',payload);self.assertNotIn('7000000011',payload)
         self.assertEqual(provider.text_chat.await_args_list[0].kwargs['contexts'],[])

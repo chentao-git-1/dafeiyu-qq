@@ -19,8 +19,8 @@
       "post_prompt": {
         "description": "写说说用的llm提示词",
         "type": "text",
-        "hint": "强烈建议自行根据Bot人格进行改写, 从而达到更好的效果",
-        "default": "## 找出一个你感兴趣的主题来写一句吐槽或感慨，注意精简"
+        "hint": "可选的公开写作偏好；留空时由主模型自由决定主题、形式与篇幅，不追加审稿或重写",
+        "default": ""
       },
       "comment_provider_id": {
         "description": "评论说说用的LLM提供商",

@@ -962,8 +962,6 @@ class QzonePlugin(Star):
             text = text.strip() or await self.llm.generate_post(topic=topic, event=event)
             if not text:
                 return "草稿生成失败，请重试。"
-            if len(text) > 1000:
-                return "草稿过长，请缩短到1000字以内。"
             post = Post(uin=int(event.get_self_id()), name="小鲸鱼", text=text, status="pending")
             await self.db.save(post)
             return (f"QQ空间草稿#{post.id}已保存，尚未发布。\n\n{post.text}\n\n"
@@ -1002,8 +1000,8 @@ class QzonePlugin(Star):
             autonomous = scope['autonomous_text']
             if autonomous:text='';topic=''
             text = text.strip() or await self.llm.generate_post(topic=topic, event=event)
-            if not text or len(text) > 1000:
-                return "正文为空或过长，请使用1000字以内的正文。"
+            if not text:
+                return "正文为空，尚未发布。"
             event.set_extra("dafeiyu_qzone_publish_attempted", True)
             try:
                 image_event=event if (scope['use_supplied_images'] or not autonomous) and not scope['reject_supplied_images'] else None

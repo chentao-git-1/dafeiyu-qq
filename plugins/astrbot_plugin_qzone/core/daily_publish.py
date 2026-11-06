@@ -7,6 +7,7 @@ import zoneinfo
 from .operations import problem, result
 from .post_images import prepare_post_images
 from .diary import DiaryCancelled, ImagePreparationFailed, window
+from .generation_error import error_code
 import aiosqlite
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
@@ -120,15 +121,14 @@ class DailyRandomPublisher:
                     await self._set_status(day, 'skipped')
                     return
                 text = await self.service.llm.generate_post(diary=True, now=self._now().timestamp())
-                if not text or len(text) > 1000:
-                    raise ValueError('Invalid generated post length')
+                if not text:
+                    raise ValueError('Empty generated post')
                 if not start <= self._now() < end:
                     await self._set_status(day, 'expired', text=text)
                     return
                 try:
                     own_image = await editorial.own_image(text, self._now().timestamp())
                     if own_image:
-                        await editorial.review_image(text, own_image)
                         images = [own_image]
                     else:
                         images = await prepare_post_images(self.cfg.context, text, editorial=editorial)
@@ -168,9 +168,9 @@ class DailyRandomPublisher:
             except DiaryCancelled:
                 await self._set_status(day, 'cancelled', text='')
             except Exception as exc:
-                await self._set_status(day, 'unknown' if publication_started else 'failed', error_type=type(exc).__name__)
+                await self._set_status(day, 'unknown' if publication_started else 'failed', error_type=error_code(exc))
                 await problem(self.cfg.client, 'qzone_publish', 'QZONE_WRITE')
-                logger.warning('QQ空间每日发布未完成：%s，%s；保留记录避免重复发送', day, type(exc).__name__)
+                logger.warning('QQ空间每日发布未完成：%s，%s；保留记录避免重复发送', day, error_code(exc))
             finally:
                 if not self._terminated:
                     await self._schedule_next()
