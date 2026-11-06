@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "commit": "220709b7f0784b647ecfc43cc8b58e56735425c2",
+  "checked_at_beijing": "2026-11-06T22:14:47.066234+08:00",
+  "existing_tables_preserved": 9,
+  "migration_idempotent": true,
+  "confirmed_posts": 15,
+  "existing_photos": 10,
+  "captions_fabricated": 0,
+  "legacy_images_wait_for_actual_view": true,
+  "network": "none",
+  "model_calls": 0,
+  "live_database_writes": 0,
+  "qq_sends": 0,
+  "qzone_posts": 0
+}
