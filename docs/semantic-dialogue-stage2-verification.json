@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "date_beijing": "2026-10-30",
+  "base_commit": "eb7e12441711a3db2d92c3e598f52f5265207b9c",
+  "candidate_versions": {"dafeiyu_dialogue": "0.2.0", "dafeiyu_natural_chat": "0.8.0", "protocol": 2},
+  "regression": {
+    "local_passed_tests": 240,
+    "production_image_passed_tests": 240,
+    "groups": [41, 21, 8, 22, 22, 6, 29, 14, 11, 23, 43],
+    "network": "none",
+    "production_data_mounted": false,
+    "production_image": "sha256:6bbe494e579a23773007e0db771a9a06ef5312127283874d105f45933b1a3567"
+  },
+  "model_evaluation": {
+    "configured_model": "deepseek-flash",
+    "all_api_requests": 280,
+    "request_kinds": {"main": 144, "review": 120, "verification": 16},
+    "runs": {"initial_development": 72, "refined_development": 60, "final_development_and_probes": 70, "hidden_repeat_1": 39, "hidden_repeat_2": 39},
+    "input_tokens": 670868,
+    "input_cache_hit_tokens": 420608,
+    "output_tokens": 10565,
+    "final_candidate_conversation_turns": 48,
+    "final_candidate_review_decisions": {"accept": 38, "revise": 8, "unavailable": 2},
+    "draft_probes": 12,
+    "probe_decisions_matching_expected": 12,
+    "probe_revisions_independently_rejected": 1,
+    "hidden_families_tested": 2,
+    "hidden_families_total": 32,
+    "hidden_repetitions": 2,
+    "human_blind_rating": "not_performed",
+    "group_plugin_included": false,
+    "real_qq_sends": 0,
+    "production_memory_writes": 0,
+    "quality_gate": "not_passed",
+    "money_cost": "not_measured"
+  },
+  "matched_hidden_measurements": {
+    "baseline": {"turns": 24, "api_requests": 24, "median_request_sum_ms": 1157.39, "p95_request_sum_ms": 1672.19, "input_tokens": 96180, "cache_hit_tokens": 58368, "output_tokens": 1154},
+    "candidate": {"turns": 24, "api_requests": 54, "median_request_sum_ms": 2023.82, "p95_request_sum_ms": 3118.9, "input_tokens": 119257, "cache_hit_tokens": 75392, "output_tokens": 2018},
+    "latency_scope": "sum of reported HTTP request elapsed time; excludes hooks, queues, QQ sends, tools, media, and TTS"
+  },
+  "deployment": {
+    "finished_at_beijing": "2026-10-30T01:37:12.417584+08:00",
+    "dialogue_version": "0.2.0",
+    "natural_chat_version": "0.7.3",
+    "mode": "shadow",
+    "active_private_user_count": 0,
+    "legacy_adapter_ready": false,
+    "review_statistics": {},
+    "business_sources_preserved": true,
+    "business_configurations_preserved": true,
+    "observer_config_default_may_be_added": true,
+    "container_restarted": false,
+    "container_healthy": true,
+    "runtime_guards_verified": true,
+    "source_databases_read_only": true,
+    "private_consistent_backup_completed": true,
+    "extra_model_requests_from_shadow": 0
+  },
+  "unmet_gates": ["naturalness_and_fact_quality", "independent_human_blind_review", "full_hidden_suite", "mostly_one_main_generation", "billed_cost_comparison", "private_pilot_observation"],
+  "unimplemented_plan_stages": ["S4_learning", "S5_activity_planning_and_reflection", "S6_initiative_and_voice", "S7_pipeline_consolidation"]
+}

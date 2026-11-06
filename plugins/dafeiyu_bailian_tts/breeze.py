@@ -14,7 +14,7 @@ from astrbot.core.provider.entities import ProviderType
 from astrbot.core.provider.provider import TTSProvider
 from astrbot.core.provider.register import provider_cls_map, register_provider_adapter
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from .expression import SPEECH_CONTEXT, speech_plan
+from dafeiyu.media.voice.expression import SPEECH_CONTEXT, speech_plan
 
 ADAPTER='dafeiyu_breeze_tts'
 MODEL='breeze-tts-2'
@@ -22,6 +22,7 @@ API='https://api.breeze.blue/v1/text-to-speech/'
 LIMIT=12*1024*1024
 INSTRUCTION='保持已保存音色，用标准普通话自然、轻柔地说话，只说给定文本。'
 MOODS={'chat':'自然放松，语速适中。','comfort':'安慰时轻柔平稳，语速稍慢。','happy':'开心时轻快明亮，带自然笑意。','explain':'解释时温和认真，吐字清楚。'}
+MOODS['neutral']='平稳自然地朗读，不额外添加情绪或话语。'
 RELATIONS={'dad':'对爸爸有自然亲近感。','family':'与家人熟络自然。','friend':'保持朋友分寸，不刻意撒娇。'}
 
 

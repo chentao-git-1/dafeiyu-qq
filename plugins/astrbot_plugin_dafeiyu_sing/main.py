@@ -17,8 +17,8 @@ from astrbot.core.agent.message import TextPart
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-from .intent import IntentStore, request_key, FOLLOW, intent_kind
-from .singing import SingingError, SingingGate, synthesize
+from dafeiyu.media.singing.intent import IntentStore, request_key, FOLLOW, intent_kind
+from dafeiyu.media.singing.singing import SingingError, SingingGate, synthesize
 
 OWNER='7000000001'
 BOT='7000000002'
@@ -62,7 +62,7 @@ class DafeiyuSing(Star):
         return ''.join(p.text for p in event.get_messages() if isinstance(p,Plain)).strip()
 
     def _names(self):
-        from data.plugins.dafeiyu_natural_chat.continuity import verified_names
+        from dafeiyu.memory.continuity import verified_names
         allowed=self.context.get_config()['platform_settings'].get('id_whitelist',[])
         return verified_names(self.data,allowed)
 

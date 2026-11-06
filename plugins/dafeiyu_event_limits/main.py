@@ -21,7 +21,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 )
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-from .quota import ReplyLedger, ReplyLimitExceeded
+from dafeiyu.limits.quota import ReplyLedger, ReplyLimitExceeded
 
 PLATFORM = "dafeiyu-qq"
 NOTICE_TURN = contextvars.ContextVar("dafeiyu_quota_notice_turn", default=None)

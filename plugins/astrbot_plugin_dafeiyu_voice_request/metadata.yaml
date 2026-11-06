@@ -1,6 +1,6 @@
 name: astrbot_plugin_dafeiyu_voice_request
 display_name: 按要求发语音
 author: local
-version: 0.2.2
+version: 0.2.3
 desc: 语音要求与偏好优先，普通聊天保留配置概率，整条回复合为一段语音，简短回应使用文字。
 astrbot_version: ">=4.29.1"

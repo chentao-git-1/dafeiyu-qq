@@ -1,0 +1,75 @@
+{
+  "commit": "7ca5d37349db53ddf221c8b56d32270a9854cc6f",
+  "versions": {
+    "dafeiyu_dialogue": "0.4.2",
+    "dafeiyu_message_routes": "0.2.0",
+    "dafeiyu_runtime": "0.3.4",
+    "dafeiyu_natural_chat": "0.10.0",
+    "astrbot_plugin_group_chat_plus": "1.2.3.hotfix.2",
+    "长期记忆系统": "1.5.0",
+    "dafeiyu_life": "0.3.2",
+    "dafeiyu_companion": "0.4.1",
+    "dafeiyu_bailian_tts": "0.4.0",
+    "astrbot_plugin_dafeiyu_draw": "0.1.8"
+  },
+  "mode": "active",
+  "feature_flags": {
+    "learning_v2": true,
+    "activity_policy_v2": true,
+    "initiative_policy_v2": true,
+    "voice_intent_v2": true
+  },
+  "all_allowed_private": true,
+  "all_allowed_groups": true,
+  "existing_config_values_preserved": true,
+  "unrelated_sources_preserved": true,
+  "container_healthy": true,
+  "qq_platform_running": true,
+  "runtime_guards_verified": true,
+  "active_entry_off_on_rehearsed": true,
+  "old_data_overwritten": false,
+  "observation_started_at_beijing": "2026-10-31T14:07:41.421556+08:00",
+  "deployed": true,
+  "initial_release_commit": "194a71eacd6fdb169b0b47c95448b645626dde8f",
+  "initial_release_at": "2026-10-31T13:57:15.818201+08:00",
+  "tests": {
+    "initial_focused": 30,
+    "followup_activity": 5,
+    "distinct_checks": 31,
+    "full_suite_run": false,
+    "production_image_verified": true,
+    "network_during_isolated_checks": false,
+    "production_data_mounted_in_tests": false
+  },
+  "synthetic_model_calls": 12,
+  "synthetic_primary_generations": 4,
+  "synthetic_reply_characters": [
+    37,
+    32,
+    57,
+    29
+  ],
+  "test_qq_sends": 0,
+  "test_qzone_posts": 0,
+  "test_images_generated": 0,
+  "production_activity": {
+    "observed_at": "2026-10-31T14:08:05.497825+08:00",
+    "day": "2026-10-31",
+    "kind": "writing",
+    "completed_activities": 5,
+    "before_initial_activity_completed": 4,
+    "artifact_verified": true,
+    "reflection_link_verified": true,
+    "project_version": 2,
+    "extra_daily_quota": 0,
+    "forced_activity_kind": false,
+    "same_day_reading_adaptation": true
+  },
+  "sqlite_backups_initial": 9,
+  "sqlite_backups_followup": 10,
+  "naturalness_observation": "small samples only; ongoing real conversation observation",
+  "known_limits": [
+    "One synthetic primary required bounded format recovery.",
+    "Synthetic summary progress precision remains imperfect."
+  ]
+}

@@ -25,7 +25,7 @@ from astrbot.core.provider.provider import TTSProvider
 from astrbot.core.provider.register import provider_cls_map, register_provider_adapter
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path, get_astrbot_data_path
 
-from .expression import SPEECH_CONTEXT, relationship, relationship_prompt, speech_plan
+from dafeiyu.media.voice.expression import SPEECH_CONTEXT, relationship, relationship_prompt, speech_plan
 from .breeze import ADAPTER as BREEZE_ADAPTER
 
 ADAPTER = 'dafeiyu_bailian_tts'
@@ -191,7 +191,8 @@ class JingjingBailianTTS(Star):
                 os.replace(temporary, self.relations_path)
         profile = relationship(uid, record)
         event.set_extra('jingjing_relationship_profile', profile)
-        req.system_prompt = (req.system_prompt or '') + relationship_prompt(profile)
+        if not event.get_extra('dafeiyu_generation_contract',False):
+            req.system_prompt = (req.system_prompt or '') + relationship_prompt(profile)
 
     @filter.on_decorating_result(priority=sys.maxsize - 20)
     async def expression_context(self, event):
@@ -203,7 +204,11 @@ class JingjingBailianTTS(Star):
         human_text = ' '.join(part.text for part in event.get_messages() if isinstance(part, Plain))
         if event.get_extra('jingjing_voice_continuity') == 'gentle':
             human_text += ' 心情不好，语气仍轻一些。'
-        SPEECH_CONTEXT.set({'profile': profile, 'human_text': human_text})
+        meta=self.context.get_registered_star('dafeiyu_dialogue')
+        dialogue=getattr(meta,'star_cls',None) if meta and meta.activated else None
+        semantic=bool(event.get_extra('dafeiyu_generation_valid',False) and dialogue and dialogue.feature('voice_intent_v2'))
+        SPEECH_CONTEXT.set({'profile': profile, 'human_text': human_text,
+            'semantic_generation':semantic,'expression':event.get_extra('jingjing_expression_intent',None)})
 
     async def status(self):
         provider = await self.context.get_using_tts_provider_async('dafeiyu-qq:FriendMessage:7000000001')

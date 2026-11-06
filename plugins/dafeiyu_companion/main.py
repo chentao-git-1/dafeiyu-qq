@@ -16,11 +16,11 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.web import json_response
 from astrbot.core.cron.manager import _normalize_crontab_day_of_week
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-from .spontaneous_store import InitiativeStore
+from dafeiyu.initiative.spontaneous_store import InitiativeStore
 from .spontaneous import InitiativeEngine
-from .schedule_context import ASK as SCHEDULE_ASK, snapshot as schedule_snapshot, render as schedule_render, without_context as without_schedule, ground_unavailable
+from dafeiyu.initiative.schedule_context import ASK as SCHEDULE_ASK, snapshot as schedule_snapshot, render as schedule_render, without_context as without_schedule, ground_unavailable
 try:
-    from data.plugins.dafeiyu_runtime.diagnostics import phase, metric
+    from dafeiyu.runtime.diagnostics import phase, metric
 except ImportError:
     def phase(*args, **kwargs):return contextlib.nullcontext()
     def metric(*args, **kwargs):pass
@@ -50,7 +50,7 @@ def social_can_notify(uid):
         return True
 
 
-@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.3.0')
+@register('dafeiyu_companion','Local','QQ提醒、约定回访与有分寸的主动陪伴','0.7.0')
 class Companion(Star):
     def __init__(self,context:Context):
         super().__init__(context)
@@ -130,11 +130,14 @@ class Companion(Star):
     async def status(self):
         jobs=await self.context.cron_manager.list_jobs()
         ours=[j for j in jobs if (j.payload or {}).get('dafeiyu_companion')]
-        return json_response({**self.initiative.status(),'version':'0.3.0','spontaneous_owner_only':True,
+        return json_response({**self.initiative.status(),'version':'0.7.0','spontaneous_owner_only':True,
+            'initiative_semantic_fact_and_novelty_review':True,
+            'initiative_sources':['verified_work','confirmed_event','own_intention','current_private_discussion'],
             'initiative_loop_running':self.initiative_task is not None and not self.initiative_task.done(),
             'native_scheduler':True,'schedule_awareness':'read_only_current_private_session','active_reminders':sum((j.payload or {}).get('dafeiyu_kind')=='reminder' for j in ours),
             'active_followups':sum((j.payload or {}).get('dafeiyu_kind')=='followup' for j in ours),
-            'care_disabled_count':len(self.state['care_disabled']),'care_hours':'09:00–21:00 Asia/Shanghai','max_care_per_person_per_day':1})
+            'care_disabled_count':len(self.state['care_disabled']),'care_hours':'09:00–21:00 Asia/Shanghai',
+            'max_care_per_person_per_day':1,'care_limits_scope':'scheduled_followups_only'})
 
     async def manage(self,event,action,name='',text='',run_at='',cron_expression='',job_id='',target_qq='',kind='reminder',evidence='',topic=''):
         uid=self.actor(event)

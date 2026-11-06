@@ -1,0 +1,291 @@
+{
+  "schema_version": 1,
+  "date_beijing": "2026-10-30",
+  "baseline_commit": "cbd32673f13972a451848596463a365638ad1cc0",
+  "implementation": "targeted_candidate_repair",
+  "acceptance": "not_complete",
+  "source_fingerprints": {
+    "plugins/dafeiyu_dialogue/_conf_schema.json": "12865a57cd59dff2de3b3f3823f503e33672421a8b781ab9aca2c4effbc351b7",
+    "plugins/dafeiyu_dialogue/event_state.py": "149108c97d3da895a3215e0bdbb12e8dca35f4257b80c1b5e31aa8f44336f927",
+    "plugins/dafeiyu_dialogue/generation.py": "aa40371f8a5bfcfcb1a2caed4ab6e5316a86aff55c6165816a12ad3f79f0c89d",
+    "plugins/dafeiyu_dialogue/learning_check.py": "e65c59c789aa1ec1622c782ee4f7c66abaeadf5fc268b6d5e5434cc6ecc8bdbf",
+    "plugins/dafeiyu_dialogue/main.py": "0e8e4cc8c51657425181feefa88eab1406d1a5bedcdb45e2802733de2e0e2010",
+    "scripts/evaluate_dialogue.py": "29bd615ef1631fee218bb769c412f26e01f8fc9866c0fef7cf66cd2b85fbcc22",
+    "tests/cognition_scenarios.py": "0b96c2936b4c6fd2d882ff9affc276ad3a694b4ec5539f7c6a3fd616b0b6b998",
+    "tests/test_cognition.py": "48adc91ddb01d38e4b6c65250db8dddddb01fea63db275effbfa9210d12a0f14"
+  },
+  "tests": {
+    "focused": {
+      "exit_code": 0,
+      "selected_classes": [
+        "GenerationRecovery",
+        "SourceClassification",
+        "SingleGeneration"
+      ],
+      "tests": 24,
+      "full_suite_run": false,
+      "model_calls": 0,
+      "real_sends": 0
+    },
+    "receipt_assertion_check": {
+      "exit_code": 0,
+      "selected_classes": [
+        "SingleGeneration.test_format_failure_reconciles_existing_state_only_after_confirmed_delivery"
+      ],
+      "tests": 1,
+      "full_suite_run": false,
+      "model_calls": 0,
+      "real_sends": 0
+    },
+    "full_suite_run_this_patch": false,
+    "production_image_run_this_patch": false,
+    "previous_full_suite_tests": 286,
+    "previous_full_suite_commit": "cbd32673f13972a451848596463a365638ad1cc0"
+  },
+  "offline_replay": {
+    "raw_generations": 384,
+    "before_rejected": 29,
+    "after_rejected": 17,
+    "previously_valid_now_rejected": 2,
+    "framing_recovered": 9,
+    "semantic_review_required": 11,
+    "previous_failed_drafts_now_parse": 16,
+    "remaining_reasons": {
+      "ValueError:Unexpected generation fields": 2,
+      "JSONDecodeError:Expecting ',' delimiter": 2,
+      "ValueError:Duplicate generation field": 2,
+      "ValueError:Conflicting generation objects": 2,
+      "JSONDecodeError:Expecting value": 8,
+      "JSONDecodeError:Unterminated string starting at": 1
+    },
+    "semantic_quality_measured": false,
+    "model_calls": 0,
+    "production_writes": 0
+  },
+  "direct_source_checks": {
+    "cases": 4,
+    "all_matched": true,
+    "before_final_retention_clarification": true,
+    "results": [
+      {
+        "case": "original-hypothesis",
+        "expected_persist": false,
+        "persisted": false,
+        "matched": true
+      },
+      {
+        "case": "new-hypothesis",
+        "expected_persist": false,
+        "persisted": false,
+        "matched": true
+      },
+      {
+        "case": "actual-condition",
+        "expected_persist": true,
+        "persisted": true,
+        "matched": true
+      },
+      {
+        "case": "actual-plan",
+        "expected_persist": true,
+        "persisted": true,
+        "matched": true
+      }
+    ]
+  },
+  "small_dialogues": {
+    "turns": 10,
+    "model_requests": 20,
+    "cases": [
+      {
+        "id": "repair:1",
+        "turns": [
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": []
+          }
+        ]
+      },
+      {
+        "id": "repair:2",
+        "turns": [
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": []
+          }
+        ]
+      },
+      {
+        "id": "repair:3",
+        "turns": [
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": [
+              {
+                "kind": "preference",
+                "status": "active",
+                "summary": "发草稿时先指出最影响阅读的一处，等明确要求逐段改时再展开",
+                "condition": "对方发来草稿时",
+                "version": 1
+              }
+            ]
+          },
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": [
+              {
+                "kind": "preference",
+                "status": "active",
+                "summary": "只有拿草稿来问时才先指出最影响阅读的一处，明确要逐段改再展开；平时聊天不挑毛病",
+                "condition": "对方主动拿草稿来问时",
+                "version": 2
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "repair:4",
+        "turns": [
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": []
+          },
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": []
+          },
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": []
+          }
+        ]
+      },
+      {
+        "id": "repair:5",
+        "turns": [
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": []
+          }
+        ]
+      },
+      {
+        "id": "repair:6",
+        "turns": [
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": [
+              {
+                "kind": "fact",
+                "status": "active",
+                "summary": "本人的雨伞名叫“青苔”",
+                "condition": "",
+                "version": 1
+              }
+            ]
+          },
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": []
+          }
+        ]
+      }
+    ],
+    "unavailable": 0,
+    "known_issue": "real plan rejected as temporary; prompted retention clarification"
+  },
+  "plan_recheck": {
+    "turns": 3,
+    "model_requests": 7,
+    "cases": [
+      {
+        "id": "repair:4",
+        "turns": [
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": [
+              {
+                "kind": "event",
+                "status": "planned",
+                "summary": "约了明天下午去体验银饰手作",
+                "condition": "",
+                "version": 1
+              }
+            ]
+          },
+          {
+            "review": "unavailable",
+            "failure_kind": "format",
+            "state": [
+              {
+                "kind": "event",
+                "status": "planned",
+                "summary": "约了明天下午去体验银饰手作",
+                "condition": "",
+                "version": 1
+              }
+            ]
+          },
+          {
+            "review": "contract",
+            "failure_kind": null,
+            "state": [
+              {
+                "kind": "event",
+                "status": "planned",
+                "summary": "约了明天下午去体验银饰手作",
+                "condition": "",
+                "version": 1
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "before_final_state_compensation": true,
+    "known_issue": "misplaced root supersedes field blocked reply and missed cancellation"
+  },
+  "final_state_compensation": {
+    "local_receipt_sqlite_test": "passed",
+    "actual_model_retested": false,
+    "scope": "existing events only; current human source; confirmed reply; current version/privacy epoch; once per source",
+    "hypothesis_and_refusal_semantics": "model-dependent; not a deterministic guarantee"
+  },
+  "paid_requests": {
+    "scope": "this repair only",
+    "limit": 32,
+    "recorded": 32,
+    "kinds": {
+      "main": 14,
+      "learning_check": 12,
+      "review": 4,
+      "verification": 1,
+      "learning_state": 1
+    },
+    "http_errors": [
+      500
+    ],
+    "missing_usage": 1,
+    "reported_input_tokens": 54555,
+    "reported_output_tokens": 2801
+  },
+  "real_qq_sends": 0,
+  "real_qzone_posts": 0,
+  "production_memory_writes": 0,
+  "production_plugin_or_config_changes": false,
+  "human_review": "pending",
+  "pilot": "not_started_for_this_candidate",
+  "full_quality_gate": "not_passed"
+}

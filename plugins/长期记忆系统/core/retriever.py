@@ -1,14 +1,14 @@
-"""相关记忆检索器：多因子打分排序（关键词重叠、子串命中、重要度、时效、访问热度）。
-
-embedding 向量检索默认关闭；开启后若平台可用 embedding 提供商，
-可在 adapter 层提供向量并传入 `attach_vectors` 增强排序（TODO 标注）。
-"""
+"""Related memories only; optional bounded vectors never bypass visibility queries."""
 
 from __future__ import annotations
 
 import logging
+import asyncio
+from collections import OrderedDict
+import hashlib
 import math
 import time
+import json
 from typing import Any
 
 from .database import MemoryDatabase
@@ -27,11 +27,16 @@ class MemoryRetriever:
         manager: MemoryManager,
         candidate_pool: int = 300,
         recency_half_life_days: float = 14.0,
+        embedding=None,
+        embedding_version=None,
     ) -> None:
         self.db = db
         self.manager = manager
         self._candidate_pool = max(50, candidate_pool)
         self._half_life = max(0.5, recency_half_life_days) * 86400.0
+        self.embedding = embedding
+        self.embedding_version=embedding_version or (lambda:'unversioned')
+        self._vectors = OrderedDict()
 
     # ------------------------------------------------------------------ scoring
 
@@ -55,6 +60,10 @@ class MemoryRetriever:
         content = ' '.join(str(memory.get(key,'') or '') for key in ('content','owner_name','user_id'))
         # 子串直接命中给强加成
         substring_hit = any(len(k) >= 2 and k in content for k in query_keys)
+        # Importance and freshness cannot make an unrelated memory relevant.
+        meaningful_overlap = any(len(k) >= 2 for k in query_keys & mem_keys)
+        if not (substring_hit or meaningful_overlap or len(query_keys) == 1 and bool(query_keys & mem_keys)):
+            return 0.0
         importance = float(memory.get("importance", 0.5))
         # 时效衰减（重要度高的记忆衰减更慢）
         age = max(0.0, time.time() - float(memory.get("updated_at", memory.get("created_at", 0))))
@@ -84,17 +93,34 @@ class MemoryRetriever:
         candidates = await getter(user_id, limit=self._candidate_pool)
         if not candidates:
             return []
+        if self.embedding:
+            try:
+                version=self.embedding_version()
+                query_vector = await asyncio.wait_for(self.embedding(query), timeout=3)
+                if query_vector and version==self.embedding_version():
+                    candidates = await asyncio.wait_for(self.attach_vectors(candidates, query_vector,version), timeout=8)
+            except Exception:
+                pass  # Literal retrieval remains available without a vector provider.
+            # A source can be corrected or forgotten while the provider is awaited.
+            current = {str(m['id']):m for m in await getter(user_id, limit=self._candidate_pool)}
+            live={self.vector_key(str(m.get('content','')),self.embedding_version()) for m in current.values()}
+            self._vectors=OrderedDict((k,v) for k,v in self._vectors.items() if k in live)
+            candidates = [m for m in candidates if str(m['id']) in current
+                          and all(current[str(m['id'])].get(k)==v for k,v in m.items() if not k.startswith('_semantic_'))]
         scored: list[tuple[float, dict[str, Any]]] = []
         for m in candidates:
             if float(m.get("importance", 0)) < min_importance:
                 continue
             s = self.score(m, query_keys)
+            similarity = m.get('_semantic_similarity', 0)
+            if similarity >= .7:
+                s = max(s, similarity)
             if s >= min_score:
                 scored.append((s, m))
         if not scored:
             return []
         scored.sort(key=lambda pair: pair[0], reverse=True)
-        top = [m for _, m in scored[:top_k]]
+        top = [{k:v for k,v in m.items() if not k.startswith('_semantic_')} for _, m in scored[:top_k]]
         # 忽略访问记录失败（best effort）
         await self.manager.record_access([int(m["id"]) for m in top])
         return top
@@ -102,12 +128,42 @@ class MemoryRetriever:
     # ----------------------------------------------------- embedding (optional)
 
     async def attach_vectors(
-        self, memories: list[dict[str, Any]], query_vector: list[float]
+        self, memories: list[dict[str, Any]], query_vector: list[float], version=None
     ) -> list[dict[str, Any]]:
-        """（可选）给候选记忆附加向量相似度并混合排序。
+        """Embed only already visible candidates; cache vectors by content hash, not bodies."""
+        if not self.embedding or not valid_vector(query_vector):
+            return memories
+        version=self.embedding_version() if version is None else version
+        now = time.monotonic()
+        self._vectors = OrderedDict((k,v) for k,v in self._vectors.items() if now-v[0]<1800)
+        semaphore = asyncio.Semaphore(3)
 
-        TODO: 需要确认所用 AstrBot 版本的 EmbeddingProvider 接口
-        （如 `await provider.get_embedding(text)` 的确切方法名），
-        确认后在 adapter.py 中实现向量获取并调用本方法。
-        """
-        return memories
+        async def attach(memory):
+            text = str(memory.get('content',''))
+            key = self.vector_key(text,version)
+            async with semaphore:
+                cached = self._vectors.get(key)
+                vector = cached[1] if cached else await self.embedding(text)
+                if version!=self.embedding_version():return memory
+                if not valid_vector(vector) or len(vector) != len(query_vector):
+                    return memory
+                self._vectors[key] = (now, vector)
+                self._vectors.move_to_end(key)
+                while len(self._vectors)>256:self._vectors.popitem(last=False)
+                denom=math.sqrt(sum(x*x for x in vector)*sum(x*x for x in query_vector))
+                similarity=sum(a*b for a,b in zip(vector,query_vector))/denom if denom else 0
+                return dict(memory,_semantic_similarity=similarity)
+
+        # A bounded optional enhancement; use explicit recall for a broader semantic search.
+        enhanced=await asyncio.gather(*(attach(m) for m in memories[:16]))
+        return enhanced + memories[16:]
+
+    @staticmethod
+    def vector_key(text,version):
+        return hashlib.sha256(json.dumps([version,text],ensure_ascii=False).encode()).hexdigest()
+
+
+def valid_vector(value):
+    return (isinstance(value,(list,tuple)) and 0<len(value)<=65536
+            and all(isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x) for x in value)
+            and any(value))

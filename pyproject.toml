@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dafeiyu-core"
+version = "0.1.0"
+description = "Dafeiyu dialogue, memory, activity and delivery capabilities"
+requires-python = ">=3.12"
+dependencies = ["aiohttp", "Pillow", "yarl"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dafeiyu*"]
+
+[tool.setuptools.package-data]
+"dafeiyu.memory" = ["*.json"]
+"dafeiyu.life" = ["*.json"]

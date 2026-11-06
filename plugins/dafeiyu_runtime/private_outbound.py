@@ -8,8 +8,8 @@ import re
 import time
 
 from astrbot.core.agent.message import TextPart
-from .diagnostics import active
-from .outbound import BOT, PREFIX, MARKER, OutboundStore, outgoing_text, message_id, bridge, reply_note
+from dafeiyu.runtime.diagnostics import active
+from dafeiyu.runtime.outbound import BOT, PREFIX, MARKER, OutboundStore, outgoing_text, message_id, bridge, reply_note
 
 LOG = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class PrivateOutbound:
         if not path.exists():
             return
         try:
-            from data.plugins.astrbot_plugin_dafeiyu_balance.reply_context import notice_records, latest_notice
+            from dafeiyu.balance.reply_context import notice_records, latest_notice
             state = json.loads(path.read_text(encoding='utf-8-sig'))
             now = time.time()
             for qq in {r['qq'] for r in notice_records(state, None, now)}:
@@ -118,8 +118,8 @@ class PrivateOutbound:
             parts = [];req.extra_user_content_parts = parts
         # The old balance hook remains a fallback when this shared entry is unavailable.
         parts[:] = [p for p in parts if not isinstance(p, TextPart) or not p.text.startswith((MARKER, '【本会话已经发出的饭钱消息】'))]
-        from data.plugins.dafeiyu_natural_chat.exchanges import forget_spec
-        forgetting = forget_spec(human)
+        from dafeiyu.memory.exchanges import forget_spec
+        forgetting = None if event.get_extra('dafeiyu_generation_contract',False) else forget_spec(human)
         if forgetting and not event.get_extra('jingjing_outbound_forgotten', False):
             self.store.forget(uid, None if forgetting['across'] else conversation,
                               forgetting.get('query', ''), forgetting['mode'] == 'latest')
