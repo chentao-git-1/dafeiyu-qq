@@ -4,8 +4,8 @@ from pathlib import Path
 import time
 
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-from .store import Store, can_notify_profile
-from .activity import ActivityStore
+from dafeiyu.social.store import Store, can_notify_profile
+from dafeiyu.social.activity import ActivityStore
 
 
 @lru_cache(maxsize=4)

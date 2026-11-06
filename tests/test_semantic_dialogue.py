@@ -396,9 +396,12 @@ class NativeHooks(unittest.IsolatedAsyncioTestCase):
         e=event('忙啥呢');response,call=await self.reviewer(e)
         raw=json.dumps({'decision':'revise','issues':[{'segment_id':0,'kind':'unsupported_action','span':'画到一半'}],
             'revisions':[{'segment_id':0,'text':'那页手帐还没弄完。'}]},ensure_ascii=False)
-        call.side_effect=[NS(completion_text=raw),NS(completion_text='{"supported":false,"violations":[{"segment_id":0,"span":"还没弄完"}]}')]
+        rejected=NS(completion_text='{"supported":false,"violations":[{"segment_id":0,"span":"还没弄完"}]}')
+        call.side_effect=[NS(completion_text=raw),rejected,
+            NS(completion_text='{"decision":"keep","issues":[],"revisions":[]}'),rejected]
         await self.plugin.review_response(e,response)
-        self.assertEqual(response.completion_text,UNAVAILABLE);self.assertEqual(call.await_count,2)
+        self.assertEqual(response.completion_text,UNAVAILABLE);self.assertEqual(call.await_count,4)
+        self.assertEqual(e.get_extra('dafeiyu_dialogue_review_calls'),2)
 
     async def test_shadow_and_off_never_review_or_collect_content(self):
         for mode in ('shadow','off'):

@@ -14,7 +14,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
 )
 from .delivery import RECEIPTS_KEY, append_receipt
-from .diagnostics import phase
+from dafeiyu.runtime.diagnostics import phase
 
 STATE_KEY = "dafeiyu_reply_delivery"
 PROGRESS_TEXTS = {"画着呢，等一会儿。", "我来唱一小段，等我一下。"}

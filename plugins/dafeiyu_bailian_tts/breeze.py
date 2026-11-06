@@ -14,7 +14,7 @@ from astrbot.core.provider.entities import ProviderType
 from astrbot.core.provider.provider import TTSProvider
 from astrbot.core.provider.register import provider_cls_map, register_provider_adapter
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-from .expression import SPEECH_CONTEXT, speech_plan
+from dafeiyu.media.voice.expression import SPEECH_CONTEXT, speech_plan
 
 ADAPTER='dafeiyu_breeze_tts'
 MODEL='breeze-tts-2'

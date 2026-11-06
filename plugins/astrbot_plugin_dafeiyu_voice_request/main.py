@@ -13,7 +13,7 @@ from astrbot.core.message.components import Plain, Record
 from astrbot.core.message.message_event_result import ResultContentType
 from astrbot.core.star.session_llm_manager import SessionServiceManager
 
-from .intent import output_intent
+from dafeiyu.media.voice.intent import output_intent
 
 
 

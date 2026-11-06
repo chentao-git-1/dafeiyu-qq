@@ -12,8 +12,8 @@ from astrbot.api.star import Star, register
 from astrbot.api.web import json_response
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot.core.message.components import Plain
-from .private_history import PrivateHistory, resolve_target, text_content
-from .speech_intent import output_intent
+from dafeiyu.routing.private_history import PrivateHistory, resolve_target, text_content
+from dafeiyu.routing.speech_intent import output_intent
 
 OWNER = '7000000001'
 PLATFORM = 'dafeiyu-qq'
@@ -154,7 +154,7 @@ class MessageRoutes(Star):
                         self.audit['friend_query_error']=type(error).__name__
                         return {}
         contacts={qq:{'name':row['name'],'aliases':list(row['aliases'])} for qq,row in self.friends.items() if qq in allowed}
-        from data.plugins.dafeiyu_natural_chat.continuity import verified_names
+        from dafeiyu.memory.continuity import verified_names
         for qq,row in verified_names(get_astrbot_data_path(),allowed).items():
             if qq in contacts and row['name'] not in contacts[qq]['aliases']:contacts[qq]['aliases'].append(row['name'])
         # Use only explicit contact labels from the owner's active memories, never arbitrary prose as instructions.

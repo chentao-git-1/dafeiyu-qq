@@ -16,9 +16,9 @@ from astrbot.api.web import json_response
 from astrbot.core.message.components import At, Image, Plain, Record, Reply
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from .access import store, activity
-from .activity import KNOWN_BOTS, privacy_command
-from .store import DEFAULT, OWNER, SELF, TZ, can_notify_profile, clock_minutes
-from .cards import render_card
+from dafeiyu.social.activity import KNOWN_BOTS, privacy_command
+from dafeiyu.social.store import DEFAULT, OWNER, SELF, TZ, can_notify_profile, clock_minutes
+from dafeiyu.social.cards import render_card
 
 QUOTED = re.compile(r'```.*?```|`[^`]*`|“[^”]*”|「[^」]*」|『[^』]*』|"[^"]*"',re.S)
 

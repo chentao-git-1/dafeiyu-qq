@@ -23,6 +23,8 @@ __pycache__/
 .venv312/
 node_modules/
 **/dist/
+build/
+*.egg-info/
 **/.cache/
 .DS_Store
 Thumbs.db

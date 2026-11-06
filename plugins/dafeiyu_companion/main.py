@@ -16,11 +16,11 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.web import json_response
 from astrbot.core.cron.manager import _normalize_crontab_day_of_week
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-from .spontaneous_store import InitiativeStore
+from dafeiyu.initiative.spontaneous_store import InitiativeStore
 from .spontaneous import InitiativeEngine
-from .schedule_context import ASK as SCHEDULE_ASK, snapshot as schedule_snapshot, render as schedule_render, without_context as without_schedule, ground_unavailable
+from dafeiyu.initiative.schedule_context import ASK as SCHEDULE_ASK, snapshot as schedule_snapshot, render as schedule_render, without_context as without_schedule, ground_unavailable
 try:
-    from data.plugins.dafeiyu_runtime.diagnostics import phase, metric
+    from dafeiyu.runtime.diagnostics import phase, metric
 except ImportError:
     def phase(*args, **kwargs):return contextlib.nullcontext()
     def metric(*args, **kwargs):pass

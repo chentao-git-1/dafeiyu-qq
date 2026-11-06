@@ -126,15 +126,17 @@ class AutonomousActivity(unittest.IsolatedAsyncioTestCase):
             model=AsyncMock(side_effect=[NS(completion_text='{broken'),NS(completion_text=json.dumps(choice))])
             result=await choose_activity(NS(text_chat=model),SelfJournal(Path(tmp)),[],['reading','writing'])
             self.assertEqual(result,choice);self.assertEqual(model.await_count,2)
-            self.assertEqual(set(json.loads(model.call_args.kwargs['prompt'])),{'operator_seed','self_state','recent_works','allowed_kinds','max_activities_today'})
+            packet=json.loads(model.call_args.kwargs['prompt'])
+            self.assertEqual(set(packet),{'operator_seed','self_state','recent_works','allowed_kinds','max_activities_today','self_direction'})
+            self.assertIsNone(packet['self_direction'])
 
-    async def test_paused_and_night_activity_are_not_bypassed_by_opportunity(self):
+    async def test_paused_activity_and_ordinary_night_ticks_do_not_call_provider(self):
         now=dt.datetime(2026,10,31,23,tzinfo=TZ).timestamp()
         with tempfile.TemporaryDirectory() as tmp, patch('data.plugins.dafeiyu_life.life.time.time',return_value=now):
             store=LifeStore(Path(tmp));provider=AsyncMock()
             ctrl=NS(owner_policy_enabled=lambda flag:True)
             engine=LifeEngine(store,NS(get_registered_star=lambda name:NS(activated=True,star_cls=ctrl),get_using_provider_async=provider))
-            self.assertEqual((await engine.advance(opportunity=True))['status'],'waiting')
+            self.assertEqual((await engine.advance())['status'],'waiting')
             store.set_enabled(False);self.assertFalse((await engine.advance(opportunity=True))['advanced'])
             provider.assert_not_awaited()
 
