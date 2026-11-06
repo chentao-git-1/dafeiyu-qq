@@ -1,0 +1,38 @@
+{
+  "legacy_sidecars_before": 13,
+  "legacy_sidecars_after": 0,
+  "native_history_unmodified": true,
+  "confirmed_outgoing_not_duplicated": true,
+  "queries": [
+    {
+      "case": "activity_question",
+      "old_exchange_injections": 10,
+      "new_exchange_injections": 0,
+      "old_memory_characters": 3595,
+      "new_memory_characters": 0
+    },
+    {
+      "case": "acknowledgement",
+      "old_exchange_injections": 9,
+      "new_exchange_injections": 0,
+      "old_memory_characters": 3406,
+      "new_memory_characters": 0
+    },
+    {
+      "case": "introduction",
+      "old_exchange_injections": 9,
+      "new_exchange_injections": 0,
+      "old_memory_characters": 3467,
+      "new_memory_characters": 951
+    }
+  ],
+  "passed": true,
+  "explicit_recall_preserved": true,
+  "source_records": 118,
+  "network": "none",
+  "model_calls": 0,
+  "live_database_writes": 0,
+  "qq_sends": 0,
+  "commit": "7d98a78d9fc7a992fcd3d7d81805d0816ba8fdb5",
+  "checked_at_beijing": "2026-11-06T19:28:52.928142+08:00"
+}
