@@ -234,6 +234,15 @@ class Outbound(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.obj.store.record(FRIEND, '测试用生日提醒。', {'message_id': 123}, 'native-one'))
         e = event();await self.obj.prepare(e, self.req());e.send.assert_not_awaited()
 
+    async def test_contract_forgetting_still_removes_confirmed_outgoing_before_context(self):
+        await self.send('测试用主动消息。')
+        e=event('忘记所有聊天记录');e.set_extra('dafeiyu_generation_contract',True)
+        req=self.req();await self.obj.prepare(e,req)
+        self.assertFalse(self.obj.store.recent(FRIEND,'native-one'))
+        self.assertFalse(e.get_extra('dafeiyu_confirmed_outgoing',[]))
+        self.assertFalse(req.contexts);self.assertFalse(req.extra_user_content_parts)
+        self.assertTrue(e.get_extra('jingjing_outbound_forgotten'));e.send.assert_not_awaited()
+
     async def test_multiturn_send_ack_topic_switch_and_second_speaker(self):
         await self.send('爸爸的提醒，请明天带上资料。')
         first = event();first.set_extra('jingjing_actual_chat', [{'speaker': '鲸鲸', 'id': '123', 'timestamp': NOW, 'text': '爸爸的提醒，请明天带上资料。'}])

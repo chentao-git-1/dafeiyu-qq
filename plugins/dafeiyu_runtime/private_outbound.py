@@ -119,7 +119,7 @@ class PrivateOutbound:
         # The old balance hook remains a fallback when this shared entry is unavailable.
         parts[:] = [p for p in parts if not isinstance(p, TextPart) or not p.text.startswith((MARKER, '【本会话已经发出的饭钱消息】'))]
         from dafeiyu.memory.exchanges import forget_spec
-        forgetting = None if event.get_extra('dafeiyu_generation_contract',False) else forget_spec(human)
+        forgetting = forget_spec(human)
         if forgetting and not event.get_extra('jingjing_outbound_forgotten', False):
             self.store.forget(uid, None if forgetting['across'] else conversation,
                               forgetting.get('query', ''), forgetting['mode'] == 'latest')
