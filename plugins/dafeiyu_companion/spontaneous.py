@@ -8,7 +8,7 @@ import time
 
 from astrbot.api.event import MessageChain
 from astrbot.core.message.components import Plain
-from .spontaneous_store import InitiativeStore,TZ
+from dafeiyu.initiative.spontaneous_store import InitiativeStore,TZ
 
 OWNER='7000000001';SESSION='dafeiyu-qq:FriendMessage:'+OWNER
 
@@ -85,8 +85,8 @@ class InitiativeEngine:
     def conversation_candidates(self):
         natural=self.active('dafeiyu_natural_chat')
         if not natural or not callable(getattr(natural,'exchange_store',None)):return []
-        from data.plugins.dafeiyu_dialogue.adapters import MemoryCatalog
-        from data.plugins.dafeiyu_natural_chat.interaction import privacy_time
+        from dafeiyu.dialogue.catalog import MemoryCatalog
+        from dafeiyu.memory.interaction import privacy_time
         path=natural.exchange_store().path
         rows=MemoryCatalog._read(path,'SELECT id,human,at FROM exchanges WHERE qq=? AND origin=? AND at>=? ORDER BY at DESC,id DESC LIMIT 6',
             (OWNER,SESSION,max(self.clock()-7*86400,privacy_time(path,SESSION))))
@@ -123,7 +123,7 @@ class InitiativeEngine:
         await asyncio.to_thread(self.store.diagnose,'skip','semantic_controller_unavailable')
 
     async def review(self,provider,source,body,recent,previous):
-        from .spontaneous_policy import review_initiative
+        from dafeiyu.initiative.spontaneous_policy import review_initiative
         return await review_initiative(provider,source,body,recent,previous)
 
     async def tick_semantic(self):
@@ -140,8 +140,8 @@ class InitiativeEngine:
                 if len(candidates)>=12:break
             if not candidates:return
             try:
-                from .spontaneous_policy import choose_initiative
-                from data.plugins.dafeiyu_dialogue.contracts import TurnContext
+                from dafeiyu.initiative.spontaneous_policy import choose_initiative
+                from dafeiyu.dialogue.contracts import TurnContext
                 turn=TurnContext(OWNER,SESSION,'dafeiyu-qq','initiative:'+day+':'+str(slot),self.clock())
                 snapshot=await asyncio.to_thread(controller.catalog().read,turn,self.clock())
                 recent=[{'id':r.id,'text':r.text,'recorded_at':r.recorded_at} for r in snapshot.items

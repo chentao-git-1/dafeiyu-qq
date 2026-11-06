@@ -8,4 +8,4 @@
 | QQ 空间插件及本地改动 | https://github.com/Zhalslar/astrbot_plugin_qzone |
 | 其他外部插件 | 对应目录 `metadata.yaml` 中的 `repo` 与作者字段 |
 
-`dafeiyu_*` 及 `astrbot_plugin_dafeiyu_*` 是本地定制插件。框架后端与插件取自当前部署，框架前端及构建辅助文件取自相同版本的上游源码。已排除编译后的管理面板，按框架文档重新构建前端。
+`dafeiyu_*` 及 `astrbot_plugin_dafeiyu_*` 是本地定制插件；其独立业务实现现位于 `src/dafeiyu`，本次结构调整不改变原有许可。框架后端与插件取自部署快照，框架前端及构建辅助文件取自相同版本的上游源码。已排除编译后的管理面板，按框架文档重新构建前端。

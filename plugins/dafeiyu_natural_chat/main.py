@@ -16,18 +16,18 @@ from astrbot.api.web import json_response
 from astrbot.core.agent.message import TextPart
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path, get_astrbot_temp_path
 from astrbot.core.message.components import Plain, Image, Reply, At, Record
-from .state import Episodes, FAMILY, OWNER, TZ, forbidden, key, mood_cue
-from .interaction import InteractionStore, parse_feedback, preference_context, repetition_context, settings_text
-from .image_chat import image_mode, image_instructions
-from .continuity import verified_names, decode_history, context_block, grounded_correction, pending_turn, DELAY
-from .spoken_style import style_context, conversational_text, close_short_ack, close_idle_questions, MARKER as SPOKEN_START, END as SPOKEN_END
-from .self_profile import self_profile, profile_context
-from .exchanges import ExchangeStore, recall_context, forget_spec
-from .grounding import FactStore, evidence_context, ground_response, concise_reaction, search_succeeded, scheduled_job_id
-from .media import ImageCollection, media_intent
-from .recall_guard import asks_for_recall, history_evidence, known_current_fact, long_term_evidence, own_life_question, related, uncertain_reply
-from .memory import MemoryCoordinator
-from .prompt_blocks import without_block
+from dafeiyu.memory.state import Episodes, FAMILY, OWNER, TZ, forbidden, key, mood_cue
+from dafeiyu.memory.interaction import InteractionStore, parse_feedback, preference_context, repetition_context, settings_text
+from dafeiyu.memory.image_chat import image_mode, image_instructions
+from dafeiyu.memory.continuity import verified_names, decode_history, context_block, grounded_correction, pending_turn, DELAY
+from dafeiyu.memory.spoken_style import style_context, conversational_text, close_short_ack, close_idle_questions, MARKER as SPOKEN_START, END as SPOKEN_END
+from dafeiyu.memory.self_profile import self_profile, profile_context
+from dafeiyu.memory.exchanges import ExchangeStore, recall_context, forget_spec
+from dafeiyu.memory.grounding import FactStore, evidence_context, ground_response, concise_reaction, search_succeeded, scheduled_job_id
+from dafeiyu.memory.media import ImageCollection, media_intent
+from dafeiyu.memory.recall_guard import asks_for_recall, history_evidence, known_current_fact, long_term_evidence, own_life_question, related, uncertain_reply
+from dafeiyu.memory.memory import MemoryCoordinator
+from dafeiyu.memory.prompt_blocks import without_block
 try:
     from data.plugins.dafeiyu_runtime.delivery import receipts as confirmed_receipts, reply_text
 except ImportError:
@@ -35,7 +35,7 @@ except ImportError:
     def confirmed_receipts(event):return event.get_extra('dafeiyu_confirmed_delivery',[]) or []
     def reply_text(rows):return '\n'.join(dict.fromkeys(r['text'] for r in rows if r.get('kind')=='reply' and r.get('text')))
 try:
-    from data.plugins.dafeiyu_runtime.diagnostics import phase, metric
+    from dafeiyu.runtime.diagnostics import phase, metric
 except ImportError:
     def phase(*args, **kwargs):return contextlib.nullcontext()
     def metric(*args, **kwargs):pass
@@ -49,12 +49,7 @@ RULES = '''
 '''
 
 
-def content_text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return ' '.join(str(p.get('text','')) for p in content if isinstance(p,dict) and p.get('type')=='text')
-    return ''
+from dafeiyu.memory.content import content_text
 
 
 @register('dafeiyu_natural_chat', 'Local', '有主见的自然相处与有据可查的往来片段', '0.10.0')
@@ -89,7 +84,7 @@ class NaturalChat(Star):
     def dialogue_character(self):
         # Operator lore is creative material, never proof of physical or completed activity.
         try:
-            from data.plugins.dafeiyu_life.topic_context import world_profile
+            from dafeiyu.life.topic_context import world_profile
             fiction = world_profile()
         except (ImportError, OSError, ValueError):
             fiction = None

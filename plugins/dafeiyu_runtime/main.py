@@ -29,10 +29,10 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot.core.utils.session_lock import session_lock_manager
 
-from .flow import ChatFlow
+from dafeiyu.runtime.flow import ChatFlow
 from .ops import load_state, problem, result
 from .reliability import LoopWatchdog, ReplyReliability
-from .diagnostics import CURRENT, KEY, Journal, Turn, active, phase, request_metrics
+from dafeiyu.runtime.diagnostics import CURRENT, KEY, Journal, Turn, active, phase, request_metrics
 from .private_outbound import PrivateOutbound
 
 WRITES = {

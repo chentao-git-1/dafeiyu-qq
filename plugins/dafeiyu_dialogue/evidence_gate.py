@@ -1,13 +1,4 @@
-"""Validate structured claims against actual receipts; never infer delivery from prose."""
+"""Compatibility import for dafeiyu.dialogue.evidence_gate."""
+from dafeiyu.compat import alias_module
 
-
-def validate_claims(claims, receipts):
-    if not isinstance(claims, list):
-        return False
-    for claim in claims:
-        if not isinstance(claim, dict) or set(claim) != {'action_id', 'kind', 'target'}:
-            return False
-        if not any(receipt.action_id == claim['action_id'] and receipt.supports(claim['kind'], claim['target'])
-                   for receipt in receipts):
-            return False
-    return True
+alias_module(__name__, "dafeiyu.dialogue.evidence_gate", globals())

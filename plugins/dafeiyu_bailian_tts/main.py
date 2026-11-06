@@ -25,7 +25,7 @@ from astrbot.core.provider.provider import TTSProvider
 from astrbot.core.provider.register import provider_cls_map, register_provider_adapter
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path, get_astrbot_data_path
 
-from .expression import SPEECH_CONTEXT, relationship, relationship_prompt, speech_plan
+from dafeiyu.media.voice.expression import SPEECH_CONTEXT, relationship, relationship_prompt, speech_plan
 from .breeze import ADAPTER as BREEZE_ADAPTER
 
 ADAPTER = 'dafeiyu_bailian_tts'

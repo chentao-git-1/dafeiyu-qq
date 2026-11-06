@@ -14,9 +14,9 @@ from astrbot.api import logger
 from astrbot.api.web import json_response
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot.core.agent.message import TextPart
-from .reply_context import MARKER, notice_records, latest_notice, bridge_history, context_note
+from dafeiyu.balance.reply_context import MARKER, notice_records, latest_notice, bridge_history, context_note
 
-from .watch import (
+from dafeiyu.balance.watch import (
     BalanceWatch, INTERVAL, OWNER, BOT, HELP_THRESHOLD, balance_snapshot,
     notice_text,
 )
@@ -140,7 +140,7 @@ class DafeiyuBalance(Star):
         platform=self.context.get_platform('aiocqhttp')
         bot=getattr(platform,'bot',None)
         if platform is None or platform.meta().id!='dafeiyu-qq' or not callable(getattr(bot,'call_action',None)):return
-        try:from data.plugins.dafeiyu_natural_chat.continuity import decode_history
+        try:from dafeiyu.memory.continuity import decode_history
         except ImportError:return
         async with self.lock:
             now=self.watch.clock()

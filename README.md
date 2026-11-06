@@ -1,5 +1,7 @@
 # 大肥鱼 QQ 机器人
 
+2026-11-06 **独立核心架构已实现，尚未部署**。自研规则与存储迁入 `src/dafeiyu`，AstrBot 接入保留在 `plugins`；安装时需要同时提供核心包。PR 源码快照通过 23 组、378 项隔离回归。架构、兼容范围、验证及迁移步骤见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)。下列上线记录对应历史版本。
+
 2026-11-01 **按需自身资料与分享去重已上线，15:15 核验通过**。代码 `3c956bdda3467c4833c93b66ca6bc68f70f48cbd`，统一对话 0.6.0、自己的日常 0.6.0、主动陪伴 0.7.0：普通聊天不再默认带入详细兴趣、旧作品与虚构世界，需要时通过只读原生工具查询；创作不再强制附手帐故事；主动草稿独立核对执行事实及相对旧分享的实质增量。同主题有新问题仍可说，纯粹换日期、版本或措辞可以不发。11 项相关检查通过生产镜像验证，17 个数据库及配置已备份；QQ、分段、成长及已保存的自主打算正常，后台自然选择不发且无新增错误。没有注入测试消息。见 [实现与边界](docs/TOPIC_VARIETY.md) 和 [部署数值](docs/topic-variety-verification.json)。
 
 2026-11-01 **自选执行时间与结果反馈已上线，14:16 核验通过**。最终代码 `e937ef9f4b949e7a821a056b64cddf4bf65ee5aa`，自己的日常 0.5.1：模型决定何时启动打算，尚未行动的新打算可重评，已失败的外部尝试不可借换计划重做；真实作品还需独立核对是否解决具体步骤。最终生产镜像 8 项相关检查通过，17 个数据库及配置已一致备份。后台自然思考已细化第 2 版打算并自选启动时间，重启后保留；实际活动仍受原每日额度约束，新阅读尚未执行。QQ、分段与长期成长正常。见 [执行机制与正式记录](docs/EXECUTION_AUTONOMY.md) 和 [数值证据](docs/execution-autonomy-verification.json)。
@@ -36,7 +38,8 @@
 
 | 路径 | 内容 |
 |---|---|
-| `plugins/` | 外部插件源码及候选修改，实际运行版本见最新核验记录 |
+| `src/dafeiyu/` | 不依赖 AstrBot 导入的业务规则、存储及媒体能力 |
+| `plugins/` | AstrBot 事件/工具接入、第三方插件及旧辅助导入兼容桥接 |
 | `framework/` | AstrBot 4.29.1 运行后端与对应的上游前端、构建文件 |
 | `persona/live.md` | 已去除私人标识的人格文本 |
 | `scripts/` | 复制安装与隔离测试入口 |
@@ -50,7 +53,7 @@
 
 1. 按 `framework/README_zh.md` 安装并启动 AstrBot 4.29.1，按 NapCat 官方说明配置 OneBot。
 2. 创建仓库外的身份映射文件，参考 `identities.example.json`，将示例号码替换为自己的号码。
-3. 运行 `python scripts/install_plugins.py --target /path/to/AstrBot/data/plugins --identities /private/path/identities.json`，将插件复制并配置到运行目录。脚本不覆盖已有插件目录。
+3. 运行 `python scripts/install_plugins.py --target /path/to/AstrBot/data/plugins --identities /private/path/identities.json`，同时复制核心到 `/path/to/AstrBot/dafeiyu`、插件到目标目录。脚本拒绝覆盖已有核心或插件；从该 AstrBot 根目录启动。
 4. 在 AstrBot 本地管理界面配置 DeepSeek、语音、画图、唱歌和 QQ 空间登录信息，再启用所需插件。各插件依赖见对应 `requirements.txt`。
 5. 将同一身份映射应用到 `persona/live.md` 后导入人格，并按实际账号配置聊天白名单。不要将本机生成的身份映射、运行配置或数据提交到仓库。
 
@@ -60,9 +63,9 @@
 
 导出前的部署版本已通过 334 项回归、11 个真实 DeepSeek 文本场景与空间专项检查。公开导出替换了私人号码，导出后的静态检查及隔离测试结果见 `docs/export-verification.json`。测试不发送真实 QQ 消息，不发布空间，不调用付费图像或语音生成。
 
-可运行不依赖框架的测试：`python tests/test_persona_tuning.py plugins`。安装框架依赖后，可运行 `python scripts/run_tests.py` 执行隔离的原生事件测试。
+可运行不依赖框架的核心检查：`python scripts/run_tests.py --core`。安装框架与插件依赖后，运行 `python scripts/run_tests.py` 执行全部隔离回归；按文件选择可用 `python scripts/run_tests.py test_persona_tuning.py`。
 
-新增纯逻辑测试：`python tests/test_evening_features.py plugins`。完整入口同时包含旧的人格回归和新的真实插件入口、余额发送、日记排程、素材撤回与发布传输测试，使用临时目录、假提供商和捕获发送。
+日记与余额逻辑测试：`python scripts/run_tests.py test_evening_features.py`。完整入口自动发现测试文件，包含人格、原生插件入口、余额发送、日记排程、素材撤回与发布传输测试，使用临时目录、假提供商和捕获发送。
 
 历史连续性改造通过 197 项项目回归；此前 `cbd3267` 候选的 **286 项**本地及生产镜像隔离结果见 [历史数值证据](docs/cognition-verification.json)。后续修复只运行相关小组；本次联系人与群聊扩展的 34 项生产镜像检查和 3 次模型调用见 [最新上线验证](docs/cognition-universal-verification.json)，17:39 的六模块发布保留为 [历史上线验证](docs/cognition-release-verification.json)，不宣称重跑完整入口。自动语音最多等待 8 秒，明确语音要求保留提供商预算；历史行为边界见 [对话衔接](docs/CONTINUITY.md)。这些检查不包含整个上游框架测试集，也不能替代真人体验和长期观察。
 

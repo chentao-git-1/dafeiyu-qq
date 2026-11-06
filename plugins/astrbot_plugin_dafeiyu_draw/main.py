@@ -17,11 +17,11 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import At, Image, Plain
 from astrbot.api.star import Context, Star, StarTools
 
-from .drawing import DrawingError, generate
-from .presentation import drawing_error_text, http_status, TECHNICAL as TECHNICAL_ERROR_QUERY, ErrorContext
+from dafeiyu.media.drawing.drawing import DrawingError, generate
+from dafeiyu.media.drawing.presentation import drawing_error_text, http_status, TECHNICAL as TECHNICAL_ERROR_QUERY, ErrorContext
 import json
-from .intent import IntentContext, continue_prompt
-from .works import WorkHistory
+from dafeiyu.media.drawing.intent import IntentContext, continue_prompt
+from dafeiyu.media.drawing.works import WorkHistory
 
 
 class DafeiyuDraw(Star):
