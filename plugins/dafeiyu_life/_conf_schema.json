@@ -1,4 +1,9 @@
 {
+  "life_direction": {
+    "type": "text",
+    "description": "主人当前希望的生活方向，供夜间规划参考；具体主题和次数由鲸鲸决定，可留空",
+    "default": ""
+  },
   "nightly_agenda": {
     "type": "bool",
     "description": "夜间自主规划次日活动，白天执行保存的行程；活动条数由模型决定",

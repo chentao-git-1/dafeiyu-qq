@@ -12,7 +12,7 @@ def self_state(completed=None, progress=None, works=()):
                     'project', 'stage', 'source', 'completed_at') if k in completed}
     ongoing = None
     if (isinstance(progress, dict) and progress.get('status') == 'started'
-            and progress.get('kind') in ('reading', 'writing', 'drawing') and progress.get('day')):
+            and progress.get('kind') in ('exploring', 'reading', 'writing', 'drawing') and progress.get('day')):
         ongoing = {k: progress[k] for k in ('day', 'kind', 'status', 'updated') if k in progress}
     return {'verified_completed': verified, 'verified_in_progress': ongoing,
         'conversation_works':list(works),

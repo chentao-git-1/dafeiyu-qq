@@ -186,6 +186,7 @@ def interest_context(journal, records):
             reflections.setdefault(row['project_id'], row)
     state['reflections'] = list(reflections.values())
     works = {}
+    coverage = {}
     titles = {}
     for row in state['projects']:
         titles.setdefault(row['title'], []).append(row['id'])
@@ -193,6 +194,13 @@ def interest_context(journal, records):
         legacy = titles.get(row.get('project'), [])
         key = row.get('project_id') or (legacy[0] if len(legacy) == 1 else row.get('project')) or row['id']
         works.setdefault(key, row)
+        group=coverage.setdefault(key,dict(project_id=key,completed=0,days=set(),kinds={},source_urls=set()))
+        group['completed']+=1;group['days'].add(row['day'])
+        group['kinds'][row['kind']]=group['kinds'].get(row['kind'],0)+1
+        source=row.get('source') or {};selected=source.get('selected') or {}
+        if source.get('url') or selected.get('url'):group['source_urls'].add(source.get('url') or selected['url'])
+    state['recent_activity_distribution']=[dict(project_id=r['project_id'],completed=r['completed'],
+        distinct_days=len(r['days']),last_day=max(r['days']),kinds=r['kinds'],distinct_source_urls=len(r['source_urls'])) for r in coverage.values()]
     return state, list(works.values())
 
 

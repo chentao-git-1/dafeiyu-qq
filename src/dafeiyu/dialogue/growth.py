@@ -43,7 +43,7 @@ def own_experiences(store,now=None,retained=()):
             if run['status']=='completed':
                 record=json.loads(run['record']);artifact=(root/record['artifact']).resolve();at=float(record['completed_at'])
                 if artifact.parent!=(root/'works').resolve() or not 0<at<=now+5:continue
-                if record['kind'] not in ('reading','writing','drawing'):continue
+                if record['kind'] not in ('exploring','reading','writing','drawing'):continue
                 exists=artifact.is_file()
                 if exists and (artifact.stat().st_size>4*1024*1024 or hashlib.sha256(artifact.read_bytes()).hexdigest()!=record['sha256']):continue
                 if exists and artifact.suffix=='.json':
@@ -52,6 +52,7 @@ def own_experiences(store,now=None,retained=()):
                 payload=dict(activity=record['kind'],outcome='completed',note=str(record.get('note',''))[:500],
                     thought=str(record.get('thought',''))[:250],nature='verified_digital_work_not_physical_experience')
                 if record.get('adapted_from')=='reading':payload['activity_context']='alternative_after_failed_reading'
+                if record['kind']=='exploring':payload['activity_context']='browsed_search_summaries_not_full_articles'
                 reference=dict(day=run['day'],status='completed',sha256=record['sha256'],completed_at=at)
                 if run.get('activity_id'):reference['activity_id']=run['activity_id']
                 reflection=record.get('reflection')
@@ -61,7 +62,7 @@ def own_experiences(store,now=None,retained=()):
                 # Normal work-file retention must not erase long-term dispositions.
                 # Only a previously witnessed attestation with unchanged metadata may survive cleanup.
                 if not exists and not any(old['reference']==reference and old['payload']==payload for old in retained):continue
-            elif run['status']=='failed' and run['kind'] in ('reading','writing','drawing'):
+            elif run['status']=='failed' and run['kind'] in ('exploring','reading','writing','drawing'):
                 at=float(run['updated'])
                 if not 0<at<=now+5:continue
                 payload=dict(activity=run['kind'],outcome='not_completed',error_type=str(run['error'] or 'unknown')[:80])

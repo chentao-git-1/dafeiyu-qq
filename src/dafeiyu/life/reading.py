@@ -62,7 +62,8 @@ def checked_url(value):
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ''))
 
 
-async def read_article(tool, question):
+async def explore(tool, question):
+    """Browse result summaries once; selecting an interest shares the ordinary activity call."""
     if not isinstance(question, str) or not question.strip():
         raise ReadingError('query', 'missing')
     # The existing search service accepts at most 128 Unicode characters.
@@ -71,7 +72,7 @@ async def read_article(tool, question):
     rows = result.get('results')
     if not isinstance(rows, list):
         raise ReadingError('search', 'invalid_results')
-    selected = None
+    candidates = []; seen = set()
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -79,11 +80,38 @@ async def read_article(tool, question):
             url = checked_url(row.get('url'))
         except ValueError:
             continue
-        selected = row, url
-        break
-    if selected is None:
+        if url in seen:continue
+        seen.add(url)
+        title=row.get('title') or url
+        summary=row.get('snippet') or row.get('description') or row.get('summary') or ''
+        if not isinstance(title,str) or not isinstance(summary,str):continue
+        candidates.append(dict(id='search:'+hashlib.sha256(url.encode()).hexdigest()[:24],
+            url=url,title=title[:200],summary=summary[:600]))
+        if len(candidates)==8:break
+    if not candidates:
         raise ReadingError('search', 'no_public_results')
-    row, url = selected
+    return dict(query=query,candidates=candidates,content_nature='search_summaries_not_full_articles')
+
+
+def selected_discovery(source, generated):
+    """A curiosity may be absent; an invented source cannot become a remembered discovery."""
+    ident=generated.get('selected_source_id');evidence=generated.get('evidence','')
+    if ident is None or ident=='':
+        if evidence:raise ValueError('Unselected discovery has source evidence')
+        return dict(query=source['query'],content_nature=source['content_nature'],selected=None)
+    selected=next((r for r in source['candidates'] if r['id']==ident),None)
+    if (selected is None or not isinstance(evidence,str) or not evidence.strip()
+            or len(evidence)>200 or evidence not in selected['title']+'\n'+selected['summary']):
+        raise ValueError('Discovery lacks offered source evidence')
+    return dict(query=source['query'],content_nature=source['content_nature'],selected=selected)
+
+
+async def read_article(tool, question, selected_url=None):
+    if selected_url:
+        url=checked_url(selected_url);row={};query=question.strip()[:128]
+    else:
+        overview=await explore(tool,question)
+        row=overview['candidates'][0];url=row['url'];query=overview['query']
     extracted = await tool('fetch', {'url': url})
     body = extracted.get('content')
     if not isinstance(body, str) or not body.strip():
@@ -98,4 +126,7 @@ async def read_article(tool, question):
 
 def capabilities():
     return dict(source_scope='public_https_web', query_source='model_selected_question',
-        max_query_characters=128, may_revisit_sources=True, max_search_requests=1, max_fetch_requests=1)
+        max_query_characters=128, may_revisit_sources=True, max_search_requests=1, max_fetch_requests=1,
+        exploring=dict(max_results=8,max_search_requests=1,max_fetch_requests=0,
+            selection='same_activity_generation_or_none',evidence='summaries_only'),
+        selected_discovery_reading='fetch_selected_public_url_without_another_search')

@@ -17,7 +17,7 @@ from dafeiyu.life.topic_context import relevant as relevant_life, world_profile
 from dafeiyu.life.store import failure_code
 
 
-@register("dafeiyu_life", "Local", "夜间自主规划、白天按计划推进数字活动", "0.7.0")
+@register("dafeiyu_life", "Local", "自主探索兴趣、规划并推进数字活动", "0.7.1")
 class JingjingLife(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -27,7 +27,8 @@ class JingjingLife(Star):
             Path(get_astrbot_data_path()) / "plugin_data/dafeiyu_life",model_schedule=enabled
         )
         self.engine = LifeEngine(self.store, context,agenda_enabled=enabled,
-            agenda_hours=(settings.get('planning_hour',23),settings.get('execution_start_hour',9),settings.get('execution_end_hour',21)))
+            agenda_hours=(settings.get('planning_hour',23),settings.get('execution_start_hour',9),settings.get('execution_end_hour',21)),
+            owner_wishes=settings.get('life_direction',''))
         self.task = None
         context.register_web_api(
             "/dafeiyu_life/status", self.status, ["GET"], "鲸鲸日常运行状态"
@@ -101,7 +102,11 @@ class JingjingLife(Star):
         latest = self.public_context()
         return json_response(
             {
-                "version": "0.7.0",
+                "version": "0.7.1",
+                "available_activity_kinds": self.engine.agenda_kinds() if self.engine.agenda_enabled else ['reading','writing','drawing'],
+                "discovery_selection_in_activity_call": self.engine.agenda_enabled,
+                "agenda_uses_completed_dependencies": self.engine.agenda_enabled,
+                "owner_life_direction_configured": bool(self.engine.owner_wishes),
                 "agenda": agenda,
                 "self_chosen_interests": True,
                 "new_interest_requires_prior_source": False,
