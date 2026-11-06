@@ -9,7 +9,8 @@ def self_state(completed=None, progress=None, works=()):
             and not isinstance(completed['completed_at'], bool)
             and math.isfinite(completed['completed_at']) and completed['completed_at'] > 0):
         verified = {k: completed[k] for k in ('id', 'day', 'kind', 'note', 'thought',
-                    'project', 'stage', 'source', 'completed_at') if k in completed}
+                    'project', 'stage', 'source', 'completed_at','presentation','content_nature',
+                    'production','physical_camera_used','narrative_viewpoint') if k in completed}
     ongoing = None
     if (isinstance(progress, dict) and progress.get('status') == 'started'
             and progress.get('kind') in ('exploring', 'reading', 'writing', 'drawing') and progress.get('day')):

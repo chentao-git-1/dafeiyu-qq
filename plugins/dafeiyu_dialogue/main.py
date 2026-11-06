@@ -40,7 +40,7 @@ from .evidence_context import EvidenceContext
 from .generation_workflow import GenerationWorkflow
 
 
-@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.2')
+@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.3')
 class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -695,7 +695,8 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.7.2', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.7.3', 'mode': self.config.get('mode', 'shadow'),
+            'story_photo_narration':True,
             'self_details_on_demand':True,
             'automatic_exchange_recall':False,
             'legacy_outgoing_sidecars_projected_at_provider':True,

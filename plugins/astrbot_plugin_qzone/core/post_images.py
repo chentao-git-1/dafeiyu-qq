@@ -3,6 +3,7 @@ import asyncio
 import re
 from astrbot.core.message.components import Image, Reply
 from .utils import get_image_urls
+from dafeiyu.media.drawing.framing import image_prompt as framed_image_prompt
 
 
 async def prepare_post_images(context, text, event=None, with_image=True, image_prompt='', *, editorial=None, require_supplied=False):
@@ -39,5 +40,5 @@ async def prepare_post_images(context, text, event=None, with_image=True, image_
     )
     if image_prompt:
         prompt += '\n爸爸指定的画面要求：' + str(image_prompt)[:300]
-    path = await asyncio.wait_for(drawing.generate_for_qzone(prompt), timeout=55 if editorial is not None else 90)
+    path = await asyncio.wait_for(drawing.generate_for_qzone(framed_image_prompt(prompt,'story_photo')), timeout=55 if editorial is not None else 90)
     return [path]

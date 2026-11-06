@@ -53,6 +53,7 @@ def own_experiences(store,now=None,retained=()):
                     thought=str(record.get('thought',''))[:250],nature='verified_digital_work_not_physical_experience')
                 if record.get('adapted_from')=='reading':payload['activity_context']='alternative_after_failed_reading'
                 if record['kind']=='exploring':payload['activity_context']='browsed_search_summaries_not_full_articles'
+                if record.get('presentation')=='story_photo':payload['activity_context']='character_photograph_with_generated_image_artifact'
                 reference=dict(day=run['day'],status='completed',sha256=record['sha256'],completed_at=at)
                 if run.get('activity_id'):reference['activity_id']=run['activity_id']
                 reflection=record.get('reflection')

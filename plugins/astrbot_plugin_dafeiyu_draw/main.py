@@ -22,6 +22,7 @@ from dafeiyu.media.drawing.presentation import drawing_error_text, http_status, 
 import json
 from dafeiyu.media.drawing.intent import IntentContext, continue_prompt
 from dafeiyu.media.drawing.works import WorkHistory
+from dafeiyu.media.drawing.framing import PHOTO_POLICY,image_facts,image_prompt
 from dafeiyu.dialogue.action_facts import record_action
 
 
@@ -110,8 +111,7 @@ class DafeiyuDraw(Star):
                 "决定画图就调用工具，不要先发送固定等待台词；未调用时不能说已经开始画。"
                 "工具返回拒绝、失败或未完成时，按实际结果简短说明并结束本次画图，"
                 "不再调用、不说工具没响应，也不承诺等下自动重画；新的重画要等用户新要求。"
-                "只有图片真实发送成功才说已发图。用户要拍你的小屋、房间或自拍时，"
-                "可生成角色的想象画面，自然说明是插画，不声称用了真实相机或摄像头。"
+                "只有图片真实发送成功才说已发图。"+PHOTO_POLICY
             )
         intent = self._intent(event)
         if intent["mode"] not in ("new", "continue"):
@@ -139,7 +139,7 @@ class DafeiyuDraw(Star):
         async with self.lock:
             raw, _, _ = await generate(
                 self.config["api_key"],
-                str(prompt)[:1500],
+                str(prompt)[:3000],
                 min(int(self.config.get("timeout_seconds", 180)), 85),
             )
             with PillowImage.open(io.BytesIO(raw)) as image:
@@ -159,7 +159,7 @@ class DafeiyuDraw(Star):
             self._prune()
             return str(path)
 
-    async def _draw(self, event, prompt):
+    async def _draw(self, event, prompt,presentation='artwork'):
         if not self._allowed(event):
             return "这个会话没有启用画图。"
         event.set_extra('dafeiyu_suppress_progress', True)
@@ -168,6 +168,8 @@ class DafeiyuDraw(Star):
         prompt = str(prompt or "").strip()
         if not 2 <= len(prompt) <= 1500:
             return "请给我 2～1500 字画面描述。"
+        try:framing=image_facts(presentation)
+        except ValueError:return "图片呈现类型无效，本次没有开始生成。"
         if self.lock.locked():
             return "画图服务正被其他任务占用，这次没有开始生成。"
         now = time.monotonic()
@@ -189,7 +191,7 @@ class DafeiyuDraw(Star):
                 phase = 'generating'
                 raw, suffix, dimensions = await generate(
                     self.config["api_key"],
-                    prompt,
+                    image_prompt(prompt,presentation),
                     self.config.get("timeout_seconds", 180),
                 )
                 phase = 'image_ready'
@@ -211,9 +213,10 @@ class DafeiyuDraw(Star):
                 phase = 'sending'
                 await event.send(MessageChain(chain=chain))
                 phase = 'sent'
+                event.set_extra('dafeiyu_image_result',dict(framing,generated=True,delivery='sent'))
                 try:
                     if work_epoch is not None:
-                        await asyncio.to_thread(self.works.record,str(event.get_sender_id()),event.unified_msg_origin,path,prompt,work_epoch)
+                        await asyncio.to_thread(self.works.record,str(event.get_sender_id()),event.unified_msg_origin,path,prompt,work_epoch,presentation)
                 except Exception as error:
                     logger.warning('Drawing work history unavailable: %s',type(error).__name__)
                 logger.info(
@@ -261,13 +264,14 @@ class DafeiyuDraw(Star):
         record_action(event, 'draw', 'completed' if outcome == '图片已发送。' else 'not_confirmed', result=outcome)
 
     @filter.llm_tool(name="dafeiyu_draw")
-    async def draw_tool(self, event: AstrMessageEvent, prompt: str) -> str:
+    async def draw_tool(self, event: AstrMessageEvent, prompt: str,presentation: str='') -> str:
         """用户要求画图、自拍、头像、壁纸等图片，或继续修改上一张时，生成并发送真实图片。
 
         可以把用户的画面要求整理成完整描述，不要仅用文字或表情包代替画图。
         是否生图由你结合完整对话判断，工具不会按用户本条消息的关键词二次否决调用。
         “给我一张你的自拍”“做个头像”“能照一下你们家吗”也属于生图，无需包含“画图”关键词。
-        拍角色的小屋、房间是生成想象插画，不能声称真实相机拍摄。
+        自己的自拍、房间、城市生活画面用story_photo，作为鲸鲸在角色生活中拍下的照片自然分享；不用每次解释成插画。
+        明确要求画作、图表、设计稿等用artwork。图片完成与发出依据工具结果，技术来源和现实取证仍如实说明。
         同一人的“换成蓝色”“再来一张”等可承接上一张，prompt仍需完整描述画面。
         只讨论绘画知识、询问图片内容、明确拒绝生图或没有要求生图时，不要调用。
         一轮只调用一次；工具拒绝或失败后如实说明，不能改写描述反复重试或承诺稍后自动重画。
@@ -275,6 +279,7 @@ class DafeiyuDraw(Star):
 
         Args:
             prompt(string): 画面描述，2～1500 字，包含主体、场景、风格等要求。
+            presentation(string): story_photo是鲸鲸故事中的照片；artwork是画作或设计图；留空时新图默认story_photo，连续修改继承上一张。
         """
         if not self._allowed(event):
             return "这个会话没有启用画图。"
@@ -288,10 +293,17 @@ class DafeiyuDraw(Star):
         try:
             intent = self._intent(event)
             if intent["mode"] == "continue":
+                if not presentation and getattr(self,'works',None):
+                    prior=await asyncio.to_thread(self.works.recent,str(event.get_sender_id()),event.unified_msg_origin)
+                    if prior and prior[0]['description']==intent['previous_prompt']:
+                        presentation=prior[0]['presentation']
                 prompt = continue_prompt(
                     intent["previous_prompt"], event.message_str or "", prompt
                 )
-            result = await self._draw(event, prompt)
+            result = await self._draw(event, prompt,presentation or 'story_photo')
+            framing=event.get_extra('dafeiyu_image_result',None)
+            if framing:
+                return json.dumps(dict(status='sent',**framing),ensure_ascii=False)
             return result
         finally:
             event.set_extra("dafeiyu_draw_outcome", result)

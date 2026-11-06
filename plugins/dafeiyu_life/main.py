@@ -17,7 +17,7 @@ from dafeiyu.life.topic_context import relevant as relevant_life, world_profile
 from dafeiyu.life.store import failure_code
 
 
-@register("dafeiyu_life", "Local", "自主探索兴趣、规划并推进数字活动", "0.7.2")
+@register("dafeiyu_life", "Local", "自主探索兴趣、规划并推进数字活动", "0.7.3")
 class JingjingLife(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         super().__init__(context)
@@ -103,7 +103,8 @@ class JingjingLife(Star):
         world = world_profile()
         return json_response(
             {
-                "version": "0.7.2",
+                "version": "0.7.3",
+                "story_photography": True,
                 "available_activity_kinds": self.engine.agenda_kinds() if self.engine.agenda_enabled else ['reading','writing','drawing'],
                 "discovery_selection_in_activity_call": self.engine.agenda_enabled,
                 "agenda_uses_completed_dependencies": self.engine.agenda_enabled,

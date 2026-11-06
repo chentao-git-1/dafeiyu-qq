@@ -154,7 +154,8 @@ class LifeStore:
                 path=self.root/record['artifact']
                 if path.parent!=self.root/'works' or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=record['sha256']:continue
                 if time.time()-record['completed_at']>7*86400 or record['completed_at']>time.time()+5:continue
-                return {k:record[k] for k in ('id','day','kind','note','thought','story','project','stage','source','completed_at')}
+                return {k:record[k] for k in ('id','day','kind','note','thought','story','project','stage','source','completed_at',
+                    'presentation','content_nature','production','physical_camera_used','narrative_viewpoint') if k in record}
             except (KeyError,OSError,ValueError):continue
         return None
     def public_context_for_day(self, now=None):
@@ -167,6 +168,7 @@ class LifeStore:
                 if path.resolve().parent != (self.root/'works').resolve() or not path.is_file():continue
                 if hashlib.sha256(path.read_bytes()).hexdigest() != record['sha256']:continue
                 value = {k:record[k] for k in ('id','kind','note','thought','story','project','stage','source','completed_at')}
+                value.update({k:record[k] for k in ('presentation','content_nature','production','physical_camera_used','narrative_viewpoint') if k in record})
                 value['day'] = beijing_day(completed)
                 return value
             except (KeyError, OSError, TypeError, ValueError):continue

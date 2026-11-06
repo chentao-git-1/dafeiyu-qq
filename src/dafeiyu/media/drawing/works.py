@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 import sqlite3
 import time
+from .framing import image_facts
 
 
 class WorkHistory:
@@ -15,6 +16,10 @@ class WorkHistory:
     def schema(db):
         db.execute('CREATE TABLE IF NOT EXISTS works(id TEXT PRIMARY KEY,actor TEXT,origin TEXT,artifact TEXT,sha TEXT,description TEXT,completed REAL)')
         db.execute('CREATE TABLE IF NOT EXISTS scopes(actor TEXT,origin TEXT,epoch INTEGER,PRIMARY KEY(actor,origin))')
+        if 'presentation' not in {r[1] for r in db.execute('PRAGMA table_info(works)')}:
+            try:db.execute("ALTER TABLE works ADD COLUMN presentation TEXT NOT NULL DEFAULT 'artwork'")
+            except sqlite3.OperationalError:
+                if 'presentation' not in {r[1] for r in db.execute('PRAGMA table_info(works)')}:raise
 
     def begin(self, actor, origin):
         with closing(sqlite3.connect(str(self.path),timeout=3)) as db,db:
@@ -30,15 +35,16 @@ class WorkHistory:
             raise ValueError('Work artifact is unavailable')
         return path,hashlib.sha256(path.read_bytes()).hexdigest()
 
-    def record(self, actor, origin, path, description, expected_epoch=0):
+    def record(self, actor, origin, path, description, expected_epoch=0,presentation='artwork'):
+        image_facts(presentation)
         path,sha=self.artifact(path);now=self.clock()
         key='drawing:'+hashlib.sha256((str(actor)+'\n'+str(origin)+'\n'+path.name).encode()).hexdigest()[:24]
         with closing(sqlite3.connect(str(self.path),timeout=3)) as db,db:
             self.schema(db);db.execute('BEGIN IMMEDIATE')
             epoch=db.execute('SELECT epoch FROM scopes WHERE actor=? AND origin=?',(str(actor),str(origin))).fetchone()
             if (epoch[0] if epoch else 0)!=expected_epoch:return None
-            db.execute('INSERT OR IGNORE INTO works VALUES(?,?,?,?,?,?,?)',
-                (key,str(actor),str(origin),path.name,sha,str(description)[:1500],now))
+            db.execute('INSERT OR IGNORE INTO works(id,actor,origin,artifact,sha,description,completed,presentation) VALUES(?,?,?,?,?,?,?,?)',
+                (key,str(actor),str(origin),path.name,sha,str(description)[:1500],now,presentation))
             db.execute('DELETE FROM works WHERE completed<?',(now-7*86400,))
             db.execute('DELETE FROM works WHERE id IN (SELECT id FROM works ORDER BY completed DESC LIMIT -1 OFFSET 1000)')
         self.path.chmod(0o600)
@@ -57,6 +63,7 @@ class WorkHistory:
                 path,sha=self.artifact(self.image_dir/row['artifact'])
                 if sha!=row['sha']:continue
                 result.append(dict(id=row['id'],kind='drawing',description=row['description'],
+                    **image_facts(row['presentation'] if 'presentation' in row.keys() else 'artwork'),
                     day=dt.datetime.fromtimestamp(row['completed'],dt.timezone(dt.timedelta(hours=8))).date().isoformat(),
                     completed_at=row['completed'],delivery='sent',visibility='this_person_and_session',
                     description_is_generation_request_not_visual_inspection=True))

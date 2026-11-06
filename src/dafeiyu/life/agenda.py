@@ -16,6 +16,7 @@ POLICY = '''为哦鲸鲸安排目标日期的自主数字活动。夜间先想�
 当天执行结果会进入下一次规划；未取得资料与研究没有答案不同，阅读失败后的替代文字也不是研究发现。计划不是已经做过的事，不虚构现实出门、吃饭或身体生活。正常聊天照常，不为了执行计划装忙或催人。
 owner_wishes是主人当前希望生活更丰富的方向；初始爱好只是起点，不是题材范围。recent_activity_distribution如实描述近期活动分布，是否继续深入、暂放或接触新东西由你决定。
 fictional_setting是已经确立的角色生活背景，可以自主选择use_world来发展故事，也可以做无关的数字活动。城市住处与过去的来历不是今天已完成活动，不据此安排真实出行或把背景地点轮流排进日程。
+drawing也可以是角色生活中的拍照，只有这种图片活动可添加presentation：story_photo（默认，自己拍下的角色照片）或artwork（明确选择画作或设计图）。摄影选题和取景由自己决定，照片文件成功生成后才记录为成果；不必每次把角色照片解释成插画。
 exploring可用自己选的搜索问题浏览公开结果摘要，在本次活动中挑出感兴趣的一条或不选；reading才会取文章正文。没有预设话题库，不必为了变化随机换题。若稍后的活动需要用到当天较早活动的真实成果，可在该项加入after数组，填写较早项的HH:MM；执行时会注入其已完成作品。reading承接exploring时直接读它选中的来源。不要预先虚构探索结果；没有成果的依赖项会跳过，独立活动不受影响。
 只输出JSON：day（目标日期）、summary（你对这天的安排想法，可空）、items（数组，可空）。每项为{"at":"HH:MM","after":[],"activity":{"kind":"exploring|reading|writing|drawing|none","project_id":"已有编号或空串","expected_version":0,"title":"想做的事","question":"具体想弄清或表达什么；exploring填写想浏览的搜索问题","source_ids":[],"reason":"自己的选择理由","use_world":false}}。after可省略，最多引用8项，reading最多承接一项。none的title/question/reason可空。不输出工具调用或额外说明。'''
 
@@ -33,7 +34,7 @@ def materials(life, journal, day, start_hour, end_hour, balance, growth=None, no
         end=f'{end_hour:02d}:00',end_exclusive=True),operator_seed={'id':'operator:seed','profile':self_profile()},
         self_state=state,recent_works=[{k:r[k] for k in ('id','day','kind','note','thought','source','activity_context') if k in r} for r in records],
         allowed_kinds=allowed,reading_capabilities=capabilities(),grown_dispositions=growth or {},owner_wishes=owner_wishes,
-        fictional_setting={key:world[key] for key in ('kind','version','place','summary','continuity','open_future')},
+        fictional_setting={key:world[key] for key in ('kind','version','place','summary','continuity','open_future','photography')},
         activity_outcomes=life.outcomes(),execution_state=life.activity_state(now),
         resources=dict(balance_cny=balance,activity_count='model_selected',drawing_currently_allowed='drawing' in allowed))
 

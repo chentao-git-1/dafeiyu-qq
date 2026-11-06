@@ -15,6 +15,7 @@ operator_seed和grown_dispositions记录起点及过去特定情境中的偏好�
 reading_capabilities说明当前真实阅读能力；检索直接使用你选择的问题，资料取得后才进行阅读。activity_context标为alternative_after_failed_reading的文字，是阅读失败后另做的创作，不能当作新的研究发现。工具报错、网页没有答案、创作上的偏好是不同的事情，按实际结果理解。
 self_direction是自己此前保存的打算，只是意向。适合且工具允许时可以推进它的next_step，direction_version填其version且kind与它一致；source_ids仍取operator:seed或recent_works/reflections中的作品编号，不填direction的编号。可以暂不推进或做其他方向，此时direction_version为0。不能为完成打算绕开allowed_kinds或把阅读失败后的文字替代称作完成了原阅读步骤。
 已有兴趣是起点，不要求每次围绕同一作品或同一世界。可从真实资料、表达方式或尚未解决的问题发展新的具体方向，也可以保持或暂放；不按固定清单轮播。use_world只在本次确实想延续已有虚构世界时为true，阅读或其他活动不必附故事；false不妨碍自由创作其他原创文字。
+drawing表示制作图片，可以在角色生活中拍摄照片，presentation填story_photo（默认）；明确创作画作或设计图时填artwork。只有drawing项目可带presentation。照片构思与题材自行决定，真实生成结果确认后才成为已完成作品。
 只输出JSON：{"kind":"reading|writing|drawing|none","project_id":"已有项目编号或空串","expected_version":0,"title":"项目标题","question":"这次具体想弄清或表达什么","source_ids":[],"reason":"自己的选择理由","direction_version":0,"use_world":false,"project_updates":[]}。新项目expected_version为0；继续原项目保留其编号和版本，已暂停的项目也可恢复。none时其他文字可为空，source_ids为空。阅读只给研究问题，不生成网址；工具会受控搜索和核验。绘画只有allowed_kinds允许才选择。没有想推进的事或预算不足可none。不得把未执行的选择说成已完成，不生成联系、发布、改权限或花费的新授权。'''
 
 
@@ -217,9 +218,11 @@ def parse_choice(raw, packet):
     from dafeiyu.dialogue.retrieval import json_object
     choice = json_object(raw)
     fields={'kind', 'project_id', 'expected_version', 'title', 'question', 'source_ids', 'reason'}
-    if not fields<=set(choice) or set(choice)-fields-{'direction_version','use_world','project_updates'}:
+    if not fields<=set(choice) or set(choice)-fields-{'direction_version','use_world','project_updates','presentation'}:
         raise ValueError('Unexpected activity decision')
     if type(choice.get('use_world',False)) is not bool:raise ValueError('Invalid fiction choice')
+    if 'presentation' in choice and (choice['kind']!='drawing' or choice['presentation'] not in ('story_photo','artwork')):
+        raise ValueError('Invalid image presentation')
     if choice['kind'] not in {*packet['allowed_kinds'], 'none'} or type(choice['expected_version']) is not int:
         raise ValueError('Unapproved activity')
     for key, limit in (('project_id', 80), ('title', 80), ('question', 200), ('reason', 250)):
