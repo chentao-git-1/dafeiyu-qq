@@ -708,5 +708,5 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
             'learning_created': self._learning is not None,
             'index_created': self._index is not None,
             'feature_flags': {k: self.feature(k) for k in ('learning_v2', 'activity_policy_v2', 'initiative_policy_v2', 'voice_intent_v2')},
-            'legacy_fact_guards_retained':self.config.get('mode')!='active' or not self.config.get('generation_contract',True),
+            'legacy_fact_guards_retained':False,'legacy_wording_overrides':False,
             'deterministic_action_guards_retained':True})

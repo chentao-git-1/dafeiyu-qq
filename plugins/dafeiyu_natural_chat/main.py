@@ -661,14 +661,14 @@ class NaturalChat(Star):
             counts={r['kind']:r['n'] for r in c.execute('SELECT kind,count(*) n FROM episodes GROUP BY kind')}
         with self.interaction_store().connect() as c:
             preference_count=c.execute('SELECT count(*) FROM preferences').fetchone()[0]
-        return json_response({'enabled':True,'version':'0.7.4','self_profile_version':self_profile()['version'],
+        return json_response({'enabled':True,'version':'0.11.0','self_profile_version':self_profile()['version'],
             'scoped_expiring_facts':True,'current_tool_receipts_required':True,
             'confirmed_delivery_only':True,'exchange_cleanup':self.exchange_store().cleanup_status(),
             'exchange_cleanup_error':getattr(self,'maintenance_error',None),
             'exchange_cleanup_running':getattr(self,'maintenance_task',None) is not None and not self.maintenance_task.done(),
             'exchange_recall_enabled':True,'exchange_retrieval':'scoped_synonyms_time_idf','saved_exchange_count':self.exchange_store().count(),
             'spoken_style':'conversational_with_technical_answers','extra_rewrite_model_calls':0,'shared_attributed_episodes':True,'counts':counts,
-            'canonical_contact_labels':True,'actual_private_delivery_context':True,'grounded_short_replies':True,
+            'canonical_contact_labels':True,'actual_private_delivery_context':True,'grounded_short_replies':False,'model_owned_wording':True,
             'personal_interaction_settings':True,'preference_count':preference_count,'image_default':'contextual_short_reaction',
             'explicit_image_questions':'full_answer','semantic_reply_variety':True,'extra_model_calls_per_reply':0,
             'mood_persisted':False,'mood_max_minutes':30,'mood_max_turns':3,'max_records':500,
