@@ -1,5 +1,7 @@
 # 换电脑接手说明
 
+**2026-11-06 15:19 自主兴趣更新已上线：**先读 [INTEREST_DEVELOPMENT.md](INTEREST_DEVELOPMENT.md) 和 [部署证据](interest-development-deployment-20261106.json)。部署代码 `2baded4844e87e5818b8561ed5e010d18c7a7a5f`，核心 0.2.1、日常 0.6.1。新兴趣不再强制引用旧作品或初始偏好，模型可暂停恢复项目；创作只带入所选材料，旧倾向作为有情境的记录使用。没有重置旧人格、记忆或项目，没有新增模型调用或活动额度。本地与生产镜像断网检查各 57 项，备份 29 个 SQLite，9 个源文件散列核对通过，QQ running、无导入错误。当天完成活动数保持 10，未人为触发兴趣规划或测试发送；后续通过正常活动观察。
+
 **2026-11-06 14:30 空间自主表达已上线：**先读 [QZONE_FREE_EXPRESSION.md](QZONE_FREE_EXPRESSION.md) 与 [部署证据](qzone-free-expression-deployment-20261106.json)。代码 `7d7107db595d3780e6f88e31c79e6eafcd67fa87` / `v3.1.3.post14` 已推送 main。文案一次生成，额外文案/配图审核、相似度词表筛选、固定题库和篇幅要求均停用，旧 llm.post_prompt 已清空。只更新空间插件与其写作提示，保留线上已有可靠性处理、公开素材撤回、权限、排程与账本。97 项干净源码、106 项生产镜像断网检查通过，29 个数据库一致备份；QQ running，今天仍排在 22:27:35，过去失败日期未重置。无收费模型测试、真实生图或试发动态。今后失败会记录有界的具体类别；11 月 4 日、5 日原始 ValueError 的根因不能事后补猜。
 
 **2026-11-06 13:34 自然措辞与独立核心已上线：**先读 [NATURAL_DIALOGUE.md](NATURAL_DIALOGUE.md) 和 [部署证据](natural-wording-deployment-20261106.json)。代码 `80bf4a61045bdc954db8d0171d8c5ff6dcaecca5` 已推送 main，并部署到腾讯云现有 AstrBot；核心位于持久化的 `/AstrBot/data/site-packages/dafeiyu`。chat_model_verification=false、response_review=off；11 个旧措辞覆盖钩子退出注册，自动等待通知计数为 0。主改动干净源码 415 项、状态修正 27 项、生产镜像断网隔离 106 项通过；29 个 SQLite 一致备份，175 个部署文件散列一致，QQ running，原有权限、人格、记忆与排程保留。保留了线上私聊遗忘处理差异，原有 6 个本地空间改动仍未提交。没有收费模型测试或 QQ 测试发送。接下来观察正常实聊，不为验收注入消息或重复部署。
