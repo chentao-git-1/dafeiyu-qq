@@ -1,9 +1,4 @@
-"""Confirmed dialogue metadata and deliberately coarse, revocable public topics.
-
-No message text, nickname, media or generated reply is stored here. Public
-summaries are fixed phrases from a small vocabulary, never model summaries of
-private conversations.
-"""
+"""Confirmed dialogue metadata and revocable public inspiration, without transcripts."""
 from contextlib import contextmanager
 import datetime as dt
 import hashlib
@@ -14,6 +9,7 @@ import re
 import sqlite3
 import time
 import uuid
+from .inspiration import PublicInspiration
 
 OWNER = '7000000001'
 SELF = '7000000002'
@@ -58,7 +54,7 @@ def safe_topic(text, media=False):
     return found[0] if len(found) == 1 else None
 
 
-class ActivityStore:
+class ActivityStore(PublicInspiration):
     def __init__(self, path, clock=time.time):
         self.path, self.clock = Path(path), clock
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +72,7 @@ class ActivityStore:
                     event_key TEXT PRIMARY KEY, user_id TEXT NOT NULL, origin TEXT NOT NULL,
                     segment TEXT NOT NULL, occurred_at REAL NOT NULL, topic TEXT NOT NULL);
             ''')
+            self.initialize_inspiration(db)
         self.path.chmod(0o600)
 
     @contextmanager
@@ -122,10 +119,14 @@ class ActivityStore:
                            (str(uid), origin, segment, occurred_at, topic or (row['topic'] if row and not fresh else None), blocked))
             elif not fresh:
                 blocked = 1
+            epoch=self.inspiration_epoch(db,uid)
         if command:
+            self.revoke_public_ideas(uid, None if command=='disable' else origin,
+                segment=segment if command=='segment' else None,disable=command=='disable')
             return {'command': command}
         return {'user_id': str(uid), 'origin': origin, 'event_key': self.key(uid, origin, mid),
-                'occurred_at': occurred_at, 'segment': segment, 'topic': topic if not blocked else None}
+                'occurred_at': occurred_at, 'segment': segment, 'topic': topic if not blocked else None,
+                'media':bool(media),'public_epoch':epoch}
 
     def record_confirmed(self, source, excluded=()):
         if not source or 'event_key' not in source or source['user_id'] in {SELF, *KNOWN_BOTS, *map(str, excluded)}:
@@ -179,7 +180,7 @@ class ActivityStore:
             seen.add(row['topic'])
             if len(result) == 2:
                 break
-        return result
+        return (self.inspiration_topics(now)+result)[:8]
 
     def topics_valid(self, topics):
         if not topics:
@@ -187,6 +188,9 @@ class ActivityStore:
         with self.connect() as db:
             bots = {row[0] for row in db.execute('SELECT qq FROM bots')} if db.execute("SELECT 1 FROM sqlite_master WHERE name='bots'").fetchone() else set()
             for topic in topics:
+                if str(topic.get('key','')).startswith('idea:'):
+                    if not self.inspiration_valid(db,topic,bots):return False
+                    continue
                 row = db.execute('''SELECT c.topic,c.occurred_at,c.user_id,p.disabled FROM public_topic_candidates c
                     LEFT JOIN public_summary_preferences p ON c.user_id=p.user_id WHERE c.event_key=?''', (topic.get('key'),)).fetchone()
                 if (not row or row['disabled'] or row['user_id'] in bots or row['topic'] not in TOPICS

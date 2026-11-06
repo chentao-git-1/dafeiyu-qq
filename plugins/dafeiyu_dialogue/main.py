@@ -38,10 +38,11 @@ from dafeiyu.dialogue.action_facts import KEY as ACTION_FACTS, attach_action_fac
 from .growth_lifecycle import GrowthLifecycle
 from .evidence_context import EvidenceContext
 from .generation_workflow import GenerationWorkflow
+from .public_sharing import PublicSharing
 
 
-@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.3')
-class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
+@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.4')
+class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicSharing, Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
@@ -162,7 +163,14 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         enabled = memory is not None and config.get('enable', True)
         if automatic and not config.get('auto_recall', True):
             enabled = False
-        return MemoryCatalog(self.root, path, include_long_term=enabled)
+        qmeta=self.context.get_registered_star('astrbot_plugin_qzone')
+        qzone=getattr(qmeta,'star_cls',None) if qmeta and qmeta.activated else None
+        own=getattr(qzone,'own_space',None);qpath=getattr(getattr(qzone,'cfg',None),'db_path',None)
+        public=None
+        if qpath and getattr(own,'uin',None) and getattr(own,'platform_id',None):
+            public=dict(path=Path(qpath),uin=str(own.uin),platform=own.platform_id,
+                comments_owner=str(getattr(self.natural(),'actor_owner',lambda:None)()))
+        return MemoryCatalog(self.root, path, include_long_term=enabled,public_space=public)
 
     @staticmethod
     def hide_recall(req):
@@ -492,6 +500,11 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
                             logger.warning('Event state batch unavailable: %s',type(error).__name__)
                         finally:self.learning_state_inflight.discard(source['owner'])
             if event.get_extra('dafeiyu_context_epoch',None)!=await asyncio.to_thread(self.learning_store().context_epoch):return
+            try:
+                self.review_stats['public_ideas_saved']+=await asyncio.to_thread(self.commit_public_sharing,event,source)
+            except Exception as error:
+                self.review_stats['public_ideas_failed']+=1
+                logger.warning('Confirmed public inspiration unavailable: %s',type(error).__name__)
             saved = await asyncio.to_thread(self.learning_store().commit, source,
                 self.natural().input_snapshot(event)['text'], items,
                 versions, confirmed=True)
@@ -595,14 +608,27 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         自行选择相关部分；可表达当下看法，不为凑话题读取旧进度。打算不证明正在做或做完。
 
         Args:
-            section(string): agenda今天和明天的行程；thoughts当前打算与反思；works实际作品与进行中记录；interests偏好；fiction角色来历、城市、住处与已有故事背景
+            section(string): publications最近确实发布的空间动态与可访问的公开互动；agenda今天和明天的行程；thoughts当前打算与反思；works实际作品与进行中记录；interests偏好；fiction角色来历、城市、住处与已有故事背景
         """
         try:
             turn=self.identity(event)
-            if not event.get_extra(ACTIVE_KEY,False) or section not in ('agenda','thoughts','works','interests','fiction'):
+            if not event.get_extra(ACTIVE_KEY,False) or section not in ('publications','agenda','thoughts','works','interests','fiction'):
                 raise ValueError('Self lookup not authorized')
             evidence=event.get_extra('dafeiyu_dialogue_evidence',{})
-            if section=='agenda':
+            if section=='publications':
+                snapshot=await asyncio.to_thread(self.catalog().read,turn,time.time())
+                rows=sorted((r for r in snapshot.items if r.kind in ('publication','public_interaction')),
+                    key=lambda r:(r.recorded_at,r.id),reverse=True)
+                chosen=[];size=0
+                for row in rows:
+                    value=row.data();cost=len(json.dumps(value,ensure_ascii=False))
+                    if size+cost>6000:continue
+                    chosen.append(value);size+=cost
+                    if len(chosen)==8:break
+                evidence['memory']=list({r['id']:r for r in [*evidence.get('memory',[]),*chosen]}.values())
+                data=dict(records=chosen,complete_history=len(chosen)==len(rows),live_visibility='not_checked',
+                    unavailable_sources=list(snapshot.unavailable))
+            elif section=='agenda':
                 meta=self.context.get_registered_star('dafeiyu_life')
                 life=getattr(meta,'star_cls',None) if meta and meta.activated else None
                 engine=getattr(life,'engine',None)
@@ -660,6 +686,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
                 raise ValueError('Review current records before deleting')
             removed=await asyncio.to_thread(self.learning_store().forget_entities,owner,
                 {i:offered['versions'][i] for i in record_ids})
+            await asyncio.to_thread(self.revoke_public_inspiration,owner,origin if turn.is_group else None)
             if self._growth is not None and not turn.is_group:await asyncio.to_thread(self._growth.forget,owner)
             await asyncio.to_thread(self.natural().forget_semantic,owner,origin,[])
             event.set_extra('dafeiyu_memory_mutated_in_turn',True)
@@ -695,7 +722,10 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, Star):
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.7.3', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.7.4', 'mode': self.config.get('mode', 'shadow'),
+            'public_space_memory_enabled':bool(self.catalog().public_space),
+            'public_inspiration_in_primary_generation':True,
+            'public_inspiration_extra_model_calls':0,
             'story_photo_narration':True,
             'self_details_on_demand':True,
             'automatic_exchange_recall':False,

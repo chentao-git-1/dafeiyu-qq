@@ -40,6 +40,8 @@ class MemoryItem:
     status: str = ''
 
     def visible_to(self, turn):
+        if self.visibility=='public':
+            return self.source=='confirmed_own_publication' and self.scope_id==turn.platform+':public'
         if turn.is_group:
             return (self.origin==turn.origin and (self.visibility=='group'
                 or self.visibility=='shared' and self.scope_id in (turn.platform+':shared','legacy:shared')

@@ -20,6 +20,7 @@ class GenerationWorkflow:
         event.set_extra('dafeiyu_learning_valid',False)
         event.set_extra('dafeiyu_learning_needs_check',False)
         event.set_extra('dafeiyu_learning_check_packet',None)
+        event.set_extra('dafeiyu_public_ideas',[])
         stage='format'
         try:
             generated = parse_generation(response.completion_text,recover_claims=True,recover_metadata=True)
@@ -114,6 +115,7 @@ class GenerationWorkflow:
                 event.set_extra('dafeiyu_learning_valid',privacy['action']=='none' and bool(items))
                 if privacy['action']!='none':event.set_extra('dafeiyu_semantic_forgetting',True)
                 self.review_stats['privacy_removed'] += removed
+            await self.prepare_public_sharing(event,generated,turn,human,privacy)
             # Check factual claims and history-primed casual replies before delivery.
             stage='review'
             if self.model_verification_enabled() and recover and self.config.get('response_review','enforce')!='enforce':
@@ -145,9 +147,11 @@ class GenerationWorkflow:
                 await self.natural().remember_delivered_reply(event)
                 await self.enqueue_learning(event)
         except asyncio.CancelledError:
+            event.set_extra('dafeiyu_public_ideas',[])
             response.completion_text = UNAVAILABLE
             raise
         except Exception as error:
+            event.set_extra('dafeiyu_public_ideas',[])
             if (self.model_verification_enabled() and stage=='format' and not event.get_extra('dafeiyu_recovery_attempts',0)
                     and not event.get_extra('dafeiyu_confirmed_delivery',[])
                     and not (event.get_extra('dafeiyu_reply_delivery',{}) or {}).get('expired')):
@@ -208,6 +212,7 @@ class GenerationWorkflow:
             long_term=await memory.forget_owned(event,mids)
         native={'episodes':0,'exchanges':0}
         if action in ('forget_selected','forget_all'):
+            await asyncio.to_thread(self.revoke_public_inspiration,turn.actor,turn.origin if turn.is_group else None)
             native=await asyncio.to_thread(self.natural().forget_semantic,turn.actor,turn.origin,ids)
             if self._index is not None:
                 if ids is None:

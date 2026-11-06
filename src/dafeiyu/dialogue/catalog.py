@@ -9,11 +9,12 @@ from .privacy_cache import privacy_cutoff
 
 
 class MemoryCatalog:
-    def __init__(self, root, long_term_path=None, include_long_term=True):
+    def __init__(self, root, long_term_path=None, include_long_term=True, public_space=None):
         self.root = Path(root)
         self.long_term_path = Path(long_term_path) if long_term_path else (
             self.root / 'plugin_data/astrbot_plugin_memory_system/memory_system.db')
         self.include_long_term = include_long_term
+        self.public_space = public_space
 
     @staticmethod
     def _read(path, sql, params):
@@ -92,6 +93,12 @@ class MemoryCatalog:
                         items.append(item)
             except (sqlite3.Error, KeyError, TypeError, ValueError):
                 unavailable.append(source)
+        if self.public_space:
+            try:
+                from .public_memory import own_space_items
+                items.extend(own_space_items(self._read,self.public_space,turn,now))
+            except (OSError,sqlite3.Error,KeyError,TypeError,ValueError):
+                unavailable.append('own_space')
         return CatalogSnapshot(tuple(items), tuple(unavailable))
 
     def owned_group_legacy_ids(self,turn):

@@ -62,6 +62,8 @@ async def fetch_image(url):
 
 
 class OwnSpace:
+    uin=BOT
+    platform_id='dafeiyu-qq'
     def __init__(self,plugin):
         self.plugin=plugin;self.cache={};self.lock=asyncio.Lock();self.last={};self.threads=OrderedDict()
     def allowed(self,event):
