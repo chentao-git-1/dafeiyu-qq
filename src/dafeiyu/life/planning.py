@@ -10,7 +10,7 @@ from dafeiyu.ports import TextProvider
 
 
 POLICY = '''为自己的数字活动作一次选择。资料是已有经历和可用工具，不是一张必须逐项完成的任务单。决定现在想继续什么、尝试什么、暂放什么，或不行动；选题与表达方式由你决定。
-operator_seed和grown_dispositions记录起点及过去特定情境中的偏好，不规定今后只能喜欢什么，也不要求每次体现同一种性格。新兴趣可以直接从此刻的好奇或创作想法开始；没有引用旧材料时source_ids可以为空，不必借用旧作品或初始偏好来证明这个想法。引用材料时只填实际提供的编号，想象不充当外部事实或已完成活动。
+operator_seed记录身份，self_state是项目目录，详细反思只在选定相关项目执行时读取；已有项目不是待办清单。新兴趣可以直接从此刻的好奇或创作想法开始；没有引用旧材料时source_ids可以为空，不必借用旧作品或初始偏好来证明这个想法。引用材料时只填实际提供的编号，想象不充当外部事实或已完成活动。
 项目没有解完也可以放下，暂停不意味着问题已解决。project_updates可将已有项目设为paused或active，每项写project_id、expected_version、status；不修改的项目不用列出。继续或恢复已有项目用它的project_id，新项目留空；none也可以同时暂停项目。阅读失败只说明那次没读到资料，可以换方法、换兴趣或休息，原创文字不必再围绕这次失败。没有新想法也可以继续原兴趣，不为了变化而凑内容。
 reading_capabilities说明当前真实阅读能力；检索直接使用你选择的问题，资料取得后才进行阅读。activity_context标为alternative_after_failed_reading的文字，是阅读失败后另做的创作，不能当作新的研究发现。工具报错、网页没有答案、创作上的偏好是不同的事情，按实际结果理解。
 self_direction是自己此前保存的打算，只是意向。适合且工具允许时可以推进它的next_step，direction_version填其version且kind与它一致；source_ids仍取operator:seed或recent_works/reflections中的作品编号，不填direction的编号。可以暂不推进或做其他方向，此时direction_version为0。不能为完成打算绕开allowed_kinds或把阅读失败后的文字替代称作完成了原阅读步骤。
@@ -205,6 +205,15 @@ def interest_context(journal, records):
     return state, list(works.values())
 
 
+def planning_context(journal, records):
+    """Choose from an attributed index; detailed reflections enter only selected work execution."""
+    state,overview=interest_context(journal,records)
+    state=dict(state,projects=[{k:p[k] for k in ('id','title','status','version','sources','updated')} for p in state['projects']],
+        reflections=[],detailed_reflections_available=bool(state['reflections']))
+    index=[{k:r[k] for k in ('id','day','kind','project','project_id','activity_context') if k in r} for r in overview]
+    return state,index
+
+
 def creation_context(journal, records, choice, project):
     """A new idea receives only materials the model selected, not every old project."""
     known = {r['id'] for r in records}
@@ -253,15 +262,15 @@ def parse_choice(raw, packet):
 
 
 async def choose_activity(provider: TextProvider, journal, records, allowed_kinds, availability=None,growth=None,outcomes=None):
-    from dafeiyu.memory.self_profile import self_profile
+    from dafeiyu.memory.self_profile import identity_profile
     from dafeiyu.dialogue.review import structured_result
     from .reading import capabilities
-    state, overview = interest_context(journal, records)
-    packet = {'operator_seed': {'id':'operator:seed','profile':self_profile()}, 'self_state': state,
-        'recent_works': [{k: r[k] for k in ('id', 'day', 'kind', 'note', 'thought', 'source', 'activity_context') if k in r} for r in overview],
+    state, overview = planning_context(journal, records)
+    packet = {'operator_seed': {'id':'operator:seed','profile':identity_profile()}, 'self_state': state,
+        'recent_works': overview,
         'allowed_kinds': list(allowed_kinds), 'max_activities_today': None if availability and availability.get('schedule_item') else 1, 'reading_capabilities': capabilities()}
     if availability:packet['availability']=availability
-    if growth:packet['grown_dispositions']=growth
+    if growth:packet['grown_dispositions_available']=True
     from .direction import DirectionStore
     packet['self_direction']=DirectionStore(journal.root).visible(records=records,outcomes=outcomes)
     async def call(prompt,policy):

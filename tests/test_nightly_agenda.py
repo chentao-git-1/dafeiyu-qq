@@ -187,15 +187,17 @@ class AgendaExecution(unittest.IsolatedAsyncioTestCase):
                 now[0]=stamp(7,10);self.assertTrue((await engine.advance())['advanced'])
                 self.assertEqual(provider.text_chat.await_count,3);self.assertEqual(life.count(),1)
 
-    async def test_invalid_plan_is_recorded_once_without_repeated_model_requests(self):
+    async def test_invalid_plan_retries_only_once_after_backoff_without_executing_anything(self):
         with tempfile.TemporaryDirectory() as tmp:
             now=[stamp()];provider=NS(text_chat=AsyncMock(return_value=NS(completion_text='invalid json')))
             with patch('data.plugins.dafeiyu_life.life.time.time',side_effect=lambda:now[0]):
                 life,engine=fixture(Path(tmp),now,provider)
                 with self.assertRaises(ValueError):await engine.plan_next_day()
                 self.assertFalse(await engine.plan_next_day())
-                now[0]=stamp(7,9);self.assertFalse(await engine.plan_next_day())
-                provider.text_chat.assert_awaited_once();self.assertEqual(life.count(),0)
+                now[0]=stamp(7,9)
+                with self.assertRaises(ValueError):await engine.plan_next_day()
+                now[0]=stamp(7,12);self.assertFalse(await engine.plan_next_day())
+                self.assertEqual(provider.text_chat.await_count,2);self.assertEqual(life.count(),0)
                 self.assertEqual(engine.agenda_status()['today']['status'],'failed')
 
     async def test_empty_day_and_rest_items_cost_no_execution_calls(self):

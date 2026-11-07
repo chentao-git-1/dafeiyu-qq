@@ -48,8 +48,8 @@ class EvidenceContext:
             root=Path(store.root);path=root/'self_journal.db'
             if not path.is_file():return {}
             try:
-                projects=MemoryCatalog._read(path,"SELECT id,title,question,version,updated FROM projects WHERE status='active' ORDER BY updated DESC LIMIT 3",())
-                candidates=MemoryCatalog._read(path,'SELECT work_id,work_sha,insight,next_question,recorded FROM reflections ORDER BY recorded DESC LIMIT 12',())
+                projects=MemoryCatalog._read(path,"SELECT id,title,question,status,version,updated FROM projects ORDER BY updated DESC LIMIT 12",())
+                candidates=MemoryCatalog._read(path,'SELECT work_id,work_sha,project_id,insight,next_question,recorded FROM reflections ORDER BY recorded DESC LIMIT 12',())
                 records={r['id']:r for r in store.records(60)};reflections=[]
                 for row in candidates:
                     work=records.get(row['work_id'])
@@ -59,9 +59,8 @@ class EvidenceContext:
                             or hashlib.sha256(artifact.read_bytes()).hexdigest()!=row['work_sha']
                             or not 0<float(work['completed_at'])<=time.time()+5):continue
                     reflections.append(dict(row,source_work={k:work[k] for k in ('id','day','kind','note','completed_at')}))
-                    if len(reflections)==3:break
                 direction=getattr(getattr(life,'engine',None),'direction_profile',lambda:None)()
-                return dict(projects=[dict(p,status='intent') for p in projects],reflections=reflections,
+                return dict(projects=[dict(p,status='intent' if p['status']=='active' else p['status']) for p in projects],reflections=reflections,
                     intentions=[direction] if direction else [])
             except (OSError,sqlite3.Error,KeyError,ValueError,TypeError):return {}
         return await asyncio.to_thread(read)

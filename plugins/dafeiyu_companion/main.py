@@ -145,7 +145,7 @@ class Companion(Star):
     async def status(self):
         jobs=await self.context.cron_manager.list_jobs()
         ours=[j for j in jobs if (j.payload or {}).get('dafeiyu_companion')]
-        return json_response({**self.initiative.status(),'version':'0.8.0','spontaneous_owner_only':False,
+        return json_response({**self.initiative.status(),'version':'0.8.1','spontaneous_owner_only':False,
             'general_initiative_owner_only':True,
             'comment_followthrough_allowed_contacts':True,
             'initiative_semantic_fact_and_novelty_review':True,

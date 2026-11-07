@@ -184,11 +184,14 @@ class Integration(unittest.IsolatedAsyncioTestCase):
             activity=NS(text_chat=AsyncMock(return_value=NS(completion_text=json.dumps(none))))
             result=await choose_activity(activity,SelfJournal(Path(tmp)),[],['reading','writing'],growth=growth)
             self.assertEqual(result['kind'],'none')
-            self.assertEqual(json.loads(activity.text_chat.call_args.kwargs['prompt'])['grown_dispositions'],growth)
+            packet=json.loads(activity.text_chat.call_args.kwargs['prompt'])
+            self.assertTrue(packet['grown_dispositions_available']);self.assertNotIn('grown_dispositions',packet)
             empty=dict(candidate_id='',text='',source_quote='',reason='没有新的分享',related_message_ids=[],activity_day='')
             initiative=NS(text_chat=AsyncMock(return_value=NS(completion_text=json.dumps(empty))))
             self.assertEqual(await choose_initiative(initiative,[],[],[],dt.datetime.now(TZ).date().isoformat(),growth=growth),(None,''))
-            self.assertEqual(json.loads(initiative.text_chat.call_args.kwargs['prompt'])['character_growth'],growth)
+            selected_growth=json.loads(initiative.text_chat.call_args.kwargs['prompt'])['character_growth']
+            self.assertEqual(selected_growth['global']['tendencies'],[])
+            self.assertTrue(selected_growth['global']['details_available'])
 
 
 if __name__=='__main__':unittest.main()

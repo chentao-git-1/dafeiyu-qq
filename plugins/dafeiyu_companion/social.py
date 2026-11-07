@@ -11,6 +11,7 @@ from astrbot.api.event import MessageChain
 from astrbot.core.message.components import Plain
 from dafeiyu.dialogue.catalog import MemoryCatalog
 from dafeiyu.dialogue.contracts import TurnContext
+from dafeiyu.dialogue.self_context import default_character
 from dafeiyu.initiative.social_intents import SocialIntentStore,SocialReply
 from dafeiyu.initiative.social_policy import choose,TZ
 from dafeiyu.social.store import DEFAULT,can_notify_profile
@@ -86,7 +87,7 @@ class SocialEngine:
             'SELECT message_id,sent_at,body FROM outgoing WHERE qq=? ORDER BY sent_at DESC LIMIT 4',(peer,))
         outgoing=[dict(r,time_beijing=dt.datetime.fromtimestamp(r['sent_at'],TZ).isoformat()) for r in outgoing]
         label=next((name for name,uid in self.plugin.family.items() if str(uid)==peer),'朋友')
-        character=natural.dialogue_character()
+        character=default_character(natural.dialogue_character())
         timing=dict(beijing_now=dt.datetime.fromtimestamp(now,TZ).isoformat(),peer_state=state,
             contact_settings=self.permission(peer))
         fingerprint=hashlib.sha256(json.dumps(dict(private=private,outgoing=outgoing,epoch=state['epoch']),ensure_ascii=False,sort_keys=True).encode()).hexdigest()

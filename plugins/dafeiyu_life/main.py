@@ -103,7 +103,7 @@ class JingjingLife(Star):
         world = world_profile()
         return json_response(
             {
-                "version": "0.7.3",
+                "version": "0.7.4",
                 "story_photography": True,
                 "available_activity_kinds": self.engine.agenda_kinds() if self.engine.agenda_enabled else ['reading','writing','drawing'],
                 "discovery_selection_in_activity_call": self.engine.agenda_enabled,

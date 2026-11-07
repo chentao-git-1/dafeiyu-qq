@@ -44,7 +44,7 @@ class GrowthLifecycle:
     async def review_growth(self):
         if not self.growth_enabled() or self.growth_lock.locked():return 0
         async with self.growth_lock:
-            from dafeiyu.memory.self_profile import self_profile
+            from dafeiyu.memory.self_profile import identity_profile
             await self.sync_growth();store=self.growth_store();changed=0
             scopes=await asyncio.to_thread(store.scopes)
             for scope in sorted(scopes,key=lambda r:r['scope']!=GLOBAL):
@@ -58,7 +58,7 @@ class GrowthLifecycle:
                 claim=await asyncio.to_thread(store.claim,scope['scope'])
                 if not claim:continue
                 try:
-                    claim['packet']['stable_profile']=self_profile()
+                    claim['packet']['stable_profile']=identity_profile()
                     async def call(prompt,policy):
                         response=await self.metered_provider(provider,'personality_growth').text_chat(
                             prompt=prompt,system_prompt=policy,contexts=[],func_tool=None,request_max_retries=1)

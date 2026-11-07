@@ -1,6 +1,6 @@
 """Numeric provider accounting for every new auxiliary/background request."""
 import time
-from .provider_contract import STRUCTURED, STRUCTURED_MARKER
+from .provider_contract import STRUCTURED, STRUCTURED_MARKER, OUTPUT_BUDGET
 
 
 class MeteredProvider:
@@ -12,6 +12,8 @@ class MeteredProvider:
     async def text_chat(self,**kwargs):
         purpose=self.purpose;stats=self.statistics;stats[purpose+'_calls']+=1
         started=time.perf_counter();token=None
+        from dafeiyu.life.agenda import PLAN_OUTPUT_TOKENS
+        budget=OUTPUT_BUDGET.set(PLAN_OUTPUT_TOKENS if purpose=='agenda' and self.structured else None)
         if self.structured:
             kwargs['system_prompt']=str(kwargs.get('system_prompt') or '')+'\n'+STRUCTURED_MARKER
             kwargs['request_max_retries']=1
@@ -30,4 +32,5 @@ class MeteredProvider:
             raise
         finally:
             if token is not None:STRUCTURED.reset(token)
+            OUTPUT_BUDGET.reset(budget)
             stats[purpose+'_elapsed_ms']+=round((time.perf_counter()-started)*1000)

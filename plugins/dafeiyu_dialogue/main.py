@@ -32,7 +32,7 @@ from .provider_contract import ProviderContracts,arm_contract
 from .metering import MeteredProvider
 from dafeiyu.dialogue.growth import GrowthStore,GLOBAL,own_experiences,preference_experiences,relation,perspective
 from dafeiyu.dialogue.growth_policy import assess as assess_growth
-from dafeiyu.dialogue.self_context import default_character
+from dafeiyu.dialogue.self_context import default_character,relevant_reflections,relevant_growth
 from dafeiyu.dialogue.deferred import DeferredLearning
 from dafeiyu.dialogue.action_facts import KEY as ACTION_FACTS, attach_action_facts
 from .growth_lifecycle import GrowthLifecycle
@@ -601,7 +601,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             return json.dumps({'records': [], 'unavailable': True, 'error_type': type(error).__name__})
 
     @filter.llm_tool(name='dafeiyu_self')
-    async def self_details(self,event,section:str='thoughts')->str:
+    async def self_details(self,event,section:str='thoughts',query:str='')->str:
         """按当前讨论需要，只读查询鲸鲸自己的资料；不执行活动或发送消息。
 
         普通问候、应声和别人的话题无需查询。明确问自己的兴趣、近况、作品、来历、住处或故事时，
@@ -609,6 +609,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
         Args:
             section(string): publications最近确实发布的空间动态与可访问的公开互动；agenda今天和明天的行程；thoughts当前打算与反思；works实际作品与进行中记录；interests偏好；fiction角色来历、城市、住处与已有故事背景
+            query(string): thoughts或interests查询旧项目、反思或成长倾向时填写正在讨论的具体问题；留空不附旧项目反思
         """
         try:
             turn=self.identity(event)
@@ -636,7 +637,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
                 evidence['requested_agenda']=data
             elif section=='thoughts':
                 thoughts=await self.own_thoughts()
-                data={key:list(thoughts.get(key,[]))[:1] for key in ('projects','reflections','intentions')}
+                data=relevant_reflections(thoughts,query)
                 evidence['self_thoughts']=data
             elif section=='works':
                 completed,running=await self.own_activity()
@@ -645,7 +646,11 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             else:
                 character=self.natural().dialogue_character()
                 if section=='interests':
-                    data=dict(stable_profile=character.get('stable_profile'),growth=await self.growth_profile())
+                    thoughts=await self.own_thoughts()
+                    data=dict(stable_profile=character.get('stable_profile'),initial_interests_optional=True,
+                        current_projects=[{k:p[k] for k in ('id','title','status','version')} for p in thoughts.get('projects',[])],
+                        current_intentions=thoughts.get('intentions',[]),
+                        growth=relevant_growth(await self.growth_profile(),query))
                 else:
                     completed,_=await self.own_activity()
                     data=dict(fictional_world=character.get('fictional_world'),
@@ -723,13 +728,15 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.7.6', 'mode': self.config.get('mode', 'shadow'),
+        return json_response({'version': '0.7.7', 'mode': self.config.get('mode', 'shadow'),
             'publication_photo_content_recall':True,
             'public_space_memory_enabled':bool(self.catalog().public_space),
             'public_inspiration_in_primary_generation':True,
             'public_inspiration_extra_model_calls':0,
             'story_photo_narration':True,
             'self_details_on_demand':True,
+            'project_reflections_require_query':True,
+            'initial_interests_optional':True,
             'automatic_exchange_recall':False,
             'legacy_outgoing_sidecars_projected_at_provider':True,
             'personality_growth_enabled':self.growth_enabled(),

@@ -11,6 +11,7 @@ MARKER='<!-- BEGIN_DAFEIYU_GENERATION -->'
 STRUCTURED_MARKER='<!-- DAFEIYU_STRUCTURED_TASK -->'
 CURRENT=ContextVar('dafeiyu_generation_capability',default=None)
 STRUCTURED=ContextVar('dafeiyu_structured_task',default=False)
+OUTPUT_BUDGET=ContextVar('dafeiyu_output_budget',default=None)
 WIRE_SCOPE=ContextVar('dafeiyu_wire_scope',default=(False,False))
 
 
@@ -136,6 +137,21 @@ class ProviderContracts:
             return result
 
         wrappers={'_finally_convert_payload':convert_payload,'text_chat':text_chat}
+        overrides=getattr(provider,'_apply_provider_specific_request_overrides',None)
+        if callable(overrides):
+            originals['_apply_provider_specific_request_overrides']=overrides
+            @functools.wraps(overrides)
+            def request_overrides(payload,extra_body):
+                overrides(payload,extra_body)
+                budget=OUTPUT_BUDGET.get()
+                if WIRE_SCOPE.get()[1] and type(budget) is int and budget>0:
+                    # AstrBot merges custom_extra_body after conversion. Override here,
+                    # on this request only; shared provider configuration stays intact.
+                    key='max_completion_tokens' if 'max_completion_tokens' in payload or 'max_completion_tokens' in extra_body else 'max_tokens'
+                    for name in ('max_tokens','max_completion_tokens'):
+                        payload.pop(name,None);extra_body.pop(name,None)
+                    payload[key]=budget
+            wrappers['_apply_provider_specific_request_overrides']=request_overrides
         stream=getattr(provider,'text_chat_stream',None)
         if callable(stream) and inspect.isasyncgenfunction(stream):
             originals['text_chat_stream']=stream

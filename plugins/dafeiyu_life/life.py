@@ -68,7 +68,7 @@ class LifeEngine:
         if not self.agenda_enabled or self.lock.locked() or not self.store.enabled():return False
         async with self.lock:
             agenda=self.agenda_store();day=agenda.planning_day()
-            if not day or agenda.view(day)['status']!='not_planned':return False
+            if not day or not agenda.can_plan(day):return False
             meta=self.context.get_registered_star('dafeiyu_dialogue')
             controller=getattr(meta,'star_cls',None) if meta and meta.activated else None
             if not controller or not controller.owner_policy_enabled('activity_policy_v2'):return False
