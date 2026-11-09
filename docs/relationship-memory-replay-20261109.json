@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "legacy_tables_preserved": 8,
+  "legacy_rows_preserved": 267,
+  "added_relationship_tables": 3,
+  "source_migration_preserved_existing_rows": true,
+  "confirmed_delivery_only": true,
+  "duplicate_delivery_idempotent": true,
+  "peer_and_group_isolation": true,
+  "model_selected_revision": true,
+  "forgetting_purges_history": true,
+  "late_delivery_cannot_resurrect": true,
+  "count_based_familiarity_removed": true,
+  "live_database_writes": 0,
+  "model_calls": 0,
+  "voice_calls": 0,
+  "image_calls": 0,
+  "qq_sends": 0,
+  "qzone_posts": 0,
+  "network": "none",
+  "commit": "ceb0c09493ad157aa4c09b6f073080cb664b6a2b",
+  "checked_at_beijing": "2026-11-09T21:08:14.226546+08:00"
+}
