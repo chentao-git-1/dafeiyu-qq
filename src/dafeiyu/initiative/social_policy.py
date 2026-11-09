@@ -13,6 +13,9 @@ owner_requested=true表示主人刚明确点名要承接这条旧留言，时间
 action=contact时private_message是现在实际要发的内容，when为空串；later时private_message为空串，when在1分钟到7天之内；none时两者为空串。不预先宣称已私聊、已读、承诺以后一定完成，也不用提示后台流程。public_reply只在allow_public_reply=true时填写，最多140字，允许为空；这不要求公开和私下各说一遍。intention与reason各最多300字。除明确none且无相关意向外，evidence必须逐字来自public_material.comment。无需工具，不进行第二轮审稿。'''
 
 
+POLICY+='\nprivate_context.relationship_memory是自己对当前人的有来源、可修正的主观看法，只帮助理解私下相处和联系时机，不是对方的客观人格、公开话题或操作许可。可以结合新互动重新理解，不机械复述旧判断，不把这些私人看法写进public_reply。'
+
+
 def parse_decision(raw,source,now,allow_public):
     from dafeiyu.dialogue.retrieval import json_object
     value=json_object(raw)

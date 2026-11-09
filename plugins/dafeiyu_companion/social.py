@@ -88,14 +88,16 @@ class SocialEngine:
         outgoing=[dict(r,time_beijing=dt.datetime.fromtimestamp(r['sent_at'],TZ).isoformat()) for r in outgoing]
         label=next((name for name,uid in self.plugin.family.items() if str(uid)==peer),'朋友')
         character=default_character(natural.dialogue_character())
+        relationships=await controller.relationship_profile(turn) if callable(getattr(controller,'relationship_profile',None)) else []
         timing=dict(beijing_now=dt.datetime.fromtimestamp(now,TZ).isoformat(),peer_state=state,
             contact_settings=self.permission(peer))
-        fingerprint=hashlib.sha256(json.dumps(dict(private=private,outgoing=outgoing,epoch=state['epoch']),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+        fingerprint=hashlib.sha256(json.dumps(dict(private=private,outgoing=outgoing,epoch=state['epoch'],
+            relationship_memory=relationships),ensure_ascii=False,sort_keys=True).encode()).hexdigest()
         public=dict(row['source'],comment_time_beijing=dt.datetime.fromtimestamp(row['source']['comment_at'],TZ).isoformat(),
             post_time_beijing=dt.datetime.fromtimestamp(row['source']['post_at'],TZ).isoformat())
         previous={k:row['decision'].get(k) for k in ('intention','reason','when')} if row['decision'].get('_context_key')==fingerprint else {}
         return dict(target=dict(relationship=label,verified_author=True),public_material=public,
-            private_context=dict(records=private,confirmed_outgoing=outgoing),character=character,timing=timing,
+            private_context=dict(records=private,confirmed_outgoing=outgoing,relationship_memory=relationships),character=character,timing=timing,
             owner_requested=bool(row['requested']),owner_requested_at=dt.datetime.fromtimestamp(row['created'],TZ).isoformat() if row['requested'] else None,
             allow_public_reply=bool(allow_public and not row['requested']),previous_intention=previous),state['epoch'],fingerprint
 

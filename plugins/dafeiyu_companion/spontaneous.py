@@ -153,12 +153,14 @@ class InitiativeEngine:
                 provider=controller.metered_provider(provider,'initiative')
                 previous=await asyncio.to_thread(self.store.recent_sent)
                 growth=await controller.growth_profile(turn) if callable(getattr(controller,'growth_profile',None)) else {}
+                relationships=await controller.relationship_profile(turn) if callable(getattr(controller,'relationship_profile',None)) else []
                 context_key=hashlib.sha256(json.dumps({'candidates':candidates,'recent':recent,'previous':previous,
-                    'growth':growth,'epoch':epoch},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
+                    'growth':growth,'relationship_memory':relationships,'epoch':epoch},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
                 if not await asyncio.to_thread(self.store.claim_evaluation,day,slot,epoch,context_key):return
                 self.current=(day,slot)
                 timing=await asyncio.to_thread(self.store.timing_context)
-                source,body,minutes=await choose_initiative(provider,candidates,recent,previous,day,growth=growth,timing=timing,include_schedule=True)
+                source,body,minutes=await choose_initiative(provider,candidates,recent,previous,day,growth=growth,timing=timing,
+                    relationships=relationships,include_schedule=True)
                 await asyncio.to_thread(self.store.finish_evaluation,day,slot,'selected' if source else 'no_action',minutes)
                 if not source:return
                 if epoch!=await asyncio.to_thread(self.store.epoch) or not await self.source_valid(source):return

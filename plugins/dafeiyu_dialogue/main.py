@@ -39,10 +39,11 @@ from .growth_lifecycle import GrowthLifecycle
 from .evidence_context import EvidenceContext
 from .generation_workflow import GenerationWorkflow
 from .public_sharing import PublicSharing
+from .relationship_memory import RelationshipContext
 
 
-@register('dafeiyu_dialogue', 'Local', '自主表达、送达后学习与有据对话', '0.7.6')
-class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicSharing, Star):
+@register('dafeiyu_dialogue', 'Local', '自主表达、真实相处记忆与送达后学习', '0.8.0')
+class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicSharing, RelationshipContext, Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
@@ -321,6 +322,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
                             event.set_extra('dafeiyu_learning_versions', {r['id']: r['version'] for r in learned})
                             built.evidence['learned_context'] = learned
                             req.system_prompt += '\n<!-- BEGIN_DAFEIYU_LEARNING_DATA -->\n本人已有语义资料（保留版本、条件与来源）：'+json.dumps(learned,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_LEARNING_DATA -->'
+                            await self.prepare_relationship_context(event,req,turn)
                     sources=claim_sources(built.evidence)
                     event.set_extra('dafeiyu_claim_sources',sources)
                     req.system_prompt = request_contract(req.system_prompt, sources, learning_enabled,
@@ -501,6 +503,11 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
                         finally:self.learning_state_inflight.discard(source['owner'])
             if event.get_extra('dafeiyu_context_epoch',None)!=await asyncio.to_thread(self.learning_store().context_epoch):return
             try:
+                self.review_stats['relationship_notes_saved']+=await asyncio.to_thread(self.commit_relationship_update,event,source)
+            except Exception as error:
+                self.review_stats['relationship_notes_failed']+=1
+                logger.warning('Confirmed relationship memory unavailable: %s',type(error).__name__)
+            try:
                 self.review_stats['public_ideas_saved']+=await asyncio.to_thread(self.commit_public_sharing,event,source)
             except Exception as error:
                 self.review_stats['public_ideas_failed']+=1
@@ -667,7 +674,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.llm_tool(name='dafeiyu_cognition')
     async def cognition(self,event,action:str='review',owner_qq:str='',record_ids:list[str]|None=None)->str:
-        """查阅或按已提供的编号删除语义学习资料。仅在本人明确要求管理时使用。
+        """查阅或按已提供的编号删除语义学习资料和主观关系记忆。仅在本人明确要求管理时使用。
 
         Args:
             action(string): review查阅；forget删除。删除前先review取得当前编号和版本
@@ -683,8 +690,10 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             origin=turn.origin if turn.is_group else turn.platform+':FriendMessage:'+owner
             if action=='review':
                 rows=await asyncio.to_thread(self.learning_store().current,owner,origin)
-                event.set_extra('dafeiyu_cognition_offered',dict(owner=owner,versions={r['id']:r['version'] for r in rows}))
-                return json.dumps({'owner':owner,'records':[{k:r.get(k) for k in ('id','kind','summary','condition','status','event_day','version')} for r in rows]},ensure_ascii=False)
+                relationships=await asyncio.to_thread(self.relationship_store().current,owner,origin) if self.relationship_enabled() else []
+                event.set_extra('dafeiyu_cognition_offered',dict(owner=owner,versions={r['id']:r['version'] for r in [*rows,*relationships]}))
+                return json.dumps({'owner':owner,'records':[{k:r.get(k) for k in ('id','kind','summary','condition','status','event_day','version')} for r in rows],
+                    'relationship_memory':relationships,'relationship_nature':'subjective_revisable_views'},ensure_ascii=False)
             offered=event.get_extra('dafeiyu_cognition_offered',{})
             if (action!='forget' or offered.get('owner')!=owner or not isinstance(record_ids,list)
                     or any(not isinstance(i,str) or i not in offered.get('versions',{}) for i in record_ids)):
@@ -706,15 +715,20 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.llm_tool(name='dafeiyu_personality')
     async def personality(self,event,action:str='status')->str:
-        """本人问长期性格或变化原因时，只读查阅真实成长；不改变性格、身份或权限。
+        """本人问长期性格、对自己的看法或变化原因时，只读查阅成长与关系记忆；不改变身份或权限。
 
         Args:
-            action(string): status当前倾向；history最近变化及原因。私聊只读当前人自己的关系倾向，群聊只读全局。
+            action(string): status当前倾向与对当前发言者的关系看法；history最近变化及依据。关系记忆只读当前人当前会话，群聊不读取私聊看法。
         """
         try:
             turn=self.identity(event)
             if not event.get_extra(ACTIVE_KEY,False) or action not in ('status','history'):raise ValueError('Personality read not authorized')
             result=dict(enabled=self.growth_enabled(),current=await self.growth_profile(turn),identity_changed=False)
+            if self.relationship_enabled():
+                result['relationship_memory']=await self.relationship_profile(turn)
+                result['relationship_nature']='subjective_revisable_views'
+                if action=='history':
+                    result['relationship_history']=await asyncio.to_thread(self.relationship_store().history,turn.actor,turn.origin)
             if self.growth_enabled() and action=='history':
                 scopes=[GLOBAL]+([] if turn.is_group else [relation(turn.actor,turn.origin)])
                 result['history']={}
@@ -728,7 +742,11 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         except Exception as error:return json.dumps(dict(enabled=False,error_type=type(error).__name__))
 
     async def status(self):
-        return json_response({'version': '0.7.7', 'mode': self.config.get('mode', 'shadow'),
+        relationship_state=await asyncio.to_thread(self.relationship_store().status) if self.relationship_enabled() else {}
+        return json_response({'version': '0.8.0', 'mode': self.config.get('mode', 'shadow'),
+            'relationship_memory':dict(enabled=self.relationship_enabled(),**relationship_state,
+                numeric_scores=False,count_based_levels=False,extra_model_calls=0,confirmed_delivery_only=True,
+                mutable_views=True,scope='same_person_same_conversation'),
             'publication_photo_content_recall':True,
             'public_space_memory_enabled':bool(self.catalog().public_space),
             'public_inspiration_in_primary_generation':True,
@@ -757,6 +775,6 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             'source_databases_read_only': self.config.get('mode', 'shadow') != 'active',
             'learning_created': self._learning is not None,
             'index_created': self._index is not None,
-            'feature_flags': {k: self.feature(k) for k in ('learning_v2', 'activity_policy_v2', 'initiative_policy_v2', 'voice_intent_v2')},
+            'feature_flags': {k: self.feature(k) for k in ('learning_v2', 'activity_policy_v2', 'initiative_policy_v2', 'voice_intent_v2','relationship_memory_v1')},
             'legacy_fact_guards_retained':False,'legacy_wording_overrides':False,
             'deterministic_action_guards_retained':True})

@@ -21,6 +21,7 @@ class GenerationWorkflow:
         event.set_extra('dafeiyu_learning_needs_check',False)
         event.set_extra('dafeiyu_learning_check_packet',None)
         event.set_extra('dafeiyu_public_ideas',[])
+        event.set_extra('dafeiyu_relationship_pending',[])
         stage='format'
         try:
             generated = parse_generation(response.completion_text,recover_claims=True,recover_metadata=True)
@@ -106,6 +107,7 @@ class GenerationWorkflow:
                 stage='privacy'
                 versions = event.get_extra('dafeiyu_learning_versions', {})
                 allowed=set(versions)|{r['id'] for r in materials['memory'] if r['owner']==turn.actor}
+                allowed.update(event.get_extra('dafeiyu_relationship_versions',{}))
                 removed = await asyncio.to_thread(self.learning_store().apply_privacy, pending, privacy, allowed)
                 if privacy['action']!='none':
                     legacy=await self.forget_legacy(event,turn,privacy)
@@ -116,6 +118,7 @@ class GenerationWorkflow:
                 if privacy['action']!='none':event.set_extra('dafeiyu_semantic_forgetting',True)
                 self.review_stats['privacy_removed'] += removed
             await self.prepare_public_sharing(event,generated,turn,human,privacy)
+            self.prepare_relationship_update(event,generated,human,privacy)
             # Check factual claims and history-primed casual replies before delivery.
             stage='review'
             if self.model_verification_enabled() and recover and self.config.get('response_review','enforce')!='enforce':
@@ -141,7 +144,7 @@ class GenerationWorkflow:
             event.set_extra('dafeiyu_dialogue_last_review', 'contract')
             event.set_extra('dafeiyu_semantic_focus',list(generated.focus))
             event.set_extra('jingjing_expression_intent', {'intent': generated.expression,
-                'text_hash': packet_key({'text': body})})
+                'delivery':generated.delivery,'text_hash': packet_key({'text': body})})
             self.review_stats['contract_turns'] += 1
             if sent:
                 await self.natural().remember_delivered_reply(event)

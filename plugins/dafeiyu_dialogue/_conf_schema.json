@@ -1,4 +1,9 @@
 {
+  "relationship_memory_v1": {
+    "type": "bool",
+    "description": "在正常聊天生成中形成可修正的关系看法，确认送达后保存；无分数、等级或额外模型调用",
+    "default": false
+  },
   "mode": {
     "type": "string",
     "description": "off关闭、shadow只读观察、active按所选范围启用；仍受原有准入限制",

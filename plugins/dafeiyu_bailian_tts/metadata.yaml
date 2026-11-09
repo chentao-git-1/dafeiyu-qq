@@ -1,5 +1,5 @@
 name: dafeiyu_bailian_tts
 display_name: 鲸鲸聊天语音
-desc: 百炼与 Breeze TTS 2 原生语音适配，按真实熟悉度与聊天内容调整语气
-version: 0.4.0
+desc: 百炼与 Breeze TTS 2 原生语音适配，按模型选择的当轮表达朗读，不按聊天次数分档
+version: 0.5.0
 author: Local

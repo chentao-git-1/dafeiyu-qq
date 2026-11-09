@@ -34,6 +34,7 @@ POLICY+='''\n自己的详细资料按需用dafeiyu_self只读查询。兴趣、�
 POLICY+='\ncharacter.growth记录过去特定情境中形成的倾向，由你结合眼前话题决定是否相关；它不是每轮表达或选题的要求。原画像是起点，可以发展新的兴趣、表达方式和判断，不需要每次重现旧作品的主题或反思。with_current_person限当前私聊；倾向不能证明现实行动、身体经历、新权限或事实正确。未形成倾向时不编造已经成长了什么，不主动汇报成长过程。'
 POLICY+='\nself_thoughts.intentions是自己持续保存的打算，可以自然谈起具体想尝试什么、为何在意，也可以调整或暂时放下。status=intent只表示想做，paused表示暂放，done只证明completed_work对应的小步骤已由工具完成；都不等于当前正在执行、整个项目完成或对人的承诺。不把打算当成已完成活动的证据，不每次聊天汇报内部计划、版本或后台过程。'
 POLICY+='\nrequested_agenda是实际保存的今天或明天行程，pending是计划、started是已开始、completed是已有完成记录，failed/unknown/expired分别是失败、结果不明和已过执行窗口。到时间不等于做过，作品细节仍查真实作品；没有生成的明日计划不能自行补成已保存的行程。'
+POLICY+='\n可选delivery字段用一句简短文字描述这段回复想怎样说，最多120字，只描述语气、节奏和情绪，不写要另说的话。结合真实关系记忆与当下内容自主决定，不因固定身份或聊天次数必须撒娇或变得更亲近；省略时按expression自然表达。'
 POLICY+='\ndafeiyu_self的thoughts留空query时只读取当前打算；正在讨论具体旧项目或反思时，以该问题作query读取相关材料。interests里的初始兴趣只是过去的起点，项目可保留或暂放，当前没有记录的新好奇也可以自然表达，不需要旧作品为它作证。'
 
 
@@ -54,6 +55,8 @@ class Generation:
     metadata_valid: bool=True
     framing_recovered: bool=False
     sharing: dict | None=None
+    relationship: list | None=None
+    delivery: str=''
 
 
 def empty_learning():
@@ -92,7 +95,7 @@ def _generation_object(raw,recover=False):
 def parse_generation(raw,recover_claims=False,recover_metadata=False):
     obj,framing_recovered = _generation_object(raw,recover_metadata)
     fields={'focus','reply','claims','learning','expression'}
-    if (set(obj)-(fields|{'sharing'}) or not {'reply','learning'}.issubset(obj)
+    if (set(obj)-(fields|{'sharing','relationship','delivery'}) or not {'reply','learning'}.issubset(obj)
             or not recover_metadata and not fields.issubset(obj)):
         raise ValueError('Unexpected generation fields')
     reply, claims, learning = obj['reply'], obj.get('claims'), obj['learning']
@@ -129,8 +132,10 @@ def parse_generation(raw,recover_claims=False,recover_metadata=False):
             claims_valid=False
     if not isinstance(learning, dict) or set(learning) != {'privacy', 'items'}:
         raise ValueError('Invalid learning proposal')
+    delivery=obj.get('delivery','')
+    if not isinstance(delivery,str) or len(delivery)>120:delivery=''
     return Generation(reply,tuple(claims) if claims_valid else (),learning,expression,tuple(focus),
-        claims_valid,metadata_valid,framing_recovered,obj.get('sharing'))
+        claims_valid,metadata_valid,framing_recovered,obj.get('sharing'),obj.get('relationship'),delivery)
 
 
 def claim_sources(materials, tool_results=()):

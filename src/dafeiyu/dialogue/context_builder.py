@@ -46,6 +46,7 @@ def without_own_block(prompt):
     base = re.sub(r'\n?' + re.escape(BEGIN) + r'.*?' + re.escape(END), '', prompt or '', flags=re.S)
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_GENERATION -->.*?<!-- END_DAFEIYU_GENERATION -->', '', base, flags=re.S)
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_LEARNING_DATA -->.*?<!-- END_DAFEIYU_LEARNING_DATA -->','',base,flags=re.S)
+    base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_RELATIONSHIP -->.*?<!-- END_DAFEIYU_RELATIONSHIP -->','',base,flags=re.S)
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_SELF_THOUGHTS -->.*?<!-- END_DAFEIYU_SELF_THOUGHTS -->','',base,flags=re.S)
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_GROUP_DATA -->.*?<!-- END_DAFEIYU_GROUP_DATA -->','',base,flags=re.S)
     base=re.sub(r'\n?<!-- BEGIN_DAFEIYU_HISTORICAL_TOOLS -->.*?<!-- END_DAFEIYU_HISTORICAL_TOOLS -->','',base,flags=re.S)

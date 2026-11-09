@@ -83,6 +83,8 @@ class LearningStore:
                 CREATE TABLE IF NOT EXISTS context_epochs(origin TEXT PRIMARY KEY,epoch INTEGER);
                 CREATE TABLE IF NOT EXISTS privacy_barriers(platform TEXT PRIMARY KEY,at REAL);
             ''')
+            from .relationships import SCHEMA
+            db.executescript(SCHEMA)
         self.path.chmod(0o600)
 
     @contextmanager
@@ -166,12 +168,19 @@ class LearningStore:
                 (' AND origin=?' if ':GroupMessage:' in source['origin'] else ''),
                 (source['owner'],source['origin']) if ':GroupMessage:' in source['origin'] else (source['owner'],)).fetchall()
             ids = [r['id'] for r in rows if action == 'forget_all' or r['id'] in selected]
+            sources={r['source_id'] for r in rows if r['id'] in ids}
+            for eid in ids:
+                sources.update(r[0] for r in db.execute('SELECT source_id FROM learned_versions WHERE entity_id=?',(eid,)))
+            from .relationships import purge
+            unknown_lineage=any(not key.startswith(('learned:','relationship:')) for key in selected)
+            relationship_removed=purge(db,source['owner'],source['origin'] if ':GroupMessage:' in source['origin'] else None,
+                None if action=='forget_all' or unknown_lineage else selected,sources)
             for eid in ids:
                 # Remove history and quoted evidence as well as the current projection.
                 db.execute('DELETE FROM learned_versions WHERE entity_id=?', (eid,))
                 db.execute('DELETE FROM learned WHERE id=?', (eid,))
             db.execute('DELETE FROM learning_commits WHERE source_id IN (SELECT id FROM learning_sources WHERE owner=?)', (source['owner'],))
-            return len(ids)
+            return len(ids)+relationship_removed
 
     def context_epoch(self):
         with self.db() as db:return db.execute('SELECT epoch FROM context_privacy_clock WHERE id=1').fetchone()[0]
@@ -242,14 +251,22 @@ class LearningStore:
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
             platforms=set()
+            learned_ids=[];relationship_ids=[];sources=set()
             for eid,version in expected.items():
-                row=db.execute('SELECT owner,version,origin FROM learned WHERE id=?',(eid,)).fetchone()
+                table='relationship_notes' if eid.startswith('relationship:') else 'learned'
+                row=db.execute('SELECT owner,version,origin,source_id FROM '+table+' WHERE id=?',(eid,)).fetchone()
                 if not row or row['owner']!=owner or row['version']!=version:raise ValueError('Owned record changed')
                 platforms.add(row['origin'].split(':',1)[0])
+                if table=='learned':
+                    learned_ids.append(eid);sources.add(row['source_id'])
+                    sources.update(r[0] for r in db.execute('SELECT source_id FROM learned_versions WHERE entity_id=?',(eid,)))
+                else:relationship_ids.append(eid)
             db.execute('INSERT OR REPLACE INTO learning_meta VALUES(?,?)',(owner,self._epoch(db,owner)+1))
             db.execute('UPDATE context_privacy_clock SET epoch=epoch+1 WHERE id=1')
             for platform in platforms:db.execute('INSERT OR REPLACE INTO privacy_barriers VALUES(?,?)',(platform,self.clock()))
-            for eid in expected:
+            from .relationships import purge
+            purge(db,owner,ids=relationship_ids,source_ids=sources)
+            for eid in learned_ids:
                 db.execute('DELETE FROM learned_versions WHERE entity_id=?',(eid,))
                 db.execute('DELETE FROM learned WHERE id=?',(eid,))
             return len(expected)

@@ -77,7 +77,7 @@ def isolate_background(payload):
         body=message.get('content')
         if (message.get('role')!='system' or not isinstance(body,str)
                 or MARKER not in body or not re.search(r'<!-- DAFEIYU_CAP:[a-f0-9]{32} -->',body)):continue
-        for name in ('GENERATION','REQUEST_DATA'):
+        for name in ('GENERATION','REQUEST_DATA','RELATIONSHIP'):
             body=re.sub(r'\n?<!-- BEGIN_DAFEIYU_'+name+r' -->.*?<!-- END_DAFEIYU_'+name+r' -->','',body,flags=re.S)
         messages[index]=dict(message,content=body);changed=True
     if changed:payload['messages']=messages

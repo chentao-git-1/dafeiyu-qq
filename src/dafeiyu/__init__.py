@@ -1,3 +1,3 @@
 """Dafeiyu business capabilities, independent of the AstrBot plugin loader."""
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
