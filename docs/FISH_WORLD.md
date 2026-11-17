@@ -31,3 +31,5 @@ world_do world_say world_friends world_update world_guide
 修改后重启 AstrBot 容器，确认 `fish-world` 连接成功并加载十个工具。首次接入依次调用 `world_guide` 和 `world_now`；未入住时，按 `world_now` 返回的要求填写资料。小区仅能在首次入住时选择，应先确定选择再调用 `world_update`。
 
 通过实际对话验证三轮：问当前所在，应调用 `world_now`；让角色下楼，应调用 `world_do` 并查询更新后的现状；问刚才做过什么，应调用 `world_history`。同时在 QQ 私聊发送现状问题，核对对应的工具调用和回复。
+
+QQ 生成流程收到不符合 JSON 协议的最终回复时，若本轮有完整的世界工具结果，会使用当前问题、草稿和真实工具结果重试一次回复格式。重试最多 30 秒，共用现有的每轮一次结构恢复预算。新回复继续进入原有的来源与记忆处理流程。相关回归可运行 `python tests/test_fish_world_generation.py`。
