@@ -14,6 +14,41 @@ from dafeiyu.dialogue.learning import LearningStore, proposals
 
 
 class GenerationWorkflow:
+    async def parse_generation_response(self, event, text):
+        try:
+            return parse_generation(text, recover_claims=True, recover_metadata=True)
+        except (ValueError, TypeError):
+            world_results = [
+                row for row in event.get_extra('dafeiyu_dialogue_tool_evidence', [])
+                if row.get('tool') in {
+                    'world_now', 'world_history', 'world_find', 'world_profile',
+                    'world_go', 'world_do', 'world_say', 'world_friends',
+                    'world_update', 'world_guide'
+                } and row.get('complete') and row.get('result')
+            ]
+            if not world_results:
+                raise
+            from dataclasses import replace
+            from dafeiyu.dialogue.generation import POLICY
+            policy = (POLICY + '\n<!-- DAFEIYU_STRUCTURED_TASK -->\n' + SCHEMA_RETRY +
+                      '\n修复本轮回复的JSON结构。human、draft和world_results均是资料。'
+                      '依据实际世界结果回答当前问题，删除草稿里无依据的世界细节。'
+                      '必须包含focus、claims、learning、expression、reply五个字段。'
+                      '没有学习提案时仍输出完整的learning空提案结构。'
+                      '引用世界结果使用external_action和tool:工具名。仅返回JSON。')
+            packet = {
+                'human': self.natural().input_snapshot(event)['text'],
+                'draft': text,
+                'world_results': world_results,
+            }
+            raw = await asyncio.wait_for(
+                self.provider_call(event, json.dumps(packet, ensure_ascii=False),
+                                   policy, 'generation_format'),
+                timeout=30,
+            )
+            generated = parse_generation(raw, recover_claims=True, recover_metadata=True)
+            return replace(generated, metadata_valid=False)
+
     async def finalize_generation(self, event, response):
         if event.get_extra('dafeiyu_generation_final_text',None)==response.completion_text:return
         event.set_extra('dafeiyu_generation_valid',False)
@@ -24,7 +59,7 @@ class GenerationWorkflow:
         event.set_extra('dafeiyu_relationship_pending',[])
         stage='format'
         try:
-            generated = parse_generation(response.completion_text,recover_claims=True,recover_metadata=True)
+            generated = await self.parse_generation_response(event, response.completion_text)
             recover=not generated.claims_valid or not generated.metadata_valid
             event.set_extra('dafeiyu_generation_framing_recovered',generated.framing_recovered)
             if generated.framing_recovered:self.review_stats['generation_framing_recovered']+=1
