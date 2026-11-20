@@ -4,8 +4,9 @@ from collections import OrderedDict
 import time
 
 class ChatFlow:
-    def __init__(self,quiet=1.8,maximum=4.0):
+    def __init__(self,quiet=1.8,maximum=4.0,on_merge=None):
         self.quiet=quiet; self.maximum=maximum
+        self.on_merge=on_merge
         self.buckets={}; self.epochs=OrderedDict(); self.seen=OrderedDict()
         self.stats={'merged_messages':0,'duplicate_events':0,'stale_replies':0}
 
@@ -32,7 +33,7 @@ class ChatFlow:
             bucket={'start':now,'last':now,'events':[],'latest':event}
             self.buckets[key]=bucket
         bucket['last']=now; bucket['latest']=event
-        bucket['events'].append(text)
+        bucket['events'].append((text,event))
         if len(bucket['events'])>16:bucket['events']=bucket['events'][-16:]
         while True:
             remaining=min(bucket['last']+self.quiet,bucket['start']+self.maximum)-time.monotonic()
@@ -41,4 +42,6 @@ class ChatFlow:
         if bucket['latest'] is not event:return None
         if self.buckets.get(key) is bucket:self.buckets.pop(key,None)
         self.stats['merged_messages']+=max(0,len(bucket['events'])-1)
-        return '\n'.join(bucket['events'])
+        if self.on_merge is not None and len(bucket['events'])>1:
+            self.on_merge(event,[source for _,source in bucket['events']])
+        return '\n'.join(body for body,_ in bucket['events'])

@@ -18,7 +18,7 @@ STRUCTURED_MARKER='<!-- DAFEIYU_STRUCTURED_TASK -->'
 CURRENT=ContextVar('dafeiyu_generation_capability',default=None)
 STRUCTURED=ContextVar('dafeiyu_structured_task',default=False)
 OUTPUT_BUDGET=ContextVar('dafeiyu_output_budget',default=None)
-WIRE_SCOPE=ContextVar('dafeiyu_wire_scope',default=(False,False))
+WIRE_SCOPE=ContextVar('dafeiyu_wire_scope',default=(False,False,()))
 
 
 class WireMessages(list):
@@ -27,8 +27,9 @@ class WireMessages(list):
 
 class NativeContexts(list):
     """Capability attached by the owned runner, never inferred from chat text."""
-    def __init__(self,messages,nonce,first_route_choice=False,outfit_choice=None):
+    def __init__(self,messages,nonce,first_route_choice=False,outfit_choice=None,voice_tones=()):
         super().__init__(messages);self.nonce=nonce;self.first_route_choice=first_route_choice;self.outfit_choice=outfit_choice
+        self.voice_tones=voice_tones
 
     def __copy__(self):return list(self)
 
@@ -52,7 +53,7 @@ def contract_request(kwargs):
     return bool(nonce and any(isinstance(p,str) and MARKER in p and '<!-- DAFEIYU_CAP:'+nonce+' -->' in p for p in prompts))
 
 
-def constrain_payload(payload,allow_contract=False,allow_structured=False,sanitize_messages=None):
+def constrain_payload(payload,allow_contract=False,allow_structured=False,sanitize_messages=None,voice_tones=()):
     messages=payload.get('messages',[])
     if not (allow_contract or allow_structured):
         return
@@ -74,7 +75,7 @@ def constrain_payload(payload,allow_contract=False,allow_structured=False,saniti
             'expression':'neutral','reply':body},ensure_ascii=False)
         messages[index]=wire
     if allow_contract:
-        return project_turn_data(messages, MARKER, sanitize_messages)
+        return project_turn_data(messages, MARKER, sanitize_messages, voice_tones)
 
 
 def isolate_background(payload):
@@ -111,7 +112,8 @@ class ProviderContracts:
                     from dafeiyu.runtime.outbound import project_history
                     result=project_history(result,binding[2])
                     return NativeContexts(result,binding[1],getattr(runner.req,'_dafeiyu_route_decision',False),
-                                          getattr(runner.req,'_dafeiyu_outfit_choice',None))
+                                          getattr(runner.req,'_dafeiyu_outfit_choice',None),
+                                          getattr(runner.req,'_dafeiyu_voice_tones',()))
                 return result
             @functools.wraps(original_reset)
             async def reset(runner, *args, **kwargs):
@@ -145,9 +147,9 @@ class ProviderContracts:
         @functools.wraps(convert)
         def convert_payload(payload):
             convert(payload)
-            own,structured=WIRE_SCOPE.get()
+            own,structured,voice_tones=WIRE_SCOPE.get()
             if not own:isolate_background(payload)
-            dedup = constrain_payload(payload, own, structured, sanitize_messages)
+            dedup = constrain_payload(payload, own, structured, sanitize_messages, voice_tones)
             if dedup and dedup[0]:
                 from astrbot.api import logger
 
@@ -164,7 +166,9 @@ class ProviderContracts:
                 kwargs=scoped
                 kwargs['request_max_retries']=1
             structured=bool(STRUCTURED.get() and STRUCTURED_MARKER in str(kwargs.get('system_prompt') or ''))
-            token=WIRE_SCOPE.set((own,structured))
+            contexts=kwargs.get('contexts')
+            voice_tones=contexts.voice_tones if own and isinstance(contexts,NativeContexts) else ()
+            token=WIRE_SCOPE.set((own,structured,voice_tones))
             started=time.perf_counter()
             try:
                 try:result=await chat(*args,**kwargs)
@@ -218,7 +222,7 @@ class ProviderContracts:
                     result.is_chunk=False
                     yield result
                     return
-                token=WIRE_SCOPE.set((False,False))
+                token=WIRE_SCOPE.set((False,False,()))
                 try:
                     async for chunk in stream(*args,**kwargs):yield chunk
                 finally:WIRE_SCOPE.reset(token)

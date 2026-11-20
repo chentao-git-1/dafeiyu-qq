@@ -11,10 +11,13 @@ from astrbot.core.provider.entities import ProviderType
 from astrbot.core.provider.provider import STTProvider
 from astrbot.core.provider.register import provider_cls_map, register_provider_adapter
 from astrbot.core.utils.media_utils import MediaResolver
+from dafeiyu.media.voice.transcription import EMOTIONS, VoiceInputPath
 
 ADAPTER = "dafeiyu_bailian_asr"
-MODEL = "qwen-audio-3.1-asr-flash"
+MODEL = "qwen3-asr-flash"
+LEGACY_MODEL = "qwen-audio-3.1-asr-flash"
 MAX_SECONDS = 300
+MAX_PCM_BYTES = 7 * 1024 * 1024  # The full base64 data URI must fit within 10 MB.
 
 
 def audio_chunk(reader, frames):
@@ -33,11 +36,33 @@ def audio_chunk(reader, frames):
     return "data:audio/wav;base64," + base64.b64encode(data.getvalue()).decode("ascii")
 
 
+def response_parts(payload, legacy):
+    try:
+        if legacy:
+            message, text = {}, payload["output"]["text"]
+        else:
+            message = payload["choices"][0]["message"]
+            text = message["content"]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError("Bailian ASR returned no transcription field") from None
+    if not isinstance(text, str):
+        raise RuntimeError("Invalid Bailian ASR transcription")
+    annotations = message.get("annotations")
+    if not isinstance(annotations, list):
+        return text.strip(), None
+    labels = [row.get("emotion") for row in annotations
+              if isinstance(row, dict) and row.get("type") == "audio_info"]
+    first = labels[0] if labels else None
+    if isinstance(first, str) and first in EMOTIONS and all(label == first for label in labels):
+        return text.strip(), first
+    return text.strip(), None
+
+
 class BailianASR(STTProvider):
     def __init__(self, provider_config, provider_settings):
         super().__init__(provider_config, provider_settings)
         self.set_model(provider_config.get("model", MODEL))
-        if self.get_model() != MODEL:
+        if self.get_model() not in (MODEL, LEGACY_MODEL):
             raise ValueError("Unsupported Bailian ASR model")
         self.client = httpx.AsyncClient(timeout=float(provider_config.get("timeout", 45)), follow_redirects=False)
 
@@ -54,25 +79,29 @@ class BailianASR(STTProvider):
         return workspace, key.strip()
 
     async def get_text(self, audio_url):
+        tone = audio_url.tone if isinstance(audio_url, VoiceInputPath) else None
+        if tone is not None:
+            tone.emotion = None
         workspace, key = self.credentials()
-        endpoint = f"https://{workspace}.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
-        texts = []
+        legacy = self.get_model() == LEGACY_MODEL
+        route = "/api/v1/services/aigc/multimodal-generation/generation" if legacy else "/compatible-mode/v1/chat/completions"
+        endpoint = f"https://{workspace}.cn-beijing.maas.aliyuncs.com{route}"
+        texts, emotions = [], []
         async with MediaResolver(audio_url, media_type="audio", default_suffix=".wav").as_path(target_format="wav") as audio:
             with wave.open(str(audio.path), "rb") as reader:
-                # Keep individual requests within the provider's five-minute duration limit
-                # and keep high-rate or multi-channel WAV files within a modest upload size.
+                # Cap both duration and encoded size for high-rate or multi-channel WAVs.
                 frames = min(reader.getframerate() * MAX_SECONDS,
-                             8 * 1024 * 1024 // (reader.getnchannels() * reader.getsampwidth()))
+                             MAX_PCM_BYTES // (reader.getnchannels() * reader.getsampwidth()))
                 while True:
                     uri = await asyncio.to_thread(audio_chunk, reader, frames)
                     if uri is None:
                         break
                     if not uri:
                         continue
-                    body = {"model": self.get_model(), "parameters": {"format": "wav"},
-                            "input": {"messages": [{"role": "user", "content": [
-                                {"type": "input_audio", "input_audio": {"data": uri}}
-                            ]}]}}
+                    messages = [{"role": "user", "content": [{"type": "input_audio", "input_audio": {"data": uri}}]}]
+                    body = {"model": self.get_model(), "messages": messages, "stream": False, "asr_options": {"enable_itn": True}}
+                    if legacy:
+                        body = {"model": self.get_model(), "parameters": {"format": "wav"}, "input": {"messages": messages}}
                     try:
                         reply = await self.client.post(endpoint, json=body, headers={
                             "Authorization": "Bearer " + key, "X-DashScope-SSE": "disable",
@@ -82,13 +111,15 @@ class BailianASR(STTProvider):
                     if reply.status_code != 200:
                         raise RuntimeError(f"Bailian ASR HTTP {reply.status_code}")
                     try:
-                        text = reply.json()["output"]["text"]
-                    except (ValueError, KeyError, TypeError):
-                        raise RuntimeError("Bailian ASR returned no transcription field") from None
-                    if not isinstance(text, str):
-                        raise RuntimeError("Invalid Bailian ASR transcription")
-                    if text.strip():
-                        texts.append(text.strip())
+                        text, emotion = response_parts(reply.json(), legacy)
+                    except ValueError:
+                        raise RuntimeError("Invalid Bailian ASR response") from None
+                    if text:
+                        texts.append(text)
+                        emotions.append(emotion)
+        # A long clip only gets a cue if all of its transcribed chunks agree.
+        if tone is not None and emotions and all(label == emotions[0] for label in emotions):
+            tone.emotion = emotions[0]
         return " ".join(texts)
 
     async def terminate(self):

@@ -3,6 +3,7 @@ import json
 import re
 
 from dafeiyu.dialogue.history_evidence import historical_tools
+from dafeiyu.media.voice.transcription import EMOTIONS
 
 
 TURN_SECTION = re.compile(
@@ -167,7 +168,7 @@ def reference_history_tools(data, messages, sanitize_messages):
     return (replacement, referenced, saved) if saved > 0 else (data, 0, 0)
 
 
-def project_turn_data(messages, contract_marker, sanitize_messages=None):
+def project_turn_data(messages, contract_marker, sanitize_messages=None, voice_tones=()):
     """Project dynamic sections onto a copy of the current user message for the wire only."""
     user_index = next((i for i in range(len(messages) - 1, -1, -1)
                        if messages[i].get("role") == "user"), None)
@@ -182,6 +183,13 @@ def project_turn_data(messages, contract_marker, sanitize_messages=None):
         return
 
     sections = []
+    if voice_tones:
+        observations = [{"消息": msg, "语音": clip, "可能的语气": EMOTIONS[label]}
+                        for msg, clip, label in voice_tones if label in EMOTIONS]
+        if observations:
+            sections.append("【本轮语音语气线索】" + json.dumps(observations, ensure_ascii=False)
+                            + "\n语音识别对声音的粗略估计，可能听错。优先听对方自己怎么说，顺着话题自然回应。"
+                              "有需要时轻轻确认，避免播报标签、替对方断定感受或把推测记成事实。")
     dedup = (0, 0)
     pending = []
     checking = any(token in messages[system_index]["content"] for token in
@@ -243,6 +251,7 @@ def project_turn_data(messages, contract_marker, sanitize_messages=None):
         content = user_content + tail
     else:
         content = [*user_content, {"type": "text", "text": tail}]
-    messages[system_index] = dict(system, content=stable.rstrip() + DATA_POLICY)
+    if stable != system["content"]:
+        messages[system_index] = dict(system, content=stable.rstrip() + DATA_POLICY)
     messages[user_index] = dict(user, content=content)
     return dedup

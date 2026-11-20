@@ -32,7 +32,8 @@ from astrbot.core.utils.session_lock import session_lock_manager
 from dafeiyu.runtime.flow import ChatFlow
 from .ops import load_state, problem, result
 from .reliability import LoopWatchdog, ReplyReliability
-from .qq_voice import finish_voice_text, prepare_voice_event
+from dafeiyu.media.voice.transcription import VOICE_TONES
+from .qq_voice import finish_voice_text, merge_voice_tones, prepare_voice_event
 from dafeiyu.runtime.diagnostics import CURRENT, KEY, Journal, Turn, active, phase, request_metrics
 from .private_outbound import PrivateOutbound
 from dafeiyu.dialogue.action_facts import attach_action_facts, system_notice
@@ -54,7 +55,7 @@ WRITES = {
 class DafeiyuRuntime(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        self.flow = ChatFlow()
+        self.flow = ChatFlow(on_merge=merge_voice_tones)
         self.health_task = None
         self.pulse_task = None
         self.original_execute = PipelineScheduler.execute
@@ -457,6 +458,7 @@ class DafeiyuRuntime(Star):
     async def reply_requested(self, event, request):
         if self.allowed(event) and not event.is_stopped():
             attach_action_facts(event, request)
+            request._dafeiyu_voice_tones = event.get_extra(VOICE_TONES, ())
             self.replies.expect(event)
             request_metrics(request, event)
 

@@ -1,5 +1,7 @@
 """QQ voice input reaches the native preprocessor and the normal dialogue text."""
 import base64
+import asyncio
+import copy
 import io
 import json
 from pathlib import Path
@@ -22,6 +24,9 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import Aioc
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_platform_adapter import AiocqhttpAdapter
 from dafeiyu_mention_guard.main import DafeiyuMentionGuard
 from dafeiyu_bailian_tts import bailian_asr
+from dafeiyu_runtime import qq_voice
+from dafeiyu.media.voice.transcription import VOICE_TONES, VoiceInputPath, VoiceTone
+from dafeiyu.runtime.flow import ChatFlow
 from dafeiyu_natural_chat.main import NaturalChat
 from dafeiyu_runtime.main import DafeiyuRuntime
 from dafeiyu_runtime.qq_voice import finish_voice_text, prepare_voice_event
@@ -33,6 +38,13 @@ def wave_file():
         wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
         wav.writeframes(b"\x00\x00" * 4000)
     return data.getvalue()
+
+
+def cloud_message(text, emotion=None):
+    message = {"content": text}
+    if emotion is not None:
+        message["annotations"] = [{"type": "audio_info", "emotion": emotion}]
+    return {"choices": [{"message": message}]}
 
 
 async def qq_event(segments, *, group=False, record_data=None):
@@ -164,11 +176,12 @@ class BailianCloud(unittest.IsolatedAsyncioTestCase):
         self.wav = Path(tmp.name) / "example.wav"
         self.calls = []
         self.status = 200
-        self.body = {"output": {"text": "下午见。"}}
+        self.body = cloud_message("下午见。", "happy")
+        self.responses = []
 
         async def respond(request):
             self.calls.append(request)
-            return httpx.Response(self.status, json=self.body)
+            return httpx.Response(self.status, json=self.responses.pop(0) if self.responses else self.body)
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
         with patch.object(bailian_asr.httpx, "AsyncClient", return_value=client):
@@ -191,12 +204,12 @@ class BailianCloud(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.calls), 1)
         call = self.calls[0]
         self.assertEqual(call.url.host, "example.cn-beijing.maas.aliyuncs.com")
-        self.assertEqual(call.url.path, "/api/v1/services/aigc/multimodal-generation/generation")
+        self.assertEqual(call.url.path, "/compatible-mode/v1/chat/completions")
         self.assertEqual(call.headers["Authorization"], "Bearer example-credential")
         packet = json.loads(call.content)
-        self.assertEqual(packet["model"], "qwen-audio-3.1-asr-flash")
-        self.assertEqual(packet["parameters"], {"format": "wav"})
-        content = packet["input"]["messages"]
+        self.assertEqual(packet["model"], "qwen3-asr-flash")
+        self.assertFalse(packet["stream"])
+        content = packet["messages"]
         self.assertEqual(len(content), 1)
         self.assertEqual([p["type"] for p in content[0]["content"]], ["input_audio"])
         uri = content[0]["content"][0]["input_audio"]["data"]
@@ -216,6 +229,138 @@ class BailianCloud(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "^Bailian ASR HTTP 403$"):
             await self.provider.get_text(str(self.wav))
         self.assertEqual(len(self.calls), 1)
+
+    async def test_legacy_provider_remains_usable_for_existing_configurations(self):
+        self.provider.set_model("qwen-audio-3.1-asr-flash")
+        self.body = {"output": {"text": "下午见。"}}
+        self.write()
+        slot = VoiceTone()
+        self.assertEqual(await self.provider.get_text(VoiceInputPath(self.wav, slot)), "下午见。")
+        self.assertIsNone(slot.emotion)
+        self.assertEqual(self.calls[0].url.path, "/api/v1/services/aigc/multimodal-generation/generation")
+
+    async def test_uncertain_or_missing_cue_keeps_the_words_and_clears_earlier_cue(self):
+        self.write()
+        slot = VoiceTone()
+        path = VoiceInputPath(self.wav, slot)
+        for label in ("happy", None, "unrecognized", {"not": "a label"}):
+            self.body = cloud_message("下午见。", label)
+            self.assertEqual(await self.provider.get_text(path), "下午见。")
+            self.assertEqual(slot.emotion, "happy" if label == "happy" else None)
+        self.write(seconds=301)
+        self.responses.extend([cloud_message("第一段", "sad"), cloud_message("第二段", "happy")])
+        self.assertEqual(await self.provider.get_text(path), "第一段 第二段")
+        self.assertIsNone(slot.emotion)
+
+    async def test_duplicate_text_in_quote_does_not_change_owner_tone_or_transcript(self):
+        self.write()
+        encoded = base64.b64encode(self.wav.read_bytes()).decode()
+        ev = await qq_event([{"type": "record", "data": {"file": "base64://" + encoded}}])
+        ev.message_obj.message.insert(0, Reply(id="702", sender_id=12, chain=[Record.fromBase64(encoded)]))
+        self.responses.extend([cloud_message("我没事。", "sad"), cloud_message("我没事。", "angry")])
+        ctx, stage = environment(self.provider)
+        try:
+            with patch.object(qq_voice, "OWNER", str(ev.get_sender_id())):
+                self.assertTrue(prepare_voice_event(ctx, ev))
+            await stage.process(ev)
+            finish_voice_text(ev)
+            self.assertEqual(ev.get_extra(VOICE_TONES), ((1, 1, "sad"),))
+            self.assertEqual(NaturalChat.input_snapshot(SimpleNamespace(), ev)["text"], "我没事。")
+            self.assertEqual(ev.message_obj.message[0].chain[0].text, "我没事。")
+            wire, stored = await chat_payload(ev)
+            self.assertIn("难过", wire)
+            self.assertNotIn("生气", wire)
+            self.assertNotIn("语音语气线索", stored)
+            self.assertEqual(len(self.calls), 2)
+        finally:
+            ev.cleanup_temporary_local_files()
+
+    async def test_other_sender_transcribes_without_an_emotion_hint(self):
+        self.write()
+        encoded = base64.b64encode(self.wav.read_bytes()).decode()
+        ev = await qq_event([{"type": "record", "data": {"file": "base64://" + encoded}}])
+        ctx, stage = environment(self.provider)
+        try:
+            with patch.object(qq_voice, "OWNER", "another-account"):
+                self.assertTrue(prepare_voice_event(ctx, ev))
+            await stage.process(ev)
+            finish_voice_text(ev)
+            self.assertEqual(ev.get_message_str(), "下午见。")
+            self.assertFalse(ev.get_extra(VOICE_TONES))
+            wire, _ = await chat_payload(ev)
+            self.assertNotIn("语音语气线索", wire)
+        finally:
+            ev.cleanup_temporary_local_files()
+
+    async def test_concurrent_recordings_with_the_same_path_keep_separate_receipts(self):
+        self.write()
+        a, b = VoiceTone(), VoiceTone()
+        async def respond(request):
+            label = asyncio.current_task().get_name()
+            await asyncio.sleep(0)
+            return httpx.Response(200, json=cloud_message("一样的词", label))
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            with patch.object(self.provider, "client", client):
+                jobs = [asyncio.create_task(self.provider.get_text(VoiceInputPath(self.wav, slot)), name=label)
+                        for slot, label in ((a, "sad"), (b, "happy"))]
+                self.assertEqual(await asyncio.gather(*jobs), ["一样的词", "一样的词"])
+        self.assertEqual((a.emotion, b.emotion), ("sad", "happy"))
+
+
+async def chat_payload(event):
+    """Use the native chat runner and capture the HTTP payload before sending."""
+    from astrbot.core.agent.hooks import BaseAgentRunHooks
+    from astrbot.core.agent.run_context import ContextWrapper
+    from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+    from astrbot.core.provider.entities import LLMResponse
+    from astrbot.core.provider.sources.openai_source import ProviderOpenAIOfficial
+    from dafeiyu.dialogue.generation import request_contract
+    from dafeiyu_dialogue.provider_contract import ProviderContracts, arm_contract
+
+    provider = ProviderOpenAIOfficial({"id": "fixture", "type": "openai_chat_completion",
+        "model": "fixture", "key": ["fixture"], "modalities": ["text", "tool_use"]}, {})
+    contracts = ProviderContracts()
+    nonce = arm_contract(True)
+    req = event.request_llm(prompt=event.get_message_str(), system_prompt=request_contract("fixture", {}, False, nonce))
+    req.contexts = [{"role": "user", "content": "昨天的文字消息"}, {"role": "assistant", "content": "嗯。"}]
+    original = copy.deepcopy(req.contexts)
+    runtime = SimpleNamespace(allowed=lambda ev: True, replies=SimpleNamespace(expect=lambda ev: None))
+    snapshots = []
+    async def query(payload, *args, **kwargs):
+        snapshots.append(copy.deepcopy(payload["messages"]))
+        return LLMResponse(role="assistant", completion_text='{"reply":"嗯。"}')
+    provider._query = AsyncMock(side_effect=query)
+    try:
+        await DafeiyuRuntime.reply_requested(runtime, event, req)
+        contracts.install(provider)
+        contracts.bind_request(req, nonce)
+        runner = ToolLoopAgentRunner()
+        await runner.reset(provider, req, ContextWrapper(context=None), None, BaseAgentRunHooks())
+        _ = [part async for part in runner._iter_llm_responses()]
+        assert req.contexts == original and req.prompt == event.get_message_str()
+        assert len(snapshots) == 1
+        wire = snapshots[0]
+        last = max(i for i, m in enumerate(wire) if m["role"] == "user")
+        assert all("语音语气线索" not in str(m["content"]) for i, m in enumerate(wire) if i != last)
+        return str(wire[last]["content"]), str([m.content for m in runner.run_context.messages])
+    finally:
+        contracts.close()
+        arm_contract(False)
+        await provider.terminate()
+
+
+class MergedVoiceTurns(unittest.IsolatedAsyncioTestCase):
+    async def test_hints_follow_only_the_original_clip_in_a_burst(self):
+        flow = ChatFlow(quiet=.03, maximum=.2, on_merge=qq_voice.merge_voice_tones)
+        events = [await qq_event([{"type":"text","data":{"text":s}}]) for s in ("第一条", "第二条", "第三条")]
+        events[0].set_extra(VOICE_TONES, ((1,1,"happy"),))
+        events[2].set_extra(VOICE_TONES, ((1,2,"sad"),))
+        results = await asyncio.gather(*(flow.collect("same-sender", ev, ev.message_str) for ev in events))
+        self.assertEqual(results, [None, None, "第一条\n第二条\n第三条"])
+        self.assertEqual(events[2].get_extra(VOICE_TONES), ((1,1,"happy"),(3,2,"sad")))
+        later = await qq_event([{"type":"text","data":{"text":"新一轮"}}])
+        await flow.collect("same-sender", later, later.message_str)
+        self.assertFalse(later.get_extra(VOICE_TONES))
 
 
 if __name__ == "__main__":
