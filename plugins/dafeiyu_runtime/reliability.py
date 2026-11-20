@@ -49,6 +49,8 @@ class ReplyReliability:
             "filtered": 0,
             "timeouts": 0,
             "empty_fallbacks": 0,
+            "quiet_completions": 0,
+            "background_no_reply": 0,
             "progress_notices": 0,
             "send_failures": 0,
             "media_text_fallbacks": 0,
@@ -205,6 +207,9 @@ class ReplyReliability:
         return result
 
     async def execute(self, original, scheduler, event):
+        # The dispatcher marks private autonomous wakes before they enter the
+        # pipeline. A human request or manual wake still expects a QQ reply.
+        optional_reply = bool(event.get_extra("fishworld_optional_owner_reply", False))
         state = {
             "admitted": False,
             "completed": False,
@@ -239,7 +244,7 @@ class ReplyReliability:
                 event.stop_event()
                 task.cancel()
                 self.stats["timeouts"] += 1
-                if state["admitted"] and not state["completed"]:
+                if state["admitted"] and not state["completed"] and not optional_reply:
                     text = system_notice('reply', dict(status='timeout', operation_unconfirmed=state['write_started'], retry=False))
                     await self._notice(event, text)
                 await asyncio.wait({task}, timeout=2)
@@ -262,6 +267,14 @@ class ReplyReliability:
                 or not state["reply_expected"]
             ):
                 self.stats["filtered"] += 1
+            elif optional_reply:
+                if (event.get_extra("dafeiyu_world_quiet", False)
+                        and event.get_extra("dafeiyu_generation_valid", False)
+                        and not event.get_extra("dafeiyu_world_share_final", False)):
+                    self.stats["quiet_completions"] += 1
+                else:
+                    self.stats["background_no_reply"] += 1
+                    logger.warning("Autonomous Fish World wake ended without a confirmed reply or quiet decision")
             else:
                 self.stats["empty_fallbacks"] += 1
                 await self._notice(event, system_notice('reply', dict(status='empty_result')))
@@ -280,7 +293,7 @@ class ReplyReliability:
                 await self._notice(
                     event, system_notice('reply', dict(status='partial_delivery', retry=False))
                 )
-            elif state["admitted"] and not state["completed"] and not event.is_stopped():
+            elif state["admitted"] and not state["completed"] and not event.is_stopped() and not optional_reply:
                 self.stats["empty_fallbacks"] += 1
                 await self._notice(event, system_notice('reply', dict(status='failed', retry=False)))
         finally:

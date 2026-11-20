@@ -43,3 +43,7 @@ QQ 生成流程收到不符合 JSON 协议的最终回复时，若本轮有完�
 穿搭照默认可按文字描述生成。要为角色固定外观，可自行提供有权使用的 JPEG 参考图，放在已安装的 `dafeiyu/media/drawing/tinglan-reference.jpg` 后重新加载相关插件。
 
 安装框架依赖后，运行 `python scripts/run_tests.py test_fishworld_followthrough.py test_fish_world_generation.py`。测试使用虚构的衣柜、店铺和本地模拟收件人。
+
+自主活动决定静默后，QQ 发送层会把这一轮记为 `quiet_completions`。可以在 NapCat 的私聊发送日志核对实际发出的消息。手动唤醒和主人发起的对话继续走正常的发送与故障提示流程。
+
+宿主机的错误监控使用 `scripts/watchdog_errors.py` 读取带时间戳的 Docker 日志，按错误事件计数。同一次管理面板异常可能在 AstrBot 和 Hypercorn 中各留下一份堆栈。运行 `python tests/test_watchdog_errors.py` 可验证这些副本的合并和独立故障的计数。

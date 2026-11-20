@@ -30,7 +30,9 @@ from data.plugins.dafeiyu_dialogue.world_activity import FLOW,EXT,proposed_share
 from data.plugins.dafeiyu_dialogue.world_outing import estimate
 from data.plugins.dafeiyu_dialogue.wardrobe import guard_draw,finish_draw,outfit_tools,outfit_wording
 from data.plugins.dafeiyu_dialogue.provider_contract import NativeContexts
+from data.plugins.dafeiyu_runtime.reliability import ReplyReliability
 from data.plugins.astrbot_plugin_dafeiyu_draw import main as drawing
+from astrbot.api.event import MessageChain
 from dafeiyu.dialogue.generation import empty_learning
 from astrbot.core.agent.tool import ToolSet,FunctionTool
 from astrbot.core.agent.mcp_client import MCPTool
@@ -98,10 +100,13 @@ class Event:
         self.message_str=human;self.message_obj=NS(message_id=('fishworld_' if auto else 'qq_')+str(Event.seq))
         self.sent=[]
         if auto:self.d.update(fishworld_wake_id='wake',fishworld_prefetch_world_now=True,fishworld_manual_wake=manual)
+        if auto and not manual:self.d['fishworld_optional_owner_reply']=True
     def get_extra(self,k,v=None):return self.d.get(k,v)
     def set_extra(self,k,v):self.d[k]=v
     def get_sender_id(self):return '11'
     def is_private_chat(self):return True
+    def is_stopped(self):return bool(self.d.get('stopped'))
+    def stop_event(self):self.d['stopped']=True
     def get_group_id(self):return ''
     async def send(self,chain):self.sent.append(chain)
 
@@ -280,9 +285,64 @@ async def regression(folder):
     after,r=await prepare(s,w,'自动',True);assert r._dafeiyu_outfit_choice==('change',(GOLD,)),after.get_extra(FLOW)['pending']
     print('QA passed: purchase/repair/wear contradictions; durable meal -> change -> verified photo; no premature or duplicate image; cancellation; optional QQ/manual; push/closing boundaries',flush=True)
 
+async def qq_transport(folder):
+    s,fish,world=app(folder)
+    transport=AsyncMock(return_value=True)
+    guard=ReplyReliability(transport)
+    async def silent(scheduler,event):
+        guard.expect(event)
+        assert await final(s,event,'',{'share':'quiet'})==''
+    event,_=await prepare(s,world,'自动',True)
+    await guard.execute(silent,None,event)
+    transport.assert_not_awaited()
+    assert guard.stats['quiet_completions']==1 and guard.stats['empty_fallbacks']==0
+    assert not event.get_extra('dafeiyu_confirmed_delivery')
+
+    async def share(scheduler,event):
+        guard.expect(event)
+        msg=await final(s,event,'我在码头看到一只白鹭。',{'share':'chat','topic':'码头白鹭'})
+        assert msg
+        await guard.send(event,MessageChain().message(msg))
+    event,_=await prepare(s,world,'自动',True)
+    await guard.execute(share,None,event)
+    transport.assert_awaited_once()
+    assert event.get_extra('dafeiyu_confirmed_delivery')[0]['kind']=='reply'
+
+    async def empty(scheduler,event):
+        guard.expect(event)
+    for event in (Event('你好'),Event('手动唤醒',True,True)):
+        transport.reset_mock()
+        await guard.execute(empty,None,event)
+        transport.assert_awaited_once()
+        assert '无可发送结果' in transport.await_args.args[1].chain[0].text
+    event=Event('自动',True)
+    transport.reset_mock()
+    await guard.execute(empty,None,event)
+    transport.assert_not_awaited()
+    assert guard.stats['background_no_reply']==1 and guard.stats['quiet_completions']==1
+
+    async def failure(scheduler,event):
+        guard.expect(event)
+        raise RuntimeError('fixture')
+    await guard.execute(failure,None,Event('自动',True))
+    transport.assert_not_awaited()
+    await guard.execute(failure,None,Event('手动唤醒',True,True))
+    assert '处理失败' in transport.await_args.args[1].chain[0].text
+    transport.reset_mock()
+    async def timeout(scheduler,event):
+        guard.expect(event)
+        await asyncio.Event().wait()
+    guard.timeout=0.02
+    await guard.execute(timeout,None,Event('自动',True))
+    transport.assert_not_awaited()
+    await guard.execute(timeout,None,Event('你好'))
+    assert guard.stats['timeouts']==2 and '处理超时' in transport.await_args.args[1].chain[0].text
+
+
 async def main():
     with tempfile.TemporaryDirectory(prefix='fishworld-example-') as root:
         await regression(Path(root))
+        await qq_transport(Path(root))
 
 
 if __name__ == '__main__':
