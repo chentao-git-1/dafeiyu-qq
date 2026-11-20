@@ -101,7 +101,7 @@ class NaturalChat(Star):
         self.store.prune()
         with self.store.connect() as c:
             c.execute('CREATE TABLE IF NOT EXISTS offers(actor TEXT,id INTEGER,offered REAL,PRIMARY KEY(actor,id))')
-        context.register_web_api('/dafeiyu_natural_chat/status', self.status, ['GET'], '鲸鲸相处功能状态（不含聊天资料）')
+        context.register_web_api('/dafeiyu_natural_chat/status', self.status, ['GET'], '听澜相处功能状态（不含聊天资料）')
         self.maintenance_task=None
         self.maintenance_error=None
 
@@ -376,7 +376,7 @@ class NaturalChat(Star):
         marker='【本轮会话衔接】'
         focus=''
         if question:
-            focus='当前紧接的实际上一句是鲸鲸问：'+json.dumps(question,ensure_ascii=False)+'。本人回答“'+source['text']+'”是在说还没收到/听到。先接没收到这件事；别接回旧的嗓子话题。'
+            focus='当前紧接的实际上一句是听澜问：'+json.dumps(question,ensure_ascii=False)+'。本人回答“'+source['text']+'”是在说还没收到/听到。先接没收到这件事；别接回旧的嗓子话题。'
         elif DELAY.search(source['text']):
             pending=pending_turn(history)
             focus='本轮是本人抱怨回复迟了。先承认晚回，不说对方没接话，不编等待或网络原因。'
@@ -499,7 +499,7 @@ class NaturalChat(Star):
                 saved = self.store.observe(uid,event.unified_msg_origin,mid,text)
                 event.set_extra('jingjing_episode_saved',[self.store.view(r) for r in saved])
             except Exception as error:
-                logger.warning('[鲸鲸相处] 往事记录跳过，类型：%s',type(error).__name__)
+                logger.warning('[听澜相处] 往事记录跳过，类型：%s',type(error).__name__)
             # Bounded short-term cues only; no permanent mood/personality labels.
             previous = self.moods.get(uid)
             mood = mood_cue(text, previous)
@@ -641,7 +641,7 @@ class NaturalChat(Star):
         except (ValueError,TypeError) as error:
             return str(error)
         except Exception as error:
-            logger.warning('[鲸鲸相处] 工具未完成，类型：%s',type(error).__name__)
+            logger.warning('[听澜相处] 工具未完成，类型：%s',type(error).__name__)
             return '往事操作未完成，没有声称已经保存。'
 
     @filter.command('往事')

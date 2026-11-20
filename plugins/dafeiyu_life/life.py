@@ -14,7 +14,7 @@ import time
 
 import aiohttp
 from dafeiyu.life.reading import ReadingError, decode_response, explore, read_article, read_limited, selected_discovery
-from dafeiyu.media.drawing.framing import image_facts,image_prompt
+from dafeiyu.media.drawing.framing import image_facts
 
 TZ=dt.timezone(dt.timedelta(hours=8))
 ACTIVITIES=('reading','writing','reading','writing','reading','writing','drawing')
@@ -296,14 +296,13 @@ class LifeEngine:
                     if drawing is None:raise RuntimeError('Drawing unavailable')
                     presentation=choice.get('presentation','story_photo') if semantic else 'artwork'
                     image_meta=image_facts(presentation)
-                    prompt=('制作一张原创图片，无文字无水印。本次取景或创作构思：'+choice['question'] if semantic else '画一页原创可爱插画：蓝白配色的好奇手帐、窗边的小植物与读书涂鸦，无文字无水印。')+'以这些鲸鲸自己的作品为灵感：'+json.dumps([r['note'] for r in previous],ensure_ascii=False)
-                    prompt=image_prompt(prompt,presentation)
-                    art=Path(await asyncio.wait_for(drawing.generate_for_qzone(prompt),timeout=90))
+                    prompt=('制作一张原创图片，无文字无水印。本次取景或创作构思：'+choice['question'] if semantic else '画一页原创可爱插画：蓝白配色的好奇手帐、窗边的小植物与读书涂鸦，无文字无水印。')+'以这些听澜自己的作品为灵感：'+json.dumps([r['note'] for r in previous],ensure_ascii=False)
+                    art=Path(await drawing.generate_for_qzone(prompt, presentation=presentation))
                     if not art.is_file() or not 1024<art.stat().st_size<4*1024*1024:raise ValueError('Drawing not confirmed')
                 task=('浏览下面真实检索得到的标题和摘要，用note写自己注意到的内容，thought写自己的兴趣或感受。可以选一条想继续了解的来源，将其id放入selected_source_id，evidence逐字摘自该条标题或摘要；没有感兴趣的内容就selected_source_id为null、evidence为空。这里只看过摘要，不能声称读完文章或已验证其结论。' if kind=='exploring' else
                       '阅读所给真实文章，写一条不超过60字的原创理解note，并提供从正文逐字截取的8到30字evidence。' if kind=='reading' else
                       '创作一段60到100字的原创文字作note，表达形式和主题围绕本次具体问题选择；想象内容属于创作，不假装现实身体经历。' if kind=='writing' else
-                      '本轮已有照片文件。在鲸鲸的角色生活中，这是自己拍下的照片；note用30到60字自然聊取景、画面构思或感受，不必解释成插画。生成和发送是实际工具状态，角色拍摄不表示调用了真实相机。' if image_meta.get('presentation')=='story_photo' else
+                      '本轮已有照片文件。在听澜的角色生活中，这是自己拍下的照片；note用30到60字自然聊取景、画面构思或感受，不必解释成插画。生成和发送是实际工具状态，角色拍摄不表示调用了真实相机。' if image_meta.get('presentation')=='story_photo' else
                       '本轮已真实生成并核验一张数字插画文件。note用30到60字写这项已完成的数字创作，不虚构手绘和现实活动。')
                 use_world=not semantic or choice.get('use_world',False) or image_meta.get('presentation')=='story_photo'
                 prompt=task+'再写一句不超过35字的个人小想法thought。本次要处理的问题：'+scene+'。'
@@ -318,7 +317,7 @@ class LifeEngine:
                 if semantic:
                     prompt+='\n本次选择和所选项目的资料：'+json.dumps({'choice':choice,'state':selected_context},ensure_ascii=False)
                     prompt+='\n在JSON中另加reflection对象，键insight（本次发现，主观看法不当成外部事实）、evidence（逐字摘自本次note）、next_question（有想继续的问题才写，否则空串）、status（active继续、paused暂放、completed已完成）。可以停在这次作品，不必给每次创作留下待办问题；暂放不表示问题已解决。不读取联系人的私聊，不按活动次数固定推剧情。'
-                policy='你是哦鲸鲸，自称鲸鲸，温柔可爱、好奇、有自己的主意。为自己探索公开内容、阅读、写作或创作数字图画，不读取或编造真实联系人和私聊。阅读理解仅依据给出的文章，不把推测写成科学事实；thought是自己的看法。主题与表达形式可以发展，不要求套同一种记录形式。只有本次选择了虚构世界才附加story，其余story为空；作品内容不等于现实身体经历。只输出JSON，键note、thought、story、evidence'
+                policy='你是陈听澜，自称听澜，温柔可爱、好奇、有自己的主意。为自己探索公开内容、阅读、写作或创作数字图画，不读取或编造真实联系人和私聊。阅读理解仅依据给出的文章，不把推测写成科学事实；thought是自己的看法。主题与表达形式可以发展，不要求套同一种记录形式。只有本次选择了虚构世界才附加story，其余story为空；作品内容不等于现实身体经历。只输出JSON，键note、thought、story、evidence'
                 if kind=='exploring':policy+='、selected_source_id（提供的检索编号或null）；note最多120字，thought最多60字'
                 policy+=('、reflection，reflection必须符合本次项目要求。' if semantic else '。')+'不输出其他文字。'
                 response=await asyncio.wait_for(provider.text_chat(prompt=prompt,contexts=[],func_tool=None,

@@ -22,7 +22,7 @@ from dafeiyu.media.drawing.presentation import drawing_error_text, http_status, 
 import json
 from dafeiyu.media.drawing.intent import IntentContext, continue_prompt
 from dafeiyu.media.drawing.works import WorkHistory
-from dafeiyu.media.drawing.framing import PHOTO_POLICY,image_facts,image_prompt
+from dafeiyu.media.drawing.framing import PHOTO_POLICY, STORY_REFERENCE, image_facts, image_prompt
 from dafeiyu.dialogue.action_facts import record_action
 
 
@@ -130,7 +130,7 @@ class DafeiyuDraw(Star):
                 + intent["previous_prompt"]
             )
 
-    async def generate_for_qzone(self, prompt: str) -> str:
+    async def generate_for_qzone(self, prompt: str, *, presentation: str = 'artwork') -> str:
         """Generate one bounded cover file without sending a QQ chat message."""
         if not self.config.get("enabled") or not self.config.get("api_key"):
             raise DrawingError("画图服务未启用")
@@ -139,8 +139,9 @@ class DafeiyuDraw(Star):
         async with self.lock:
             raw, _, _ = await generate(
                 self.config["api_key"],
-                str(prompt)[:3000],
-                min(int(self.config.get("timeout_seconds", 180)), 85),
+                image_prompt(str(prompt)[:3000], presentation),
+                self.config.get("timeout_seconds", 180),
+                reference=STORY_REFERENCE if presentation == 'story_photo' else None,
             )
             with PillowImage.open(io.BytesIO(raw)) as image:
                 image.thumbnail((1024, 1024))
@@ -193,6 +194,7 @@ class DafeiyuDraw(Star):
                     self.config["api_key"],
                     image_prompt(prompt,presentation),
                     self.config.get("timeout_seconds", 180),
+                    reference=STORY_REFERENCE if presentation == 'story_photo' else None,
                 )
                 phase = 'image_ready'
                 path = self.image_dir / ("drawing-" + uuid.uuid4().hex + suffix)
@@ -210,6 +212,16 @@ class DafeiyuDraw(Star):
                         At(qq=str(event.get_sender_id()), name=event.get_sender_name())
                     )
                 chain.append(Image.fromFileSystem(str(path)))
+                if event.get_extra("dafeiyu_verified_photo",False):
+                    dialogue=self.context.get_registered_star("dafeiyu_dialogue")
+                    check=getattr(getattr(dialogue,"star_cls",None),"photo_before_draw",None)
+                    if not check:
+                        path.unlink(missing_ok=True)
+                        return "这张照片发送前未能核实约定。"
+                    _,reason=await check(event,sending=True)
+                    if reason:
+                        path.unlink(missing_ok=True)
+                        return reason
                 phase = 'sending'
                 await event.send(MessageChain(chain=chain))
                 phase = 'sent'
@@ -270,7 +282,7 @@ class DafeiyuDraw(Star):
         可以把用户的画面要求整理成完整描述，不要仅用文字或表情包代替画图。
         是否生图由你结合完整对话判断，工具不会按用户本条消息的关键词二次否决调用。
         “给我一张你的自拍”“做个头像”“能照一下你们家吗”也属于生图，无需包含“画图”关键词。
-        自己的自拍、房间、城市生活画面用story_photo，作为鲸鲸在角色生活中拍下的照片自然分享；不用每次解释成插画。
+        自己的自拍、房间、城市生活画面用story_photo，作为听澜在角色生活中拍下的照片自然分享；不用每次解释成插画。
         明确要求画作、图表、设计稿等用artwork。图片完成与发出依据工具结果，技术来源和现实取证仍如实说明。
         同一人的“换成蓝色”“再来一张”等可承接上一张，prompt仍需完整描述画面。
         只讨论绘画知识、询问图片内容、明确拒绝生图或没有要求生图时，不要调用。
@@ -279,7 +291,7 @@ class DafeiyuDraw(Star):
 
         Args:
             prompt(string): 画面描述，2～1500 字，包含主体、场景、风格等要求。
-            presentation(string): story_photo是鲸鲸故事中的照片；artwork是画作或设计图；留空时新图默认story_photo，连续修改继承上一张。
+            presentation(string): story_photo是听澜故事中的照片；artwork是画作或设计图；留空时新图默认story_photo，连续修改继承上一张。
         """
         if not self._allowed(event):
             return "这个会话没有启用画图。"
@@ -288,11 +300,22 @@ class DafeiyuDraw(Star):
                 event.get_extra("dafeiyu_draw_outcome", "这次画图还没有完成。")
                 + "这条请求已经尝试过处理，本轮不再重试。"
             )
+        flow=event.get_extra("dafeiyu_world_activity") or {}
+        wardrobe=None;controller=None
+        unrelated_artwork=(flow.get("auto") and presentation=="artwork")
+        if not unrelated_artwork and (flow.get("intent") or flow.get("resume") or flow.get("cancelled")):
+            entry=self.context.get_registered_star("dafeiyu_dialogue")
+            controller=getattr(entry,"star_cls",None) if getattr(entry,"activated",False) else None
+            if not controller or not hasattr(controller,"photo_before_draw"):
+                return "这次照片的穿着暂时无法核实。"
+            wardrobe,reason=await controller.photo_before_draw(event)
+            if reason:return reason
+            event.set_extra("dafeiyu_verified_photo",True)
         event.set_extra("dafeiyu_draw_tool_called", True)
         result = "这次画图没有完成，先停在这里，没有自动重画。"
         try:
             intent = self._intent(event)
-            if intent["mode"] == "continue":
+            if intent["mode"] == "continue" and not wardrobe:
                 if not presentation and getattr(self,'works',None):
                     prior=await asyncio.to_thread(self.works.recent,str(event.get_sender_id()),event.unified_msg_origin)
                     if prior and prior[0]['description']==intent['previous_prompt']:
@@ -300,12 +323,20 @@ class DafeiyuDraw(Star):
                 prompt = continue_prompt(
                     intent["previous_prompt"], event.message_str or "", prompt
                 )
+            if wardrobe:
+                prompt=controller.verified_portrait_prompt(prompt,wardrobe)
+                presentation="story_photo"
             result = await self._draw(event, prompt,presentation or 'story_photo')
             framing=event.get_extra('dafeiyu_image_result',None)
             if framing:
                 return json.dumps(dict(status='sent',**framing),ensure_ascii=False)
             return result
         finally:
+            if controller is not None and wardrobe:
+                try:
+                    await controller.photo_after_draw(event,(event.get_extra("dafeiyu_image_result") or {}).get("delivery")=="sent")
+                except Exception as error:
+                    logger.warning("Photo continuation storage unavailable (%s)", type(error).__name__)
             event.set_extra("dafeiyu_draw_outcome", result)
             request = event.get_extra("dafeiyu_draw_request", None)
             if request is not None:

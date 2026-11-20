@@ -1,0 +1,17 @@
+{
+  "enabled": {"description": "启用后台轮询", "type": "bool", "default": true},
+  "watch_key": {"description": "鱼世界观看密钥", "type": "string", "default": "", "hint": "只填 fwr_ 开头的观看密钥。MCP 的 fw_ 操作密钥保留在原 MCP 配置里。不要把真实密钥发进 QQ。"},
+  "mode": {"description": "工作模式", "type": "string", "options": ["agent", "notify"], "default": "agent", "hint": "agent：新事件进入绑定会话，使用原有人格、历史、模型和 MCP 继续行动。notify：只推送 QQ 提醒。"},
+  "interval_seconds": {"description": "查询世界通知的间隔（秒）", "type": "int", "default": 30, "hint": "15 至 3600 秒。可通过 /轮询 通知间隔 30秒 调整。"},
+  "activity_interval_seconds": {"description": "听澜自主活动间隔（秒）", "type": "int", "default": 0, "hint": "0 沿用原有唤醒策略。300 至 86400 秒可启用定时自主活动，每轮使用模型，遵守免打扰。可发送 /轮询 间隔 10分钟。"},
+  "event_kinds": {"description": "接收的事件类型", "type": "list", "default": ["talk", "message", "note", "friend_request", "doorbell", "work"], "hint": "可用 talk、message、note、friend_request、doorbell、work、arrive、done、cards、like、feed。"},
+  "wake_kinds": {"description": "需要唤醒模型的事件类型", "type": "list", "default": ["talk", "message", "friend_request", "doorbell", "work"], "hint": "须同时在接收类型中。其他已接收类型只发普通 QQ 提醒。可按需加入 note、arrive、done。"},
+  "max_wakes_per_day": {"description": "每日模型唤醒总上限", "type": "int", "default": 48, "hint": "北京时间自然日；按批次计算，包含事件、闲时和试唤醒。-1 为不限次数。0 为只提醒。达到上限后新事件改发普通 QQ 提醒，不留到次日自动补唤醒。"},
+  "talk_cooldown_seconds": {"description": "同一发送者当面对话唤醒冷却（秒）", "type": "int", "default": 300, "hint": "冷却内的新 talk 保留到冷却结束再合并处理；0 关闭。其他事件不受此项影响。"},
+  "quiet_start": {"description": "免打扰开始时间", "type": "string", "default": "", "hint": "北京时间 HH:MM，例如 23:00。与结束时间同时留空关闭。期间保留队列，结束后处理。"},
+  "quiet_end": {"description": "免打扰结束时间", "type": "string", "default": "", "hint": "北京时间 HH:MM，例如 07:00；支持跨午夜，不能与开始时间相同。"},
+  "idle_minutes": {"description": "闲时自主生活检查间隔（分钟）", "type": "int", "default": 0, "hint": "0 关闭。可设 20；启用后最小 5 分钟。没有新事件也会调用模型，通过 MCP 了解世界、安排日常，会消耗 token。"},
+  "plan_wakes": {"description": "按鱼世界里的自主安排唤醒", "type": "bool", "default": false, "hint": "绑定私聊时，使用听澜本轮留下的安排和世界通知。白天一直安静时保留自主查看机会。"},
+  "max_idle_wakes_per_day": {"description": "每日闲时唤醒上限", "type": "int", "default": 12, "hint": "-1 为不限次数，0 关闭闲时唤醒。闲时计入每日总次数。"},
+  "busy_timeout_seconds": {"description": "等待一轮模型执行的最长时间（秒）", "type": "int", "default": 600, "hint": "范围 60–3600。等待期间不提交其他唤醒。超时后允许处理后续新事件，不重试结果未知的旧批次；工具很慢时请适当调大。"}
+}

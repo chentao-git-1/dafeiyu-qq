@@ -40,10 +40,17 @@ from .evidence_context import EvidenceContext
 from .generation_workflow import GenerationWorkflow
 from .public_sharing import PublicSharing
 from .relationship_memory import RelationshipContext
+from .world_observation import DAY_QUERY, WorldObservation, asks_current_detail, binding_scope
+from .route_receipts import ROUTE, note_route, prepare_route, set_request_id
+from .spoken_price import QUOTE, prior_price
+from . import followthrough
+from .world_activity import FLOW, proposed_share, quiet_result
+from .wardrobe import guard_draw, finish_draw, portrait_prompt, reserve_change
 
 
 @register('dafeiyu_dialogue', 'Local', '自主表达、真实相处记忆与送达后学习', '0.8.0')
 class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicSharing, RelationshipContext, Star):
+    optional_world_share=True
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
@@ -54,6 +61,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         self._learning = None
         self._index = None
         self.provider_contracts=ProviderContracts()
+        self.world_observation = WorldObservation()
         self._growth=None;self.growth_task=None;self.growth_lock=asyncio.Lock()
         self.learning_ticks=Counter();self.learning_seen=deque(maxlen=512);self.learning_state_inflight=set()
         self.deferred_learning=DeferredLearning()
@@ -65,6 +73,15 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
     def natural(self):
         meta = self.context.get_registered_star('dafeiyu_natural_chat')
         return getattr(meta, 'star_cls', None) if meta and meta.activated else None
+
+    async def photo_before_draw(self,event,*,sending=False):
+        return await guard_draw(self,event,sending=sending)
+
+    async def photo_after_draw(self,event,sent):
+        await finish_draw(self,event,sent)
+
+    def verified_portrait_prompt(self,prompt,worn):
+        return portrait_prompt(prompt,worn)
 
     async def initialize(self):
         self.provider_contracts.install_runner()
@@ -195,6 +212,8 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
     async def choose_path(self, event, req):
         # Fail closed and avoid changing tools shared with the framework registry.
         req._dafeiyu_generation_binding=None
+        req._dafeiyu_route_decision=False
+        req._dafeiyu_outfit_choice=None
         event.set_extra(ACTIVE_KEY, False)
         try:
             turn = self.identity(event)
@@ -278,9 +297,34 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             if event.get_extra('dafeiyu_generation_contract',False):
                 from dafeiyu.dialogue.history_evidence import historical_tools
                 history_tools=historical_tools(req.contexts or [])
+                if (not event.get_extra('fishworld_wake_id')
+                        and asks_current_detail(source['text']) and binding_scope(self.context, event)):
+                    event.set_extra('dafeiyu_current_world_detail', True)
+                    event.set_extra('dafeiyu_detail_is_bicycle', any(word in source['text'] for word in ('自行车','单车','车子')))
+                world_tool = req.func_tool.get_tool('world_now') if req.func_tool else None
+                if (not event.get_extra('fishworld_prefetch_world_now', False)
+                        and not event.get_extra('dafeiyu_current_world_detail', False)
+                        and DAY_QUERY.search(source['text'])
+                        and getattr(world_tool, 'mcp_server_name', None) == 'fish-world'
+                        and getattr(world_tool, 'active', False)):
+                    scope = binding_scope(self.context, event)
+                    now = time.time()
+                    observation = self.world_observation.for_history(scope, now, history_tools)
+                    if observation and not self.world_observation.mentioned_place(scope, source['text'], now):
+                        history_tools.append(observation)
                 built.evidence['historical_tool_results']=history_tools
+                if not turn.is_group and not event.get_extra('fishworld_wake_id') and binding_scope(self.context,event):
+                    recalled = prior_price(source['text'],snapshot.items,turn)
+                    if recalled:
+                        item, spoken = recalled
+                        memory = built.evidence.setdefault('memory',[])
+                        if not any(row.get('id') == item.id for row in memory):
+                            memory.append(item.data())
+                        event.set_extra(QUOTE,spoken)
+                        built=replace(built,prompt=built.prompt+'\n<!-- BEGIN_DAFEIYU_SPOKEN_QUOTE -->\n'
+                                      +json.dumps(spoken,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_SPOKEN_QUOTE -->')
                 if history_tools:
-                    built=replace(built,prompt=built.prompt+'\n<!-- BEGIN_DAFEIYU_HISTORICAL_TOOLS -->\n同一授权会话历史中完整且与调用编号配对的工具结果；只支持过去那次查得的事实，不表示本轮执行：'+json.dumps(history_tools,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_HISTORICAL_TOOLS -->')
+                    built=replace(built,prompt=built.prompt+'\n<!-- BEGIN_DAFEIYU_HISTORICAL_TOOLS -->\n本会话过去的工具回执，含按时间摘录的本人世界状态，只支持当时已查到的事实：'+json.dumps(history_tools,ensure_ascii=False).replace('<','\\u003c')+'\n<!-- END_DAFEIYU_HISTORICAL_TOOLS -->')
                 if turn.is_group:
                     from .group_context import quoted
                     group_data=dict(current_speaker=turn.actor,origin=turn.origin,quoted=quoted(event),
@@ -329,6 +373,13 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
                         nonce=event.get_extra('dafeiyu_generation_capability',''))
                     self.provider_contracts.bind_request(req,event.get_extra('dafeiyu_generation_capability'),
                         outgoing=event.get_extra('dafeiyu_confirmed_outgoing',()))
+                    if event.get_extra('dafeiyu_provider_json_mode', False):
+                        await followthrough.begin(self,event,req,source,snapshot.items,turn)
+                        await self.prefetch_world_now(event, req)
+                        route_turn = await prepare_route(self,event,req,source)
+                        await followthrough.attach(self,event,req)
+                        if not route_turn and not (event.get_extra(FLOW) or {}).get('intent'):
+                            await self.prefetch_place_history(event, req, source['text'])
                 # Final fact/receipt guards and confirmed-delivery recording remain active.
         except asyncio.CancelledError:
             raise
@@ -352,10 +403,19 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.on_llm_response(priority=-sys.maxsize + 1)
     async def review_response(self, event, response):
+        if (event.get_extra("fishworld_optional_owner_reply") and not getattr(response,"tools_call_name",[])
+                and (not event.get_extra(ACTIVE_KEY,False) or not event.get_extra("dafeiyu_generation_contract",False))):
+            quiet_result(event,response)
+            return
         if (not event.get_extra(ACTIVE_KEY, False) or getattr(response, 'tools_call_name', [])):
             return
         if event.get_extra('dafeiyu_generation_contract', False):
-            await self.finalize_generation(event, response)
+            try:
+                await self.finalize_generation(event, response)
+            finally:
+                f=event.get_extra(FLOW)
+                if f and f["auto"] and not event.get_extra("dafeiyu_world_share_final",False):
+                    quiet_result(event,response)
             return
         if not response.completion_text.strip():return
         try:
@@ -395,6 +455,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.after_message_sent(priority=-sys.maxsize)
     async def sync_confirmed_history(self,event):
+        await followthrough.delivered(self,event)
         if not event.get_extra('dafeiyu_generation_valid',False) or event.get_extra('dafeiyu_semantic_forgetting',False):return
         from dafeiyu.memory.content import content_text
         receipts=event.get_extra('dafeiyu_confirmed_delivery',[])
@@ -522,6 +583,13 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.on_using_llm_tool(priority=-sys.maxsize + 1)
     async def review_tool_message(self, event, tool, arguments):
+        flow=event.get_extra(FLOW)
+        if (flow and getattr(tool,"mcp_server_name",None)=="fish-world" and tool.name=="world_update"
+                and binding_scope(self.context,event)==flow["scope"]):
+            await reserve_change(self,event,flow,arguments)
+        if event.get_extra(ACTIVE_KEY, False) and event.get_extra(ROUTE):
+            if binding_scope(self.context,event) == event.get_extra(ROUTE)["scope"]:
+                set_request_id(event,tool,arguments)
         if not event.get_extra(ACTIVE_KEY, False) or getattr(tool, 'name', '') != 'send_message_to_user':
             return
         messages = arguments.get('messages', [])
@@ -532,10 +600,19 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         if not positions:
             return
         try:
-            result = await self.reviewed(event, [messages[i]['text'] for i in positions],
-                arguments.get('session') or event.unified_msg_origin)
+            audience = arguments.get('session') or event.unified_msg_origin
+            result = await self.reviewed(event, [messages[i]['text'] for i in positions], audience)
             for i, text in zip(positions, result.segments):
-                messages[i]['text'] = text
+                messages[i]['text'] = await self.grounded_wording(event, text, final=False) if audience == event.unified_msg_origin else text
+            f=event.get_extra(FLOW)
+            if f and f["auto"] and audience==event.unified_msg_origin:
+                text="\n".join(messages[i]['text'] for i in positions)
+                # Explicit tool delivery uses the same repeat check as a final update.
+                share=proposed_share(event,text,{"share":"chat","topic":text[:50]})
+                if not share:
+                    arguments['messages']=[part for idx,part in enumerate(messages) if idx not in positions]
+                else:
+                    event.set_extra("dafeiyu_share_offer",share)
         except asyncio.CancelledError:
             # Raising alone cannot stop the framework's tool executor.
             arguments['messages'] = []
@@ -548,6 +625,10 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.on_llm_tool_respond(priority=-sys.maxsize + 1)
     async def collect_tool_evidence(self, event, tool, arguments, result):
+        if event.get_extra(ACTIVE_KEY,False) and event.get_extra(FLOW):
+            await followthrough.tool_result(self,event,tool,arguments,result)
+        if event.get_extra(ACTIVE_KEY, False) and event.get_extra(ROUTE):
+            await note_route(self,event,tool,arguments,result)
         if not event.get_extra(ACTIVE_KEY, False) or getattr(result,'isError',False):
             return
         text = result if isinstance(result, str) else None
@@ -557,12 +638,17 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
                 texts=[getattr(part,'text',None) for part in parts if getattr(part,'type',None)=='text']
                 if len(texts)==len(parts) and all(isinstance(p,str) for p in texts):text='\n'.join(texts)
             elif isinstance(result,dict):text=json.dumps(result,ensure_ascii=False)
+        if getattr(tool, 'name', '') == 'world_now' and getattr(tool, 'mcp_server_name', None) == 'fish-world':
+            self.world_observation.remember(binding_scope(self.context, event), text, time.time())
         rows = event.get_extra('dafeiyu_dialogue_tool_evidence', [])
         if len(rows) < 8:
             rows.append({'tool': getattr(tool, 'name', ''), 'result': text if text and len(text) <= 5000 else None,
                          'complete': bool(text and len(text) <= 5000)})
             event.set_extra('dafeiyu_dialogue_tool_evidence', rows)
         if getattr(tool, 'name', '') == 'send_message_to_user':
+            if event.get_extra("dafeiyu_share_offer"):
+                await followthrough.delivered(self,event)
+                if event.get_extra("dafeiyu_share_saved"):event.set_extra("dafeiyu_share_tool_sent",True)
             await self.commit_learning(event)
 
     @filter.llm_tool(name='dafeiyu_recall')
@@ -609,7 +695,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.llm_tool(name='dafeiyu_self')
     async def self_details(self,event,section:str='thoughts',query:str='')->str:
-        """按当前讨论需要，只读查询鲸鲸自己的资料；不执行活动或发送消息。
+        """按当前讨论需要，只读查询听澜自己的资料；不执行活动或发送消息。
 
         普通问候、应声和别人的话题无需查询。明确问自己的兴趣、近况、作品、来历、住处或故事时，
         自行选择相关部分；可表达当下看法，不为凑话题读取旧进度。打算不证明正在做或做完。

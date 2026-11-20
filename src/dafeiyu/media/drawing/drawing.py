@@ -7,12 +7,14 @@ import binascii
 import io
 import ipaddress
 import json
+from pathlib import Path
 
 import aiohttp
 from PIL import Image
 from yarl import URL
 
 ENDPOINT = 'https://cf.sheapi.cc/v1/images/generations'
+EDIT_ENDPOINT = 'https://cf.sheapi.cc/v1/images/edits'
 MODEL = 'gpt-image-2'
 MAX_JSON_BYTES = 24 * 1024 * 1024
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
@@ -60,14 +62,31 @@ async def bounded_body(response, maximum: int) -> bytes:
     return bytes(body)
 
 
-async def generate(key: str, prompt: str, timeout: int = 180) -> tuple[bytes, str, tuple[int, int]]:
-    payload = {'model': MODEL, 'prompt': prompt, 'n': 1, 'size': '1024x1024',
-               'response_format': 'b64_json', 'stream': False}
+async def generate(
+    key: str, prompt: str, timeout: int = 180, *, reference: Path | None = None
+) -> tuple[bytes, str, tuple[int, int]]:
+    fields = {'model': MODEL, 'prompt': prompt, 'size': '1024x1024', 'response_format': 'b64_json'}
+    endpoint = ENDPOINT
+    if reference is None:
+        request_body = {'json': {**fields, 'n': 1, 'stream': False}}
+    else:
+        try:
+            reference_bytes = await asyncio.to_thread(reference.read_bytes)
+        except OSError:
+            raise DrawingError('听澜的形象参考图暂时无法读取。', stage='preparing') from None
+        form = aiohttp.FormData()
+        for name, value in fields.items():
+            form.add_field(name, value)
+        form.add_field('n', '1')
+        form.add_field('quality', 'medium')
+        form.add_field('image', reference_bytes, filename=reference.name, content_type='image/jpeg')
+        endpoint = EDIT_ENDPOINT
+        request_body = {'data': form}
     limits = aiohttp.ClientTimeout(total=max(30, min(int(timeout), 240)), connect=15)
     try:
         async with aiohttp.ClientSession(timeout=limits, trust_env=False, headers={'User-Agent':'Mozilla/5.0'},
                                          connector=aiohttp.TCPConnector(resolver=PublicResolver())) as session:
-            async with session.post(ENDPOINT, json=payload, allow_redirects=False,
+            async with session.post(endpoint, **request_body, allow_redirects=False,
                                     headers={'Authorization': 'Bearer '+key}) as response:
                 if response.status in (401, 403):
                     raise DrawingError('画图密钥或接口访问被拒绝，请管理员检查（HTTP {}）。'.format(response.status),http_status=response.status)

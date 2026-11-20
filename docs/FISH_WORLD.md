@@ -19,17 +19,27 @@
 
 密钥由主人在鱼的世界网站签发，只写入服务器的 MCP 配置文件。不要提交配置文件、密钥、聊天数据或世界状态到 GitHub。配置文件权限设为 `600`。
 
-在 AstrBot 人格管理中，给实际使用的人格添加全部十个工具。连接成功只表示工具已注册，人格的工具白名单也必须允许调用：
+在 AstrBot 人格管理中，给实际使用的人格添加下列世界工具。
 
 ```text
 world_now world_history world_find world_profile world_go
-world_do world_say world_friends world_update world_guide
+world_do world_say world_friends world_feed world_update world_guide
 ```
 
 人格的底层规则见 [`persona/live.md`](../persona/live.md) 中的 `DAFEIYU_FISH_WORLD` 段。QQ 对话插件会压缩 `JINGJING_OWN_LIFE` 等旧段落，世界规则放在独立段落中才能被保留。当前住处和经历查询世界工具，临湾、老公寓与海边小屋保留为旧故事。世界未提供的场景细节不能补写为亲眼所见。
 
-修改后重启 AstrBot 容器，确认 `fish-world` 连接成功并加载十个工具。首次接入依次调用 `world_guide` 和 `world_now`；未入住时，按 `world_now` 返回的要求填写资料。小区仅能在首次入住时选择，应先确定选择再调用 `world_update`。
+配置生效后，确认 `fish-world` 已连接，并核对上表中的 11 个工具。首次接入依次调用 `world_guide` 和 `world_now`。首次入住时，根据 `world_now` 返回的要求填写资料并选定小区。
 
 通过实际对话验证三轮：问当前所在，应调用 `world_now`；让角色下楼，应调用 `world_do` 并查询更新后的现状；问刚才做过什么，应调用 `world_history`。同时在 QQ 私聊发送现状问题，核对对应的工具调用和回复。
 
 QQ 生成流程收到不符合 JSON 协议的最终回复时，若本轮有完整的世界工具结果，会使用当前问题、草稿和真实工具结果重试一次回复格式。重试最多 30 秒，共用现有的每轮一次结构恢复预算。新回复继续进入原有的来源与记忆处理流程。相关回归可运行 `python tests/test_fish_world_generation.py`。
+
+## 自主活动与 QQ 私聊
+
+启用鱼世界通知插件，在本机插件配置中填写观看密钥，再在目标 QQ 私聊中发送 `/鱼世界 绑定`。发送 `/轮询 间隔 10分钟` 可设置日间自主活动频率。通知查询间隔单独配置。要在抵达或完成行动时唤醒听澜，把 `arrive`、`done` 同时加入 `event_kinds` 和 `wake_kinds`。北京时间夜间免打扰可设为 `quiet_start=00:00`、`quiet_end=08:30`。
+
+听澜自主醒来时可以安静行动、保存待办，也可以把新进展或想聊的事发给绑定的主人。答应饭后拍穿搭照时，会在后续活动中核对用餐和换装结果，按实际穿着生成图片并记录发送结果。限时外出会按当前出发点、走法和营业时间估算能否赶上。
+
+穿搭照默认可按文字描述生成。要为角色固定外观，可自行提供有权使用的 JPEG 参考图，放在已安装的 `dafeiyu/media/drawing/tinglan-reference.jpg` 后重新加载相关插件。
+
+安装框架依赖后，运行 `python scripts/run_tests.py test_fishworld_followthrough.py test_fish_world_generation.py`。测试使用虚构的衣柜、店铺和本地模拟收件人。

@@ -1,6 +1,7 @@
 """Integrate relationship views with the existing generation and confirmed-delivery path."""
 import asyncio
 import json
+from astrbot.api import logger
 from dafeiyu.dialogue.relationships import RelationshipMemory,POLICY,proposals
 
 
@@ -35,7 +36,9 @@ class RelationshipContext:
         event.set_extra('dafeiyu_relationship_pending',[])
         if (not self.relationship_enabled() or privacy['action']!='none'
                 or event.get_extra('dafeiyu_learning_source',None) is None):return
-        event.set_extra('dafeiyu_relationship_pending',proposals(generated.relationship,human))
+        pending=proposals(generated.relationship,human)
+        event.set_extra('dafeiyu_relationship_pending',pending)
+        if pending:logger.info('[关系记忆] 本轮产生 %d 条候选：%s',len(pending),str(pending[0].get('view',''))[:40])
 
     def commit_relationship_update(self,event,source):
         if not self.relationship_enabled() or not event.get_extra('dafeiyu_generation_valid',False):return 0
@@ -45,4 +48,5 @@ class RelationshipContext:
         if not actual or ''.join(actual.split())!=''.join(final.split()):return 0
         saved=self.relationship_store().commit(source,self.natural().input_snapshot(event)['text'],
             event.get_extra('dafeiyu_relationship_pending',[]),event.get_extra('dafeiyu_relationship_versions',{}),actual,confirmed=True)
+        if saved:logger.info('[关系记忆] 已写入 %d 条',len(saved))
         return len(saved)

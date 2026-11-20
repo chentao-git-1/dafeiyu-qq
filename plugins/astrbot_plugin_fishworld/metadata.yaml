@@ -1,0 +1,9 @@
+name: astrbot_plugin_fishworld
+display_name: 鱼的世界轮询与自动唤醒
+desc: 为 NapCat + AstrBot 提供鱼世界事件轮询、MCP 自动唤醒和可选的闲时自主生活检查。
+version: v0.1.0
+author: Fishworld AstrBot Contributors
+repo: https://github.com/MagicYiMoon/astrbot_plugin_fishworld
+support_platforms:
+  - aiocqhttp
+astrbot_version: '>=4.5.7,<5'

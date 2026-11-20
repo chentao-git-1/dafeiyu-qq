@@ -3,9 +3,11 @@ import hashlib
 import json
 
 
-def historical_tools(history,budget=7000,limit=4):
+def historical_tools(history,budget=7000,limit=4,*,include_references=False):
+    history = list(history)
+    recent_start = max(0, len(history) - 14)
     calls={};rows=[];seen=set()
-    for message in list(history)[-14:]:
+    for index, message in enumerate(history[recent_start:], start=recent_start):
         if not isinstance(message,dict):continue
         if message.get('role')=='assistant':
             for call in message.get('tool_calls',[]) or []:
@@ -22,10 +24,18 @@ def historical_tools(history,budget=7000,limit=4):
             if not name or key in seen or not isinstance(content,str) or not content.strip() or len(content)>5000:continue
             seen.add(key)
             signature=hashlib.sha256(json.dumps([key,name,content],ensure_ascii=False).encode()).hexdigest()[:24]
-            rows.append((key,dict(id='history_tool:'+signature,tool=name,result=content,current_turn=False)))
+            rows.append((key,index,dict(id='history_tool:'+signature,tool=name,result=content,current_turn=False)))
     picked=[];used=0
-    for key,row in reversed(rows):
+    for key,index,row in reversed(rows):
         if not calls.get(key):continue
         size=len(json.dumps(row,ensure_ascii=False))
-        if len(picked)<limit and used+size<=budget:picked.append(row);used+=size
+        if len(picked)<limit and used+size<=budget:
+            if include_references:
+                result_from_end = 1 + sum(
+                    isinstance(later, dict) and later.get('role') == 'tool'
+                    for later in history[index + 1:]
+                )
+                row = dict(row, tool_call_id=key, result_from_end=result_from_end)
+            picked.append(row)
+            used+=size
     return list(reversed(picked))

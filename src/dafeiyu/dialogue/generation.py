@@ -44,6 +44,9 @@ POLICY+='''\n可在同一JSON中附加sharing字段，为以后自主发动态�
 POLICY+='\n记忆来源confirmed_own_publication是自己确实发布过的空间记录，注明的时间是发布时间，不证明此刻仍在做那件事或帖子现在仍在线。动态文案中的角色故事仍是角色故事，不自动成为现实身体经历。confirmed_space_interaction区分他人评论、自己的已发送回复及所属动态。publication_photo保存实际看过的照片描述，可按其中主体、场景、细节和当时的不确定之处自然回忆；它不是出图要求，也不说明此刻重新看过图片。只有数量而没有视觉描述时，不能补造画面，需要时使用空间读取工具补记。按话题相关性自然衔接，不每次主动复述动态；想查最近发过什么可用dafeiyu_self的publications。'
 
 
+POLICY+='''\n可选 relationship 字段：只在你对眼前这个人产生了新的、以后可以沿用的主观印象时才写，最多一条，否则省略。格式：{"aspect":"impression|trust|closeness","view":"不超过120字的看法","context":"不超过100字的适用情境","evidence":"对方当前原话里的逐字片段","subject":"speaker","modality":"direct","supersedes":"","expected_version":0,"status":"active"}。只写对方原话能直接支持的内容，不推测动机、隐私或身份；没有新印象就不写。'''
+
+
 @dataclass(frozen=True)
 class Generation:
     reply: str
@@ -57,6 +60,7 @@ class Generation:
     sharing: dict | None=None
     relationship: list | None=None
     delivery: str=''
+    fishworld_plan: dict | None=None
 
 
 def empty_learning():
@@ -95,7 +99,7 @@ def _generation_object(raw,recover=False):
 def parse_generation(raw,recover_claims=False,recover_metadata=False):
     obj,framing_recovered = _generation_object(raw,recover_metadata)
     fields={'focus','reply','claims','learning','expression'}
-    if (set(obj)-(fields|{'sharing','relationship','delivery'}) or not {'reply','learning'}.issubset(obj)
+    if (set(obj)-(fields|{'sharing','relationship','delivery','fishworld_plan'}) or not {'reply','learning'}.issubset(obj)
             or not recover_metadata and not fields.issubset(obj)):
         raise ValueError('Unexpected generation fields')
     reply, claims, learning = obj['reply'], obj.get('claims'), obj['learning']
@@ -135,7 +139,8 @@ def parse_generation(raw,recover_claims=False,recover_metadata=False):
     delivery=obj.get('delivery','')
     if not isinstance(delivery,str) or len(delivery)>120:delivery=''
     return Generation(reply,tuple(claims) if claims_valid else (),learning,expression,tuple(focus),
-        claims_valid,metadata_valid,framing_recovered,obj.get('sharing'),obj.get('relationship'),delivery)
+        claims_valid,metadata_valid,framing_recovered,obj.get('sharing'),obj.get('relationship'),delivery,
+        obj.get('fishworld_plan') if isinstance(obj.get('fishworld_plan'),dict) else None)
 
 
 def claim_sources(materials, tool_results=()):

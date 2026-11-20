@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock,patch
 import test_nightly_agenda as agenda
 from dafeiyu.media.drawing.works import WorkHistory
 from dafeiyu.media.drawing.framing import image_facts,image_prompt
+from dafeiyu.media.drawing import framing
 from dafeiyu.dialogue.growth import own_experiences
 from dafeiyu.dialogue.self_state import self_state
 from dafeiyu.life.planning import parse_choice
@@ -22,6 +23,18 @@ f=agenda.base.fixture
 
 
 class PhotoHistory(unittest.TestCase):
+    def test_optional_reference_keeps_the_requested_outfit_in_both_modes(self):
+        scene = '窗边的姜黄毛衣'
+        with patch.object(framing, 'STORY_REFERENCE', None):
+            prompt = image_prompt(scene, 'story_photo')
+            self.assertIn('二维动画插画', prompt)
+            self.assertIn(scene, prompt)
+            self.assertNotIn('参考图', prompt)
+        with patch.object(framing, 'STORY_REFERENCE', Path('fixture-reference.jpg')):
+            prompt = image_prompt(scene, 'story_photo')
+            self.assertIn('参考图', prompt)
+            self.assertIn(scene, prompt)
+
     def test_legacy_read_is_read_only_and_migration_preserves_old_artwork(self):
         with tempfile.TemporaryDirectory() as tmp:
             images=Path(tmp)/'images';images.mkdir();old=images/'drawing-old.png';old.write_bytes(b'old artifact')
@@ -67,7 +80,8 @@ class PhotoTool(unittest.IsolatedAsyncioTestCase):
             with patch.object(adapter,'generate',AsyncMock(return_value=(b'synthetic photo','.png',(1024,1024)))) as generate:
                 result=json.loads(await draw.draw_tool(event,'从窗边看向临湾的街道'))
             generate.assert_awaited_once();event.send.assert_awaited_once()
-            self.assertIn('拍下的一张照片',generate.await_args.args[1])
+            self.assertEqual(image_prompt('从窗边看向临湾的街道','story_photo'),generate.await_args.args[1])
+            self.assertIn('二维动画插画',generate.await_args.args[1])
             self.assertEqual(result['presentation'],'story_photo');self.assertEqual(result['delivery'],'sent')
             self.assertTrue(result['generated']);self.assertFalse(result['physical_camera_used'])
             rows=draw.conversation_works(f.OWNER,f.ORIGIN)
@@ -85,8 +99,8 @@ class PhotoTool(unittest.IsolatedAsyncioTestCase):
                 third=json.loads(await draw.draw_tool(f.event('换成照片'),'拍下门口挂着的临湾标志','story_photo'))
             self.assertEqual([first['presentation'],second['presentation'],third['presentation']],['artwork','artwork','story_photo'])
             self.assertEqual(generate.await_count,3)
-            self.assertNotIn('拍下的一张照片',generate.await_args_list[1].args[1])
-            self.assertIn('拍下的一张照片',generate.await_args_list[2].args[1])
+            self.assertNotIn('二维动画插画',generate.await_args_list[1].args[1])
+            self.assertIn('二维动画插画',generate.await_args_list[2].args[1])
 
     async def test_unconfirmed_send_does_not_create_a_delivered_photo_memory(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -110,6 +124,7 @@ class PhotoLife(unittest.IsolatedAsyncioTestCase):
                 engine.context.get_registered_star=lambda name:NS(activated=True,star_cls=drawing) if name=='astrbot_plugin_dafeiyu_draw' else lookup(name)
                 await engine.plan_next_day();now[0]=agenda.stamp(7,9)
                 self.assertTrue((await engine.advance())['advanced']);drawing.generate_for_qzone.assert_awaited_once()
+                self.assertEqual(drawing.generate_for_qzone.await_args.kwargs['presentation'],'story_photo')
                 self.assertEqual(provider.text_chat.await_count,2)
                 work=life.public_context();self.assertEqual(work['presentation'],'story_photo')
                 self.assertEqual(self_state(work)['verified_completed']['content_nature'],'fictional_photo')
@@ -121,7 +136,9 @@ class PhotoLife(unittest.IsolatedAsyncioTestCase):
         context=NS(get_registered_star=lambda name:NS(activated=True,star_cls=drawing))
         result=await prepare_post_images(context,'角色生活里的雨后街角')
         self.assertEqual(result,['/synthetic/photo.jpg']);drawing.generate_for_qzone.assert_awaited_once()
-        self.assertIn('拍下的一张照片',drawing.generate_for_qzone.await_args.args[0])
+        self.assertIn('角色生活里的雨后街角',drawing.generate_for_qzone.await_args.args[0])
+        self.assertNotIn('二维动画插画',drawing.generate_for_qzone.await_args.args[0])
+        self.assertEqual(drawing.generate_for_qzone.await_args.kwargs['presentation'],'story_photo')
 
 
 if __name__=='__main__':unittest.main()

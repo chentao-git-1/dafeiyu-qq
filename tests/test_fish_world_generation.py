@@ -1,6 +1,5 @@
 """Fish World format recovery using the production parser and captured model calls."""
 import asyncio
-import importlib.util
 import json
 from pathlib import Path
 import sys
@@ -8,13 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / 'src'), str(ROOT / 'framework')]
-spec = importlib.util.spec_from_file_location(
-    'fish_generation_workflow',
-    ROOT / 'plugins/dafeiyu_dialogue/generation_workflow.py',
-)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+sys.path[:0] = [str(ROOT / 'src'), str(ROOT / 'framework'), str(ROOT / 'plugins')]
+from dafeiyu_dialogue import generation_workflow as module
 
 
 class Event:

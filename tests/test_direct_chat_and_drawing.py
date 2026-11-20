@@ -131,7 +131,8 @@ class DirectDrawing(unittest.IsolatedAsyncioTestCase):
     async def test_generation_starts_with_no_chat_send_and_sends_only_actual_image(self):
         drawing = self.drawing();event = drawing_fixture.event('画一只蓝鲸')
         entered, release = asyncio.Event(), asyncio.Event()
-        async def generate(*args):
+        async def generate(*args, reference=None):
+            self.assertIsNone(reference)
             entered.set();await release.wait()
             return drawing_fixture.PNG, '.png', (1, 1)
         with patch.object(d, 'generate', new=AsyncMock(side_effect=generate)) as call:

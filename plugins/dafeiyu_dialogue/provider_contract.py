@@ -6,6 +6,12 @@ import re
 import copy
 from contextvars import ContextVar
 import uuid
+import hashlib
+import time
+
+from .prompt_cache import project_turn_data
+from .route_receipts import route_tools
+from .wardrobe import outfit_tools
 
 MARKER='<!-- BEGIN_DAFEIYU_GENERATION -->'
 STRUCTURED_MARKER='<!-- DAFEIYU_STRUCTURED_TASK -->'
@@ -21,8 +27,8 @@ class WireMessages(list):
 
 class NativeContexts(list):
     """Capability attached by the owned runner, never inferred from chat text."""
-    def __init__(self,messages,nonce):
-        super().__init__(messages);self.nonce=nonce
+    def __init__(self,messages,nonce,first_route_choice=False,outfit_choice=None):
+        super().__init__(messages);self.nonce=nonce;self.first_route_choice=first_route_choice;self.outfit_choice=outfit_choice
 
     def __copy__(self):return list(self)
 
@@ -46,7 +52,7 @@ def contract_request(kwargs):
     return bool(nonce and any(isinstance(p,str) and MARKER in p and '<!-- DAFEIYU_CAP:'+nonce+' -->' in p for p in prompts))
 
 
-def constrain_payload(payload,allow_contract=False,allow_structured=False):
+def constrain_payload(payload,allow_contract=False,allow_structured=False,sanitize_messages=None):
     messages=payload.get('messages',[])
     if not (allow_contract or allow_structured):
         return
@@ -67,6 +73,8 @@ def constrain_payload(payload,allow_contract=False,allow_structured=False):
             'learning':{'privacy':{'action':'none','evidence':'','ids':[],'subject':'speaker','modality':'direct'},'items':[]},
             'expression':'neutral','reply':body},ensure_ascii=False)
         messages[index]=wire
+    if allow_contract:
+        return project_turn_data(messages, MARKER, sanitize_messages)
 
 
 def isolate_background(payload):
@@ -77,7 +85,7 @@ def isolate_background(payload):
         body=message.get('content')
         if (message.get('role')!='system' or not isinstance(body,str)
                 or MARKER not in body or not re.search(r'<!-- DAFEIYU_CAP:[a-f0-9]{32} -->',body)):continue
-        for name in ('GENERATION','REQUEST_DATA','RELATIONSHIP'):
+        for name in ('GENERATION','REQUEST_DATA','RELATIONSHIP','WORLD_PLAN'):
             body=re.sub(r'\n?<!-- BEGIN_DAFEIYU_'+name+r' -->.*?<!-- END_DAFEIYU_'+name+r' -->','',body,flags=re.S)
         messages[index]=dict(message,content=body);changed=True
     if changed:payload['messages']=messages
@@ -89,7 +97,10 @@ class ProviderContracts:
     def install_runner(self):
         if self.runner_adapter is None:
             from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
+            from .turn_history import DialogueTurnTruncator
+
             original=ToolLoopAgentRunner._sanitize_contexts_for_provider
+            original_reset=ToolLoopAgentRunner.reset
             owner=self
             @functools.wraps(original)
             def contexts(runner,messages):
@@ -99,10 +110,23 @@ class ProviderContracts:
                     owner.install(runner.provider)
                     from dafeiyu.runtime.outbound import project_history
                     result=project_history(result,binding[2])
-                    return NativeContexts(result,binding[1])
+                    return NativeContexts(result,binding[1],getattr(runner.req,'_dafeiyu_route_decision',False),
+                                          getattr(runner.req,'_dafeiyu_outfit_choice',None))
                 return result
-            ToolLoopAgentRunner._sanitize_contexts_for_provider=contexts
-            self.runner_adapter=(ToolLoopAgentRunner,original,contexts)
+            @functools.wraps(original_reset)
+            async def reset(runner, *args, **kwargs):
+                await original_reset(runner, *args, **kwargs)
+                binding = getattr(runner.req, '_dafeiyu_generation_binding', None)
+                if binding and binding[0] is owner:
+                    runner.request_context_manager.truncator = DialogueTurnTruncator()
+
+            methods = {
+                '_sanitize_contexts_for_provider': (original, contexts),
+                'reset': (original_reset, reset),
+            }
+            for name, (_, wrapper) in methods.items():
+                setattr(ToolLoopAgentRunner, name, wrapper)
+            self.runner_adapter = (ToolLoopAgentRunner, methods)
 
     def bind_request(self,request,nonce,outgoing=()):
         self.install_runner()
@@ -116,24 +140,55 @@ class ProviderContracts:
         chat=getattr(provider,'text_chat',None)
         if not callable(convert) or not callable(chat):return False
         originals={'_finally_convert_payload':convert,'text_chat':chat}
+        sanitize_messages = getattr(provider, '_sanitize_assistant_messages', None)
 
         @functools.wraps(convert)
         def convert_payload(payload):
             convert(payload)
             own,structured=WIRE_SCOPE.get()
             if not own:isolate_background(payload)
-            constrain_payload(payload,own,structured)
+            dedup = constrain_payload(payload, own, structured, sanitize_messages)
+            if dedup and dedup[0]:
+                from astrbot.api import logger
+
+                logger.info('[cache-history-refs] refs=%d characters_saved=%d', *dedup)
 
         @functools.wraps(chat)
         async def text_chat(*args,**kwargs):
             own=contract_request(kwargs)
-            if own:kwargs['request_max_retries']=1
+            first_route=False
+            if own:
+                scoped=route_tools(kwargs)
+                if scoped is kwargs:scoped=outfit_tools(kwargs)
+                first_route=scoped is not kwargs
+                kwargs=scoped
+                kwargs['request_max_retries']=1
             structured=bool(STRUCTURED.get() and STRUCTURED_MARKER in str(kwargs.get('system_prompt') or ''))
             token=WIRE_SCOPE.set((own,structured))
-            try:result=await chat(*args,**kwargs)
+            started=time.perf_counter()
+            try:
+                try:result=await chat(*args,**kwargs)
+                except Exception as error:
+                    message=str(error).lower()
+                    if (not first_route or getattr(error,'status_code',None) not in (400,422)
+                            or 'tool_choice' not in message or not any(s in message for s in ('not support','unsupported','invalid','not allowed'))):
+                        raise
+                    result=await chat(*args,**dict(kwargs,tool_choice='auto'))
             finally:WIRE_SCOPE.reset(token)
             if own:
                 if getattr(result,'tools_call_name',None):result.completion_text=''
+                usage=getattr(result, 'usage', None)
+                if usage and usage.input > 0:
+                    from astrbot.api import logger
+
+                    contexts=kwargs.get('contexts')
+                    nonce=contexts.nonce if isinstance(contexts, NativeContexts) else CURRENT.get()
+                    logger.info(
+                        '[cache-round] turn=%s input=%d hit=%d miss=%d elapsed_ms=%d tool_calls=%d',
+                        hashlib.sha256(nonce.encode()).hexdigest()[:12],
+                        usage.input, usage.input_cached, usage.input_other,
+                        round((time.perf_counter()-started)*1000), len(getattr(result, 'tools_call_name', None) or ()),
+                    )
             return result
 
         wrappers={'_finally_convert_payload':convert_payload,'text_chat':text_chat}
@@ -175,8 +230,10 @@ class ProviderContracts:
 
     def close(self):
         if self.runner_adapter is not None:
-            runner,original,wrapper=self.runner_adapter
-            if runner._sanitize_contexts_for_provider is wrapper:runner._sanitize_contexts_for_provider=original
+            runner, methods = self.runner_adapter
+            for name, (original, wrapper) in methods.items():
+                if getattr(runner, name) is wrapper:
+                    setattr(runner, name, original)
             self.runner_adapter=None
         for provider,originals,wrappers in self.installed:
             for name,original in originals.items():
