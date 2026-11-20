@@ -20,6 +20,7 @@ from astrbot.api.web import json_response
 from astrbot.core.provider.entities import ProviderType
 from astrbot.core.provider.provider import TTSProvider
 from astrbot.core.provider.register import provider_cls_map, register_provider_adapter
+from .bailian_asr import register_asr
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path, get_astrbot_data_path
 
 from dafeiyu.media.voice.expression import SPEECH_CONTEXT, relationship, relationship_prompt, speech_plan
@@ -132,6 +133,7 @@ class BailianSpeech(TTSProvider):
         await self.get_audio('爸爸，鲸鲸的温柔可爱语音已经准备好啦。你想聊天的时候，叫我一声就好。')
 
 
+register_asr()
 if ADAPTER in provider_cls_map:
     provider_cls_map[ADAPTER].cls_type = BailianSpeech
 else:

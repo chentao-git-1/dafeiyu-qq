@@ -32,6 +32,7 @@ from astrbot.core.utils.session_lock import session_lock_manager
 from dafeiyu.runtime.flow import ChatFlow
 from .ops import load_state, problem, result
 from .reliability import LoopWatchdog, ReplyReliability
+from .qq_voice import finish_voice_text, prepare_voice_event
 from dafeiyu.runtime.diagnostics import CURRENT, KEY, Journal, Turn, active, phase, request_metrics
 from .private_outbound import PrivateOutbound
 from dafeiyu.dialogue.action_facts import attach_action_facts, system_notice
@@ -105,6 +106,9 @@ class DafeiyuRuntime(Star):
                 "message",
             ):
                 return await original_execute(scheduler, event)
+            if not prepare_voice_event(self.context, event):
+                event.cleanup_temporary_local_files()
+                return
             turn = None
             token = None
             cancelled = False
@@ -347,6 +351,7 @@ class DafeiyuRuntime(Star):
     async def incoming(self, event):
         if not self.allowed(event):
             return
+        finish_voice_text(event)
         # OneBot notices/requests are also converted to private/group events.
         # They must not advance the chat epoch and invalidate a pending reply.
         raw = getattr(event.message_obj, "raw_message", None)
@@ -397,6 +402,14 @@ class DafeiyuRuntime(Star):
             isinstance(part, Record) for part in event.get_messages()
         ):
             config = self.context.get_config(event.unified_msg_origin)
+            # Successful native STT has already replaced each spoken Record with Plain.
+            if config.get("provider_stt_settings", {}).get("enable") and not any(
+                isinstance(part, (File, Image, Video)) for part in event.get_messages()
+            ):
+                await event.send(event.plain_result("这条语音没听清，可以再说一遍吗？"))
+                self.replies.stats["audio_not_understood"] += 1
+                event.stop_event()
+                return
             model = (
                 config.get("agent_runner", {})
                 .get("config", {})
