@@ -88,8 +88,15 @@ class StateStore:
             self._validate(raw)
             self.data.update(raw)
             from .self_mood import valid_mood
-            if not valid_mood(self.data.get("self_mood")):
-                self.data["self_mood"] = None
+            mood = self.data.get("self_mood")
+            details = self.data.pop("self_mood_details", None)
+            if (isinstance(mood, dict) and valid_mood(mood) and "feelings" not in mood
+                    and isinstance(details, dict) and details.get("anchor") == self._mood_anchor(mood)):
+                mood = dict(mood, feelings=details.get("entries"))
+                self.data["self_mood"] = mood
+            if not valid_mood(mood):
+                legacy = {k: v for k, v in mood.items() if k != "feelings"} if isinstance(mood, dict) else None
+                self.data["self_mood"] = legacy if valid_mood(legacy) else None
 
     @staticmethod
     def _validate(raw: Any) -> None:
@@ -156,11 +163,22 @@ class StateStore:
         ):
             raise ValueError("绑定状态无效")
 
+    @staticmethod
+    def _mood_anchor(mood):
+        return hashlib.sha256(json.dumps(mood, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")
         with temporary.open("w", encoding="utf-8", newline="\n") as stream:
-            json.dump(self.data, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            # Older plugins can still load and update the scalar state after a rollback.
+            stored = self.data
+            mood = stored.get("self_mood")
+            if isinstance(mood, dict) and "feelings" in mood:
+                scalar = {key: value for key, value in mood.items() if key != "feelings"}
+                stored = dict(stored, self_mood=scalar, self_mood_details={
+                    "anchor": self._mood_anchor(scalar), "entries": mood["feelings"]})
+            json.dump(stored, stream, ensure_ascii=False, indent=2, allow_nan=False)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, self.path)

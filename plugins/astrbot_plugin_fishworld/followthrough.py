@@ -4,7 +4,7 @@ import math
 import re
 import time
 
-from .self_mood import mood_view, next_mood
+from .self_mood import apply_feelings, audience, mood_view
 
 
 def valid_photo(row):
@@ -74,14 +74,22 @@ class Followthrough:
     def read_self_mood(self,event,scope):
         if not scope or self.mood_scope(event)!=scope:
             return None
-        return mood_view(self.store.data.get("self_mood"),time.time())
+        return mood_view(self.store.data.get("self_mood"), time.time(), audience(event.unified_msg_origin))
 
     async def update_self_mood(self,event,scope,turn,source,occurred,delta,tone):
+        current = self.read_self_mood(event, scope)
+        if not current or type(delta) is not int or (delta == 0 and tone == current["tone"]):
+            return False
+        return await self.update_feelings(event, scope, turn, [{
+            "source": source, "at": occurred, "tone": tone, "delta": delta, "strength": max(1, abs(delta)),
+        }])
+
+    async def update_feelings(self, event, scope, turn, changes):
         async with self.lock:
             if not scope or self.mood_scope(event)!=scope:
                 return False
             old=self.store.data.get("self_mood")
-            new=next_mood(old,turn,source,occurred,delta,tone,time.time())
+            new = apply_feelings(old, turn, changes, time.time(), audience(event.unified_msg_origin))
             if new is None:
                 return False
             self.store.data["self_mood"]=new

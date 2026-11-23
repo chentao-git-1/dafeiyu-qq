@@ -727,7 +727,8 @@ class FishWorldPlugin(Followthrough, Star):
             return
         mood=self.read_self_mood(event,self.follow_scope(event))
         if mood is not None:
-            yield event.plain_result(f"听澜的心情 {mood['score']}/100 · {mood['tone']}")
+            summary = "、".join(f"{f['tone']} {f['strength']}/10" for f in mood.get("feelings", []))
+            yield event.plain_result(f"听澜的心情 {mood['score']}/100 · {summary or mood['tone']}")
         event.stop_event()
 
     @filter.permission_type(filter.PermissionType.ADMIN)

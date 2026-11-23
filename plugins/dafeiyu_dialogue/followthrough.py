@@ -19,7 +19,7 @@ def auto_wake(event):
 async def begin(plugin,event,req,source,items,turn):
     if event.get_extra("fishworld_manual_test") or event.get_extra("cron_job") or event.get_extra("cron_payload"):
         return
-    mood=self_mood.prepare(plugin,event,str(source.get("text") or ""))
+    mood=await self_mood.prepare(plugin,event,str(source.get("text") or ""))
     if mood is not None:
         add_packet(req,"SELF_MOOD",mood)
     fish=fish_for(plugin,event)

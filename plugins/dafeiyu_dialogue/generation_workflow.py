@@ -242,7 +242,11 @@ class GenerationWorkflow:
             offered = dict(event.get_extra('dafeiyu_claim_sources', {}))
             # Native tools run after the request hook. Their actual results become offered evidence.
             offered.update({k: v for k, v in claim_sources({}, tool_rows).items()})
-            try:validate_claim_sources(generated, offered, claim_sources(materials, tool_rows))
+            mood_evidence = await self_mood.validated_evidence(self, event)
+            offered.update(mood_evidence)
+            current_sources = claim_sources(materials, tool_rows)
+            current_sources.update(mood_evidence)
+            try:validate_claim_sources(generated, offered, current_sources)
             except ValueError:recover=True
             human=self.natural().input_snapshot(event)['text']
             stage='learning'
@@ -328,6 +332,8 @@ class GenerationWorkflow:
                 event.set_extra("dafeiyu_world_share_final",bool(share))
                 self.review_stats["world_owner_shares" if share else "world_quiet_turns"]+=1
                 if not share:body=""
+            if mood_evidence:
+                await self_mood.validated_evidence(self, event)
             response.completion_text = body
             event.set_extra('dafeiyu_generation_final_text',body)
             event.set_extra('dafeiyu_generation_valid', True)

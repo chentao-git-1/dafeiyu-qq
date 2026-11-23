@@ -9,6 +9,7 @@ from pathlib import Path
 import time
 import datetime as dt
 import sqlite3
+from . import self_mood
 from dafeiyu.dialogue.catalog import MemoryCatalog
 from dafeiyu.dialogue.review import review, verify_revision, packet_key, ReviewResult, UNAVAILABLE, SCHEMA_RETRY
 from dafeiyu.dialogue.self_state import self_state
@@ -116,6 +117,9 @@ class EvidenceContext:
             evidence['memory'] = [row for row in evidence.get('memory', []) if row.get('visibility') == 'shared']
             evidence['historical_tool_results']=[]
             evidence['verified_self']['conversation_works']=[]
+        mood_evidence = await self_mood.validated_evidence(self, event, audience)
+        if mood_evidence:
+            evidence['mood_evidence'] = mood_evidence
         history = event.get_extra('dafeiyu_dialogue_history', [])
         tools = event.get_extra('dafeiyu_dialogue_tool_evidence', [])
         packet = {'segments': segments, 'evidence': evidence, 'history': history, 'tools': tools, 'audience': audience}
@@ -163,6 +167,8 @@ class EvidenceContext:
         after_rows = {row.id: row.data() for row in after.items if row.visible_to(turn)}
         if any(after_rows.get(row['id']) != row for row in evidence['memory']):
             raise ValueError('Memory changed during review')
+        if mood_evidence:
+            await self_mood.validated_evidence(self, event, audience)
         self.review_stats[result.decision] += 1
         for kind in result.issue_kinds:
             self.review_stats[kind] += 1
