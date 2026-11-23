@@ -69,6 +69,7 @@ def fresh_state(now: float) -> dict:
         "idle_count": 0,
         "world_plans": [],
         "outfit_photo": None,
+        "self_mood": None,
         "world_shares": [],
         "world_active_day": "",
         "talk_at": {},
@@ -86,6 +87,9 @@ class StateStore:
             raw = json.loads(path.read_text(encoding="utf-8"))
             self._validate(raw)
             self.data.update(raw)
+            from .self_mood import valid_mood
+            if not valid_mood(self.data.get("self_mood")):
+                self.data["self_mood"] = None
 
     @staticmethod
     def _validate(raw: Any) -> None:

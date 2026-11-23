@@ -1,6 +1,7 @@
 """Connect world observations, accepted photo requests, and optional owner updates."""
 import re
 
+from . import self_mood
 from .route_receipts import current_route, fish_tool
 from .world_activity import FLOW, add_packet, fish_for, now_facts, proposed_share, raw_text
 from .wardrobe import (AFTER_MEAL, CANCEL, CHASE_PHOTO, CLOTHES, LATER, OTHER_IMAGE, PHOTO_DONE, REPAIRED, RETAKE, SPOKEN_WEAR,
@@ -18,6 +19,9 @@ def auto_wake(event):
 async def begin(plugin,event,req,source,items,turn):
     if event.get_extra("fishworld_manual_test") or event.get_extra("cron_job") or event.get_extra("cron_payload"):
         return
+    mood=self_mood.prepare(plugin,event,str(source.get("text") or ""))
+    if mood is not None:
+        add_packet(req,"SELF_MOOD",mood)
     fish=fish_for(plugin,event)
     snap=fish.follow_snapshot(event) if fish else None
     if not snap:
@@ -93,10 +97,14 @@ async def tool_result(plugin,event,tool,args,result):
     elif tool.name=="world_do" and args.get("id") and text:
         if not str(args["id"]).startswith(("look-","try-")) and not re.search(r"失败|不能|没有这个|无法|做不了",text[:120]):
             f["change"]=str(args["id"])
+            self_mood.record_action(event,tool.name,args,text)
         if re.search(r"(?:后胎|车胎|轮胎).{0,12}(?:补好|修好|补上|修复)了",text) and not re.search(r"还没|如果|需要|要是",text):
             f["repair_done"]=True
     elif tool.name=="world_go" and args.get("by") and text and not re.search(r"不能|失败|无法",text[:120]):
         f["change"]="出发 "+str(args.get("place",""))
+        self_mood.record_action(event,tool.name,args,text)
+    elif tool.name=="world_say" and args.get("text") and text and not re.search(r"失败|不能|无法|未发送",text[:100]):
+        self_mood.record_action(event,tool.name,args,text)
 
 
 async def wording(plugin,event,text):

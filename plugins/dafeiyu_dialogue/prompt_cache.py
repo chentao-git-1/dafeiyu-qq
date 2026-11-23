@@ -9,7 +9,7 @@ from dafeiyu.media.voice.transcription import EMOTIONS
 TURN_SECTION = re.compile(
     r"(?:^|\n)<!-- BEGIN_(?P<name>DAFEIYU_(?:"
     r"DIALOGUE_V2|HISTORICAL_TOOLS|GROUP_DATA|LEARNING_DATA|RELATIONSHIP|ACTION_FACTS|"
-    r"REQUEST_DATA|WORLD_SNAPSHOT|WORLD_PREFETCH|PLACE_HISTORY|WORLD_DETAIL|WORLD_PLAN|WORLD_FOLLOWUP|ROUTE_TURN|SPOKEN_QUOTE|RECENT_REPLIES|COMPANION_CLOCK)"
+    r"REQUEST_DATA|WORLD_SNAPSHOT|WORLD_PREFETCH|PLACE_HISTORY|WORLD_DETAIL|WORLD_PLAN|WORLD_FOLLOWUP|SELF_MOOD|ROUTE_TURN|SPOKEN_QUOTE|RECENT_REPLIES|COMPANION_CLOCK)"
     r"|JINGJING_SCHEDULE) -->\n"
     r"(?P<body>.*?)\n<!-- END_(?P=name) -->",
     re.DOTALL,
@@ -29,6 +29,12 @@ DATA_POLICY = (
     "目标路线已经生效就沿用；出发、已经走在新路上、抵达、已经推上车分别按对应结果说，步行回去取车本身只移动人。"
     "SPOKEN_QUOTE 是你实际发给本人的话，追问旧报价时可直接复述；发过这句话不能证明店家确认或修好了。"
     "有 WORLD_FOLLOWUP 时，以其中穿着、已购、活动和营业时间为准。愿意换衣用 world_update 的 outfit；换好需要两分钟。"
+    "SELF_MOOD 是你自己的心情，0到100，50平静。它可以影响你的表达，由你决定怎样回应。平时自然聊天，被问到分数再报数。"
+    "有 SELF_MOOD 且这次真实互动或新经历确实触动你时，才在最终JSON顶层加可选 self_mood，"
+    '形如 {"source":"chat","quote":"本轮来源中的短原话","delta":3,"tone":"期待"}。'
+    "source选本轮来源名，刚实际执行的 world_do、world_go、world_say 也可用工具名和回执中的短原话。"
+    "delta是这件事带来的变化，整数-10到10。tone可用平静、开心、愉快、轻快、期待、好奇、安心、放松、感动、惊喜、满足、惦记、担心、紧张、低落、失落、委屈、烦躁、生气、复杂。"
+    "你自己判断感受。普通寒暄、别人的语气标签、重复轮询或只读状态本身都不自动加减分。"
     "本人想看看你或要普通自拍，用 dafeiyu_draw 拍现在的样子。有本轮穿着就用，暂时查不到可以拍脸部近景。"
     "明确约好换某件再拍，才等目标穿上再发。别忘了发照片是提醒。图片送达才说发好。想饭后办就用可选 JSON "
     'fishworld.photo={"op":"defer","after":"meal","outfit":"表里的衣服id"}；其他稍后写 later，改变主意可用 cancel。'

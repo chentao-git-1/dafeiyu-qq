@@ -8,6 +8,7 @@ import time
 import json
 from datetime import datetime
 from astrbot.api import logger
+from . import self_mood
 from dafeiyu.dialogue.review import review, verify_revision, packet_key, ReviewResult, UNAVAILABLE, SCHEMA_RETRY
 from dafeiyu.dialogue.self_state import self_state
 from dafeiyu.dialogue.generation import parse_generation, claim_sources, validate_claim_sources, request_contract
@@ -348,6 +349,8 @@ class GenerationWorkflow:
             if sent:
                 await self.natural().remember_delivered_reply(event)
                 await self.enqueue_learning(event)
+            if not recover and privacy.get("action","none")=="none" and not event.get_extra("dafeiyu_semantic_forgetting",False):
+                await self_mood.commit(self,event)
         except asyncio.CancelledError:
             event.set_extra('dafeiyu_public_ideas',[])
             response.completion_text = UNAVAILABLE

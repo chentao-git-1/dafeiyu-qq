@@ -2,6 +2,9 @@
 import copy
 import math
 import re
+import time
+
+from .self_mood import mood_view, next_mood
 
 
 def valid_photo(row):
@@ -51,6 +54,43 @@ class Followthrough:
             return None
         state = self.store.data
         return scope,copy.deepcopy(state.get("outfit_photo")),copy.deepcopy(state.get("world_shares",[]))
+
+    def mood_scope(self,event):
+        """One character mood for admitted QQ turns on the same bot account."""
+        if self.storage_error or not self.store or not self.config.get("enabled",True):
+            return None
+        state=self.store.data
+        binding=state.get("binding") or {}
+        if not binding or not state.get("key_hash") or binding.get("group_id"):
+            return None
+        if (getattr(event, "get_platform_id", lambda: None)() != binding["platform_id"]
+                or str(getattr(event, "get_self_id", lambda: None)()) != binding["self_id"]):
+            return None
+        if self.follow_scope(event) or (event.get_extra("dafeiyu_generation_contract", False)
+                and (event.is_private_chat() or event.get_extra("dafeiyu_group_contract", False))):
+            return binding["umo"], state["key_hash"]
+        return None
+
+    def read_self_mood(self,event,scope):
+        if not scope or self.mood_scope(event)!=scope:
+            return None
+        return mood_view(self.store.data.get("self_mood"),time.time())
+
+    async def update_self_mood(self,event,scope,turn,source,occurred,delta,tone):
+        async with self.lock:
+            if not scope or self.mood_scope(event)!=scope:
+                return False
+            old=self.store.data.get("self_mood")
+            new=next_mood(old,turn,source,occurred,delta,tone,time.time())
+            if new is None:
+                return False
+            self.store.data["self_mood"]=new
+            try:
+                self.store.save()
+            except Exception:
+                self.store.data["self_mood"]=old
+                raise
+            return True
 
     async def change_photo(self,event,scope,expected,new):
         if not valid_photo(new):

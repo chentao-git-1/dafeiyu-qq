@@ -6,6 +6,7 @@ import time
 from dataclasses import replace
 
 from dafeiyu.dialogue.generation import _generation_object, parse_generation
+from .self_mood import PROPOSAL as MOOD_PROPOSAL, TURN as MOOD_TURN
 from .world_observation import binding_scope
 
 
@@ -64,22 +65,29 @@ def now_facts(text):
 
 def parse_scoped(event, text):
     flow=event.get_extra(FLOW)
-    if not flow:
+    mood=event.get_extra(MOOD_TURN)
+    if not flow and not mood:
         return parse_generation(text,recover_claims=True,recover_metadata=True)
+    if mood:
+        event.set_extra(MOOD_PROPOSAL,None)
     obj, recovered=_generation_object(text,True)
-    extra=obj.pop("fishworld",{})
-    if not isinstance(extra,dict):
-        extra={}
-    share=extra.get("share")
-    choice={"share":share if isinstance(share,str) and share in FALLBACK else "quiet",
-            "topic":str(extra.get("topic") or "")[:75],
-            "photo":extra.get("photo") if isinstance(extra.get("photo"),dict) else {}}
-    # The ordinary generation validator expects a spoken reply. This internal text can
-    # only stand in for an intentionally quiet, verified synthetic wake.
-    if flow["auto"] and choice["share"]=="quiet" and obj.get("reply")=="":
-        obj["reply"]="本轮自主活动。"
+    proposal=obj.pop("self_mood",None)
+    if flow:
+        extra=obj.pop("fishworld",{})
+        if not isinstance(extra,dict):
+            extra={}
+        share=extra.get("share")
+        choice={"share":share if isinstance(share,str) and share in FALLBACK else "quiet",
+                "topic":str(extra.get("topic") or "")[:75],
+                "photo":extra.get("photo") if isinstance(extra.get("photo"),dict) else {}}
+        # Only an intentionally quiet autonomous wake may use an internal reply.
+        if flow["auto"] and choice["share"]=="quiet" and obj.get("reply")=="":
+            obj["reply"]="本轮自主活动。"
     generated=parse_generation(json.dumps(obj,ensure_ascii=False),recover_claims=True,recover_metadata=True)
-    event.set_extra(EXT,choice)
+    if flow:
+        event.set_extra(EXT,choice)
+    if mood and isinstance(proposal,dict):
+        event.set_extra(MOOD_PROPOSAL,proposal)
     return replace(generated,framing_recovered=True) if recovered else generated
 
 

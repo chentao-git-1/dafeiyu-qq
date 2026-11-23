@@ -350,6 +350,12 @@ class FishWorldPlugin(Followthrough, Star):
             {"kind":r["item"]["kind"],"text":str(r["item"].get("text",""))[:180],"t":r["item"].get("t")}
             for r in rows if r["item"]["kind"] in SIGNAL_KINDS
         ])
+        if not manual and not test:
+            event.set_extra("fishworld_mood_events", [
+                {"id": row["id"], "received": row.get("received", now), "kind": row["item"]["kind"],
+                 "text": row["item"]["text"][:70]}
+                for row in rows[:6]
+            ])
         event.set_extra("fishworld_prefetch_world_now", not test)
         event.set_extra("fishworld_manual_test", test)
         if manual:
@@ -714,6 +720,16 @@ class FishWorldPlugin(Followthrough, Star):
             f"投递：{state['last_delivery']}\n最近错误：{self.last_error or '无'}"
         )
 
+    @filter.command("心情", alias={"情绪值"})
+    async def mood_command(self,event: AstrMessageEvent):
+        """查看绑定私聊里听澜自己的当前心情。"""
+        if event.get_extra(MARKER):
+            return
+        mood=self.read_self_mood(event,self.follow_scope(event))
+        if mood is not None:
+            yield event.plain_result(f"听澜的心情 {mood['score']}/100 · {mood['tone']}")
+        event.stop_event()
+
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("鱼世界", alias={"轮询"})
     async def command(self, event: AstrMessageEvent, arguments: GreedyStr):
@@ -743,6 +759,7 @@ class FishWorldPlugin(Followthrough, Star):
                     "idle_count",
                     "world_plans",
                     "outfit_photo",
+                    "self_mood",
                     "world_shares",
                     "world_active_day",
                     "talk_at",
@@ -785,7 +802,7 @@ class FishWorldPlugin(Followthrough, Star):
                         "当前仍有已提交的唤醒，请等本轮结束或等待超时后解绑。暂停只能阻止后续唤醒。"
                     )
                 else:
-                    self.store.data.update(binding=None, world_plans=[], world_active_day="", outfit_photo=None, world_shares=[])
+                    self.store.data.update(binding=None, world_plans=[], world_active_day="", outfit_photo=None, world_shares=[], self_mood=None)
                     self._save()
                     reply = "已解绑，停止轮询。已有待处理事件保留，重新绑定后可能投递到新会话。"
             elif action in ("暂停", "继续", "恢复"):
@@ -813,6 +830,7 @@ class FishWorldPlugin(Followthrough, Star):
                     "/轮询 唤醒一次　让听澜自主活动一轮，计入模型用量，遵守免打扰\n"
                     "/鱼世界 检查　按当前规则处理一轮\n/鱼世界 试唤醒　只读模型测试\n"
                     "/鱼世界 绑定、/鱼世界 解绑　管理目标会话\n"
+                    "/心情　查看听澜的当前心情\n"
                     "/鱼世界 重置确认　备份并清空队列，重建基准"
                 )
         # Stop other handlers after the reply has passed through QQ delivery.
