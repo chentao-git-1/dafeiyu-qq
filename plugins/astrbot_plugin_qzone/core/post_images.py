@@ -1,4 +1,4 @@
-"""Use explicitly attached pictures or one generated cover for a Qzone post."""
+"""Select supplied photos or illustrate recorded moments for a Qzone post."""
 import re
 from difflib import SequenceMatcher
 
@@ -6,6 +6,10 @@ from astrbot.api import logger
 from astrbot.core.message.components import Image, Reply
 from .diary import DiaryCancelled
 from .utils import get_image_urls
+
+
+SINGLE_FRAME = ('给鱼世界日记画一张二维手绘插画。只画一个时间、一个地点的一幅完整画面，'
+                '单一镜头铺满画幅，不分格、不拼贴、不加其他时段的小图或文字。')
 
 
 def _matching_details(text, events):
@@ -60,18 +64,17 @@ def _framed_scene(clause, event, record, shows_face, place=''):
     frame = ('画正在做这件事的陈听澜本人，可以看清她的脸。她是参考图里的蓝紫色长发女性。'
              if shows_face else '这是听澜朝外看到的景物、物件或正文点明的其他人。她在镜头后。'
              '若细节描述她做的事，可以取她手边的物件或手部近景，不另画一个人代替她。')
-    prompt = ('给鱼世界日记画一张二维手绘插画。只画一个时间、一个地点的一幅完整画面，'
-              '单一镜头铺满画幅，不分格、不拼贴、不加其他时段的小图或文字。' + frame +
+    prompt = (frame +
               '\n以下是公开的场景资料，按记录区分谁做了什么。只取与正文细节对应的这一刻。'
               '\n正文细节：' + clause[:180] + '\n对应的鱼世界事件：' + record[:230])
     if place:
-        prompt += '\n这时记录到的地点：' + place
+        prompt += '\n这时记录到的地点：' + place[:70]
     return prompt, shows_face, record
 
 
 def _activity(event):
     title, _, detail = event.partition('：')
-    if title in ('开始', '完成', '结束', '开始做饭', '做好了'):
+    if title in ('开始', '完成', '结束', '开始做饭', '做好了', '事件'):
         title = detail
     return re.split(r'[（(，,。；;]', title, maxsplit=1)[0].strip()
 
@@ -113,55 +116,62 @@ def _minute(record):
     return 60 * int(stamp[1]) + int(stamp[2]) if stamp else None
 
 
-def world_cover_scenes(text, timeline, shows_face=None, *, limit=2):
-    """Select one or two independently evidenced moments from the same text."""
+def _scene_priority(index, selected, records, events, locations):
+    kind = _scene_kind(events[index])
+    moment = _minute(records[index])
+    if moment is None or kind == 'outfit':
+        return None
+    place, route = locations[index]
+    action = _activity(events[index])
+    gaps = []
+    other_places = []
+    for _, previous in selected:
+        previous_time = _minute(records[previous])
+        previous_place, previous_route = locations[previous]
+        if (previous_time is None or moment == previous_time
+                or (place and place == previous_place)
+                or (route is not None and route == previous_route)
+                or kind == _scene_kind(events[previous]) == 'route'
+                or SequenceMatcher(None, _activity(events[previous]), action, autojunk=False).ratio() >= 0.82):
+            return None
+        gaps.append(abs(moment - previous_time))
+        other_places.append(previous_place)
+    return ({'activity': 4, 'observation': 3, 'start': 2, 'route': 1}[kind],
+            min(gaps) >= 30, bool(place and all(other_places)))
+
+
+def world_cover_scenes(text, timeline, shows_face=None, *, limit=2, panel_briefs=False):
+    """Select distinct evidenced moments, preserving each scene's source and framing."""
     records = [row.strip() for row in timeline if isinstance(row, str) and row.strip()]
     events = [re.sub(r'^\d{2}:\d{2}\s+', '', row) for row in records]
     details = _matching_details(text, events)
     locations = _locations(events)
     first_clause, first = details[0]
     selected = [(first_clause, first)]
-    if limit > 1:
-        first_time = _minute(records[first])
-        first_action = _activity(events[first])
-        first_kind = _scene_kind(events[first])
-        first_place, first_route = locations[first]
-        best_priority = (0, False, False)
-        second = None
-        for clause, index in details[1:]:
-            kind = _scene_kind(events[index])
-            place, route = locations[index]
-            moment = _minute(records[index])
-            activity = _activity(events[index])
-            same_activity = SequenceMatcher(None, first_action, activity, autojunk=False).ratio() >= 0.82
-            if (index == first or first_time is None or moment is None
-                    or moment == first_time or same_activity
-                    or (first_place and first_place == place)
-                    or (first_route is not None and first_route == route) or kind == 'outfit'
-                    or first_kind == kind == 'route'):
-                continue
-            # A finished activity makes a better second picture than a route
-            # update. Prefer a different part of the day and place among equals.
-            priority = ({'activity': 4, 'observation': 3, 'start': 2, 'route': 1}[kind],
-                        abs(moment - first_time) >= 30, bool(first_place and place and first_place != place))
-            if priority > best_priority:
-                best_priority, second = priority, (clause, index)
-        if second:
-            _, index = second
-            action = _activity(events[index])
-            # A caption may introduce the action at its start and describe its
-            # outcome in the next clause. Both help identify the same subject.
-            related_records = {index}
-            for earlier in range(index - 1, -1, -1):
-                if _activity(events[earlier]) == action:
-                    if _scene_kind(events[earlier]) == 'start' and locations[earlier] == locations[index]:
-                        related_records.add(earlier)
-                    break
-            related = [clause for clause, other in details if other in related_records]
-            selected.append(('，'.join(dict.fromkeys(related))[:180], index))
+    candidates = list(dict.fromkeys(index for _, index in details[1:]))
+    while len(selected) < min(limit, 3):
+        ranked = [(rank, index) for index in candidates
+                  if (rank := _scene_priority(index, selected, records, events, locations)) is not None]
+        if not ranked:
+            break
+        _, index = max(ranked, key=lambda item: item[0])
+        action = _activity(events[index])
+        # Link the start and outcome of one activity without merging later repeats.
+        related_records = {index}
+        for earlier in range(index - 1, -1, -1):
+            if _activity(events[earlier]) == action:
+                if _scene_kind(events[earlier]) == 'start' and locations[earlier] == locations[index]:
+                    related_records.add(earlier)
+                break
+        related = [clause for clause, other in details if other in related_records]
+        selected.append(('，'.join(dict.fromkeys(related))[:180], index))
     selected.sort(key=lambda item: records[item[1]][:5])
-    return [_framed_scene(clause, events[index], records[index], shows_face, locations[index][0])
-            for clause, index in selected]
+    face_hint = None if panel_briefs and len(selected) > 1 and shows_face is True else shows_face
+    scenes = [_framed_scene(clause, events[index], records[index], face_hint, locations[index][0])
+              for clause, index in selected]
+    if panel_briefs:
+        return scenes
+    return [(SINGLE_FRAME + brief, visible, row) for brief, visible, row in scenes]
 
 
 def world_cover_scene(text, timeline, shows_face=None, *, with_record=False):
@@ -169,8 +179,50 @@ def world_cover_scene(text, timeline, shows_face=None, *, with_record=False):
     return scene if with_record else scene[:2]
 
 
+async def _scene_with_outfit(scene, text, read_outfit):
+    brief, visible, row = scene
+    if not visible:
+        return brief
+    outfit = await read_outfit(text, row) if callable(read_outfit) else None
+    if outfit:
+        return brief + '\n只用脸部参考确定长相。这个时刻听澜实际的穿搭：' + outfit
+    return brief + '\n这个时刻的穿搭没有核实。取脸部和动作细节的近景，衣着留在取景范围外。'
+
+
+async def _draw_world_diary(drawing, text, scenes, read_outfit, collage):
+    if collage:
+        panels = []
+        for number, scene in enumerate(scenes, start=1):
+            brief = await _scene_with_outfit(scene, text, read_outfit)
+            panels.append(f'第{number}格\n{brief}')
+        prompt = ('画一张手绘生活日记拼图，按给定顺序阅读，选最生动的一幕作主画面，'
+                  '其他时刻画成小分镜。用统一的笔触和自然的留白把这些画面连起来。'
+                  '每格的地点、主角和衣服各按该格记录；听澜露脸的格子里始终是同一个人。'
+                  '时间和说明供构图参考，成图不印字。\n\n' + '\n\n'.join(panels))
+        path = await drawing.generate_for_qzone(prompt, presentation='story_photo',
+                                                shows_face=any(visible for _, visible, _ in scenes))
+        return [path]
+
+    images = []
+    for scene in scenes:
+        try:
+            brief = await _scene_with_outfit(scene, text, read_outfit)
+            path = await drawing.generate_for_qzone(SINGLE_FRAME + brief, presentation='story_photo',
+                                                    shows_face=scene[1])
+            images.append(path)
+        except DiaryCancelled:
+            raise
+        except Exception as error:
+            if len(scenes) == 1:
+                raise
+            logger.warning('QQ空间日记的一个镜头生成失败：%s', type(error).__name__)
+    if not images:
+        raise RuntimeError('鱼世界日记的配图均未生成')
+    return images
+
+
 async def prepare_post_images(context, text, event=None, with_image=True, image_prompt='', *,
-                              editorial=None, require_supplied=False, shows_face=None, daily_album=False):
+                              editorial=None, require_supplied=False, shows_face=None, daily_album=False, layout='auto'):
     if not with_image:
         return []
     message = str(getattr(event, 'message_str', '') or '')
@@ -207,28 +259,16 @@ async def prepare_post_images(context, text, event=None, with_image=True, image_
         read_timeline = getattr(editorial, 'world_cover_timeline', None)
         timeline = await read_timeline(text) if callable(read_timeline) else None
         if timeline is not None:
-            scenes = world_cover_scenes(text, timeline, shows_face, limit=2 if daily_album else 1)
+            if layout == 'separate':
+                limit = 2
+            elif daily_album or layout == 'collage':
+                limit = 3
+            else:
+                limit = 1
+            scenes = world_cover_scenes(text, timeline, shows_face, limit=limit, panel_briefs=True)
+            collage = len(scenes) == 3 or (layout == 'collage' and len(scenes) == 2)
             read_outfit = getattr(editorial, 'world_cover_outfit', None)
-            images = []
-            for prompt, visible, scene_row in scenes:
-                try:
-                    if visible:
-                        outfit = await read_outfit(text, scene_row) if callable(read_outfit) else None
-                        if outfit:
-                            prompt += '\n只用脸部参考确定长相。这个时刻听澜实际的穿搭：' + outfit
-                        else:
-                            prompt += '\n这个时刻的穿搭没有核实。取脸部和动作细节的近景，衣着留在取景范围外。'
-                    path = await drawing.generate_for_qzone(prompt, presentation='story_photo', shows_face=visible)
-                    images.append(path)
-                except DiaryCancelled:
-                    raise
-                except Exception as error:
-                    if len(scenes) == 1:
-                        raise
-                    logger.warning('QQ空间日记的一个镜头生成失败：%s', type(error).__name__)
-            if not images:
-                raise RuntimeError('鱼世界日记的配图均未生成')
-            return images
+            return await _draw_world_diary(drawing, text, scenes, read_outfit, collage)
     options = {"shows_face": shows_face} if type(shows_face) is bool else {}
     path = await drawing.generate_for_qzone(prompt, presentation='story_photo', **options)
     return [path]

@@ -24,6 +24,30 @@ def decision_text(text):
     return text
 
 
+LAYOUT = re.compile(
+    r'(?P<label>配图|构图|画面|图片|照片)?(?:请|就)?(?:要)?(?:用|做成|做|画)?(?:一张)?'
+    r'(?:(?P<collage>拼成一(?:张|幅)(?:图|照片)?|拼在一起|(?:[两三四234]格)?拼图)'
+    r'|(?P<separate>分开(?:来)?(?:发(?:送)?|画|配图|出图)|分图发|分(?:成|为)(?:两|几|多|[23])张(?:图片|照片|图)?'
+    r'|多张(?:图片|照片|单图|分图|图)))'
+)
+LAYOUT_ATTACHMENT = re.compile(r'[这那](?:些|[一两三几23]?张)(?:图|照片)|我(?:刚)?(?:发|传)(?:来|过)?的(?:图|照片)')
+
+
+def layout_request(text):
+    """Separate the owner's layout directions from captions and image subjects."""
+    masked = QUOTES.sub(lambda m: ' ' * len(m[0]), text)
+    layout = 'auto'
+    material = list(text)
+    for match in LAYOUT.finditer(masked):
+        start, end = match.span()
+        if match[0] == '拼图' and (re.search(r'\w$', masked[:start].rstrip()) or re.match(r'\w', masked[end:].lstrip())):
+            continue
+        if not re.search(r'(?:不要|不用|不想|不必|无需|别|不)(?:再)?$', masked[:start].rstrip()):
+            layout = 'collage' if match['collage'] else 'separate'
+        material[start:end] = ' ' * (end - start)
+    return layout, ''.join(material)
+
+
 def original_text(event):
     if event is None:return ''
     cached=event.get_extra('jingjing_original_input',None)
@@ -51,6 +75,19 @@ def positive_material_text(text):
 
 def material_scope(event):
     text=effective_request(original_text(event))
+    layout, material = layout_request(text)
+    scope = _material_scope(material)
+    scope.update(image_layout=layout, request_text=text)
+    if layout != 'auto' and not scope['reject_supplied_images']:
+        request = QUOTES.sub('', text)
+        attachment = LAYOUT_ATTACHMENT.search(request)
+        if attachment:
+            denied = bool(re.search(r'(?:别|不要|不用|无需|不需要|不能|不想|不许|禁止)[^，,。；;\n]{0,12}$', request[:attachment.start()]))
+            scope.update(use_supplied_images=not denied, reject_supplied_images=denied)
+    return scope
+
+
+def _material_scope(text):
     no_images=bool(TEXT_ONLY.search(text))
     supplied=bool(IMAGE_REQUEST.search(text)) and not (no_images or NO_PHOTO.search(text))
     selected=positive_material_text(text)

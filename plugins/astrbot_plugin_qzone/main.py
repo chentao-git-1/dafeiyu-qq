@@ -998,7 +998,7 @@ class QzonePlugin(Star):
             text(string): 爸爸明确指定的正文；自己挑或随便发时留空，由公开素材流程写作，不从私聊摘内容
             topic(string): 正文留空时的写作主题
             get_image(boolean): 爸爸明确要求附当前消息或引用消息的图片时设为True
-            with_image(boolean): 默认True自动配图，优先使用当前或引用消息附图，否则生成一张；明确纯文字或不要配图时设为False
+            with_image(boolean): 默认True自动配图，优先使用当前或引用消息附图；鱼世界日记可按爸爸要求拼图或分图，纯文字时设为False
             image_prompt(string): 可选的配图画面要求；配图在发布流程中生成，不要另调画图工具
             shows_face(boolean): 需要生成配图时，听澜本人露脸填 true。镜头朝外、只露背影或只拍别人填 false。
         """
@@ -1018,9 +1018,9 @@ class QzonePlugin(Star):
             try:
                 image_event=event if (scope['use_supplied_images'] or not autonomous) and not scope['reject_supplied_images'] else None
                 images = await prepare_post_images(self.context, text, image_event,
-                    (with_image or scope['use_supplied_images'] or scope['explicit_scene']) and not scope['text_only'], image_prompt if scope['explicit_scene'] else '',
+                    (with_image or scope['use_supplied_images'] or scope['explicit_scene'] or scope['image_layout'] != 'auto') and not scope['text_only'], image_prompt if scope['explicit_scene'] else '',
                     editorial=getattr(getattr(self, 'llm', None), 'editorial', None),require_supplied=scope['use_supplied_images'],
-                    shows_face=shows_face)
+                    shows_face=shows_face, layout=scope['image_layout'])
             except Exception:
                 logger.warning("QQ空间配图未完成，未提交发布")
                 return "这次配图未完成，QQ空间尚未发布，没有自动重试；可以稍后重新发起，或明确要求纯文字发布。"

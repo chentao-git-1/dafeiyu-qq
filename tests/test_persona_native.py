@@ -73,6 +73,17 @@ class Native(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(obj.llm.generate_post.await_count,1)
         self.assertEqual(obj.service.publish_post.await_args.kwargs['text'],'今天把一个小念头慢慢想明白。')
 
+    async def test_requested_diary_layout_reaches_the_image_generator(self):
+        for wording, layout in (('配图拼成一张', 'collage'), ('图片分开发', 'separate')):
+            with self.subTest(wording=wording):
+                obj = self.publisher()
+                request = event('发今天的鱼世界日记，' + wording)
+                with patch.object(q, 'prepare_post_images', new=AsyncMock(return_value=['picture'])) as images:
+                    await obj.dafeiyu_qzone_publish(request)
+                images.assert_awaited_once()
+                self.assertEqual(images.await_args.kwargs['layout'], layout)
+                obj.service.publish_post.assert_awaited_once()
+
     async def test_explicit_body_remains_verbatim_and_does_not_ask_again(self):
         obj=self.publisher();e=event('正文：今天的风很舒服，原文发空间。')
         with patch.object(q,'prepare_post_images',new=AsyncMock(return_value=[])):

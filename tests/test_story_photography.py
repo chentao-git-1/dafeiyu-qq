@@ -188,7 +188,7 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
             'world_life': {'date': '2026-01-16', 'source': 'world_history', 'timeline': timeline},
         })
 
-    async def test_diary_album_has_two_individual_scenes_in_time_order(self):
+    async def test_separate_layout_keeps_two_individual_scenes_in_time_order(self):
         text = '晚上回家补好了纸鸢的竹骨。下午到钟楼给铜铃换了红绳。上午在陶坊给白瓷杯画了一圈波纹。'
         await self.candidate(text, [
             '09:15  完成：在陶坊给白瓷杯画了一圈波纹',
@@ -196,7 +196,8 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
             '19:25  完成：回家补好了纸鸢的竹骨',
             '20:00  完成：整理邮票册',
         ])
-        paths = await prepare_post_images(self.context, text, editorial=self.editorial, daily_album=True)
+        paths = await prepare_post_images(self.context, text, editorial=self.editorial, daily_album=True,
+                                          layout='separate')
         self.assertEqual(self.generate.await_count, 2)
         scenes = ('白瓷杯', '铜铃', '纸鸢')
         selected = []
@@ -212,6 +213,80 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
         for path in paths:
             self.assertNotEqual(Path(path).read_bytes(), self.sheet.read_bytes())
 
+    async def test_three_supported_moments_share_one_collage_with_panel_specific_identity_and_clothing(self):
+        text = ('晚上回家补好了纸鸢的竹骨。下午看到旧船坞的紫色浮标在水面摇晃。'
+                '上午在陶坊给白瓷杯画了一圈波纹。希望下周会更有耐心。')
+        morning = '09:15  完成：在陶坊给白瓷杯画了一圈波纹'
+        harbor = '13:05  事件：旧船坞的紫色浮标在水面摇晃'
+        evening = '19:25  完成：回家补好了纸鸢的竹骨'
+        await self.candidate(text, [
+            '08:00  换了衣服：赭石色工装外套', morning, harbor,
+            '18:20  换了衣服：松绿色绒衣', evening, '20:10  完成：整理邮票册',
+        ])
+        with patch.object(self.editorial, 'world_cover_outfit',
+                          wraps=self.editorial.world_cover_outfit) as outfit:
+            paths = await prepare_post_images(self.context, text, editorial=self.editorial, daily_album=True)
+        self.generate.assert_awaited_once()
+        self.assertEqual(len(paths), 1)
+        self.assertTrue(Path(paths[0]).is_file())
+        request = self.generate.await_args
+        self.assertEqual(request.kwargs['reference'], self.sheet)
+        self.assertEqual([call.args[1] for call in outfit.await_args_list], [morning, evening])
+        prompt = request.args[1]
+        self.assertIn('主画面', prompt)
+        self.assertIn('小分镜', prompt)
+        for excluded in ('希望下周会更有耐心', '邮票册', '不分格', '不拼贴', '单一镜头铺满画幅'):
+            self.assertNotIn(excluded, prompt)
+        _, first = prompt.split('第1格', 1)
+        first, second = first.split('第2格', 1)
+        second, third = second.split('第3格', 1)
+        for panel, record, details, excluded in (
+            (first, morning, ('白瓷杯', '赭石色工装外套'), ('紫色浮标', '纸鸢', '松绿色绒衣')),
+            (second, harbor, ('紫色浮标', '镜头后'), ('白瓷杯', '纸鸢', '赭石色工装外套', '松绿色绒衣')),
+            (third, evening, ('纸鸢', '松绿色绒衣'), ('紫色浮标', '白瓷杯', '赭石色工装外套')),
+        ):
+            self.assertIn(record, panel)
+            for word in details:
+                self.assertIn(word, panel)
+            for word in excluded:
+                self.assertNotIn(word, panel)
+
+    async def test_scenery_only_collage_uses_no_face_or_wardrobe(self):
+        details = ['旧船坞的紫色浮标在水面摇晃', '城南钟楼的铜钟落着一层霜', '果园的木篱笆上挂着一盏纸灯']
+        text = '。'.join(details) + '。'
+        await self.candidate(text, [f'{time}  事件：{detail}'
+                                   for time, detail in zip(('07:10', '13:05', '19:25'), details)])
+        with patch.object(self.editorial, 'world_cover_outfit', new=AsyncMock()) as outfit:
+            paths = await prepare_post_images(self.context, text, editorial=self.editorial, daily_album=True)
+        outfit.assert_not_awaited()
+        self.generate.assert_awaited_once()
+        request = self.generate.await_args
+        self.assertEqual(len(paths), 1)
+        self.assertIsNone(request.kwargs['reference'])
+        self.assertIn('第3格', request.args[1])
+        for detail in details:
+            self.assertIn(detail, request.args[1])
+
+    async def test_two_distinct_moments_allow_a_requested_collage_and_default_to_two_photos(self):
+        text = '清早我在花房剪了一束月季。晚上我坐在陶坊给白瓷杯上釉。'
+        await self.candidate(text, ['07:10  完成：在花房剪了一束月季', '19:15  完成：坐在陶坊给白瓷杯上釉'])
+        paths = await prepare_post_images(self.context, text, editorial=self.editorial, daily_album=True)
+        self.assertEqual(len(set(paths)), 2)
+        morning, evening = (request.args[1] for request in self.generate.await_args_list)
+        self.assertIn('月季', morning)
+        self.assertNotIn('白瓷杯', morning)
+        self.assertIn('白瓷杯', evening)
+        self.assertNotIn('月季', evening)
+
+        self.generate.reset_mock()
+        paths = await prepare_post_images(self.context, text, editorial=self.editorial, layout='collage')
+        self.generate.assert_awaited_once()
+        self.assertEqual(len(paths), 1)
+        first, second = self.generate.await_args.args[1].split('第2格', 1)
+        self.assertIn('月季', first)
+        self.assertIn('白瓷杯', second)
+        self.assertNotIn('第3格', second)
+
     async def test_rewriting_one_activity_does_not_fill_a_second_album_slot(self):
         text = '我坐在陶坊给白瓷杯画格纹。白瓷杯上的格纹总算画完了。'
         await self.candidate(text, [
@@ -219,10 +294,15 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
             '09:15  完成：坐在陶坊给白瓷杯画格纹',
             '16:20  完成：在花园修剪月季',
         ])
-        paths = await prepare_post_images(self.context, text, editorial=self.editorial, daily_album=True)
-        self.generate.assert_awaited_once()
-        self.assertEqual(len(paths), 1)
-        self.assertNotIn('月季', self.generate.await_args.args[1])
+        for layout in ('auto', 'collage'):
+            with self.subTest(layout=layout):
+                self.generate.reset_mock()
+                paths = await prepare_post_images(self.context, text, editorial=self.editorial,
+                                                  daily_album=True, layout=layout)
+                self.generate.assert_awaited_once()
+                self.assertEqual(len(paths), 1)
+                self.assertNotIn('月季', self.generate.await_args.args[1])
+                self.assertNotIn('第2格', self.generate.await_args.args[1])
 
     async def test_one_failed_album_image_preserves_the_other_without_retry(self):
         text = '我在陶坊给白瓷杯画格纹。晚上回钟楼给铜铃换红绳。'
@@ -346,7 +426,8 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
         url = 'https://example.invalid/my-cup.jpg'
         event = NS(message_str='配我发的这张图', get_messages=lambda: [Image.fromURL(url)])
         paths = await prepare_post_images(
-            self.context, text, event=event, editorial=self.editorial, require_supplied=True, daily_album=True)
+            self.context, text, event=event, editorial=self.editorial, require_supplied=True,
+            daily_album=True, layout='collage')
         self.assertEqual(paths, [url])
         self.generate.assert_not_awaited()
 
