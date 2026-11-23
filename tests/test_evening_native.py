@@ -180,11 +180,15 @@ class Diary(unittest.IsolatedAsyncioTestCase):
         self.now = dt.datetime.fromtimestamp(self.row()[0], TZ)
 
     async def test_persistent_evening_schedule_and_one_publication(self):
+        self.image_mock.return_value = ['morning-picture.jpg', 'evening-picture.jpg']
         await self.due(); first=self.row()[0]
         self.assertTrue(dt.time(21,30) <= self.now.time() < dt.time(22,30))
         await self.publisher._schedule_next(); self.assertEqual(self.row()[0],first)
         await self.publisher._run_task('2026-10-28'); await self.publisher._run_task('2026-10-28')
         self.assertEqual(len(self.outbound),1); self.assertEqual(self.row()[1],'published')
+        self.image_mock.assert_awaited_once()
+        self.assertTrue(self.image_mock.await_args.kwargs['daily_album'])
+        self.assertEqual(self.outbound[0]['images'], self.image_mock.return_value)
 
     async def test_old_unsent_schedule_migrates_and_terminal_states_stay(self):
         with sqlite3.connect(self.path) as db:

@@ -131,7 +131,7 @@ class DailyRandomPublisher:
                     if own_image:
                         images = [own_image]
                     else:
-                        images = await prepare_post_images(self.cfg.context, text, editorial=editorial)
+                        images = await prepare_post_images(self.cfg.context, text, editorial=editorial, daily_album=True)
                 except DiaryCancelled:
                     raise
                 except Exception:
