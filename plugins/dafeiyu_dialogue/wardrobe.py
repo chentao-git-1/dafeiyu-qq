@@ -1,4 +1,5 @@
 """A requested portrait follows the outfit the world confirms and a real QQ send."""
+import asyncio
 import copy
 from datetime import datetime, timedelta
 import hashlib
@@ -11,9 +12,14 @@ from .world_observation import SHANGHAI
 
 
 CLOTHES=re.compile(r"衣服|新衣|衣裳|穿搭|那[件套]|毛衣|卫衣|棉服|外套|穿的|换一身")
-CHANGE=re.compile(r"换|穿上|试穿")
-SHOW=re.compile(r"看看|看你|给我看|拍|照片|自拍|发.{0,3}图")
-CANCEL=re.compile(r"(?:别|不用|不要|取消|先不|不想看).{0,6}(?:拍|照片|发图|给我看)|(?:照片|自拍).{0,6}(?:算了|不用了|别发|取消)")
+CHANGE=re.compile(r"(?:换|穿上|试穿)(?!个?(?:角度|姿势|背景|位置|镜头|地方))"
+                  r"[^，。！？,!?\n]{0,16}?(?:衣服|衣裳|[新睡上外]衣|穿搭|毛衣|卫衣|棉服|外套|[裙裤]|[那这另][一件套身]|一身|一件|一套)"
+                  r"|(?:换好|换完)(?:衣服)?(?:了?[再就]|之后|以后|给我)")
+NO_CHANGE=re.compile(r"(?:不用|不必|不要|别|不想|先不|不)(?:再|特意)?(?:换|穿上|试穿)")
+SHOW=re.compile(r"看看|看你|看(?:一眼|一下)你|给我看|拍|照片|自拍|发.{0,3}图")
+CANCEL=re.compile(r"(?:别|不用|不要|先不)(?:再|继续|特意)?(?:给我)?(?:拍|自拍|发(?:那张|这张|张)?(?:图|照)|发给我(?:看)?|给我看)"
+                  r"|(?:取消|不想看)(?:之前|刚才|约好|答应|的|那张|这张|这次|穿搭|换装){0,5}(?:拍|照|图)"
+                  r"|(?:照片|自拍)[^，。！？,!?\n]{0,6}(?:算了|不用了|不用发|别发|取消)")
 AFTER_MEAL=re.compile(r"(?:吃完|吃好了|饭后|吃过饭|吃了饭|扒(?:完|几口)).{0,24}(?:再|就|换|拍|给你看)")
 LATER=re.compile(r"(?:等会|一会儿|晚点|稍后|待会|过会|明天|以后).{0,20}(?:换|拍|发.{0,4}图)|(?:换好|换完).{0,12}(?:拍|给你看)")
 SPOKEN_WEAR=re.compile(r"(?:我|身上|里面|里头|今天|裤子).{0,12}(?:穿着|穿的是|是|没换)|"
@@ -24,10 +30,15 @@ PAST_PURCHASE=re.compile(r"(?:没(?:有)?(?:买|购入)|什么也没买|啥也�
 PHOTO_DONE=re.compile(r"拍好(?:了|啦)|拍完(?:了|啦)|照片.{0,4}发(?:给你|出去|过去)了|(?:已经|刚刚?)(?:拍了|发了图)|图发了")
 OTHER_IMAGE=re.compile(r"海报|配图|帮.{0,6}画|画(?:一张|个|幅|一下)|漫画|设计图|参考图|截图|风景照|(?:[他她]|别人)的(?:照片|自拍)|看看(?:聊天|记录|地图|行程|消息)")
 RETAKE=re.compile(r"重新拍|再拍一(?:次|张)|重拍|补拍")
+CHASE_PHOTO=re.compile(r"(?:照片|自拍|那张图)呢")
+REMINDER=re.compile(r"(?:别|不要)(?:又)?忘(?:了|记)?[^。！？!?]{0,25}(?:拍|照|图|给我看)")
+SELF_PHOTO=re.compile(r"自拍|你的照片|拍(?:个|张|一张)你自己|(?:看看|想看|看一眼|看一下)你(?:自己)?"
+                      r"(?:[呀吧呗嘛呢啊哦啦\s]*(?:$|[，。！？,!?])|的?(?:脸|样子|穿搭|穿着)|"
+                      r"(?:现在|这会儿|今天|在|坐在|躺在|站在)[^，。！？,!?]{0,12}(?:样子|模样))")
 
 
 def photo_followup(text):
-    if not text or OTHER_IMAGE.search(text):
+    if not text or OTHER_IMAGE.search(text) or re.search(r"(?:那边|那里|现场|沿途)的照片",text):
         return False
     return bool(RETAKE.search(text) or re.search(
         r"(?:那张|刚才的|答应.{0,5}的)(?:穿搭照|照片|自拍|图)|"
@@ -41,8 +52,9 @@ def photo_intent(text):
         return None
     if not SHOW.search(text):
         return None
-    changing=bool(CLOTHES.search(text) and CHANGE.search(text))
-    if changing or re.search(r"看看你|看你.{0,10}(?:样子|穿搭|穿着)|你的(?:照片|自拍)|你.{0,12}(?:自拍|拍一张)|(?:自拍|拍个你)",text):
+    changing=any(CHANGE.search(part) and not NO_CHANGE.search(part)
+                 for part in re.split(r"[，。！？,!?\n]",text))
+    if changing or SELF_PHOTO.search(text):
         return "change" if changing else "current"
     return None
 
@@ -53,6 +65,9 @@ def portrait_prompt(prompt,worn):
     pieces=re.split(r"[，,。；;\n]+",str(prompt or ""))
     scene="，".join(p.strip() for p in pieces if p.strip() and not re.search(
         r"毛衣|卫衣|棉服|睡衣|外套|衬[衣衫]|(?:长|短|牛仔|白|黑|灰)裤|裙子|拉链|身穿|穿着|上衣|下装",p))
+    if not worn.get("look"):
+        return ("陈听澜的自然自拍，以脸部近景取景，衣着细节留在画面外。"
+                +re.sub(r"(?:全身|腿和脚|从头到脚)[^，。]*","",scene))[:1500]
     head="陈听澜这张照片里的完整穿着是"+worn["look"]+"。"
     return (head+scene)[:1500]
 
@@ -75,16 +90,19 @@ def option_ids(facts,human,changing,view):
     return [i for i in choices if i!=current] or choices
 
 
+def photo_request_id(event,scope):
+    message_id=str(getattr(getattr(event,"message_obj",None),"message_id","") or time.time_ns())
+    return hashlib.sha256(("\n".join(scope)+message_id).encode()).hexdigest()[:24]
+
+
 def new_offer(event,f,view):
     human=f["human"];facts=f["facts"]
     change=f["intent"]=="change"
     choices=option_ids(facts,human,change,view)
-    mid=str(getattr(getattr(event,"message_obj",None),"message_id","") or time.time_ns())
-    ident=hashlib.sha256(("\n".join(f["scope"])+mid).encode()).hexdigest()[:24]
     now=time.time();local=datetime.fromtimestamp(now,SHANGHAI)
     tomorrow=(local+timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
     start=tomorrow if "明天" in human else now
-    return {"id":ident,"created":now,"not_before":start,
+    return {"id":photo_request_id(event,f["scope"]),"created":now,"not_before":start,
             "expires":tomorrow if re.search(r"今天|今晚",human) and start==now else now+7*86400,
             "target":choices[0] if len(choices)==1 else "", "choices":choices,
             "initial":(view or {}).get("outfit",{}).get("id") or facts.get("worn_id",""),
@@ -107,15 +125,46 @@ def fresh_outfit(view):
     return outfit if outfit.get("id") and outfit.get("look") else {}
 
 
+def current_look(f):
+    outfit=(f.get("view") or {}).get("outfit") or {}
+    facts=f.get("facts") or {}
+    return {"look":outfit.get("look") or facts.get("穿着") or
+            facts.get("wardrobe",{}).get(facts.get("worn_id"),"")}
+
+
+async def recover_photo(plugin,event,fish,scope,row):
+    """Settle a reservation left by a previous runner without sending anything."""
+    if not row:
+        return row
+    active=plugin.active_portraits.get(scope)
+    if active is not None and active.get_extra("dafeiyu_outfit_photo_id")==row["id"]:
+        return row
+    if row["expires"]<=time.time():
+        settled=None
+    elif row["stage"]=="sending":
+        meta=plugin.context.get_registered_star("astrbot_plugin_dafeiyu_draw")
+        receipt=getattr(getattr(meta,"star_cls",None),"photo_delivered",None)
+        delivered=bool(receipt and await asyncio.to_thread(receipt,str(event.get_sender_id()),scope[0],row["id"]))
+        settled=dict(row,stage="sent" if delivered else "held")
+    else:
+        return row
+    if await fish.change_photo(event,scope,row,settled):
+        return settled
+    latest=fish.follow_snapshot(event)
+    return latest[1] if latest and latest[0]==scope else None
+
+
 def due_photo(row,view):
     if not row or row["stage"] in ("held","sending","sent","cancelled") or not row["not_before"]<=time.time()<row["expires"]:
         return ""
     if row["wait"]=="meal":
         return ""
+    if not row["change"]:
+        return "draw"
     worn=fresh_outfit(view)
     if not worn:
         return ""
-    if row["target"]==worn["id"] or not row["change"] and worn["id"] in row["choices"]:
+    if row["target"]==worn["id"]:
         return "draw"
     if row["stage"]=="changing":
         return ""
@@ -174,6 +223,7 @@ async def prepare_photo(plugin,event,req,f):
     row=f.get("pending")
     if row and row["expires"]<=time.time():
         await swap(plugin,event,f,None)
+        row=f.get("pending")
     if not f.get("intent") and not f.get("resume"):
         return None
     view=f["view"]
@@ -183,13 +233,14 @@ async def prepare_photo(plugin,event,req,f):
         if previous:
             same_outfit=(previous["change"]==f["offer"]["change"] and
                          (previous["choices"]==f["offer"]["choices"] or previous["target"] in f["offer"]["choices"]))
-            if (previous["id"]==f["offer"]["id"] or previous["stage"]=="sending" or
+            if (previous["id"]==f["offer"]["id"] or
                     previous["stage"]=="changing" and same_outfit):
                 f["offer"]=copy.deepcopy(previous)
-    elif row and row["stage"] in ("held","sent","cancelled") and RETAKE.search(f["human"]):
+    elif row and not f["auto"] and (row["stage"]=="held" and CHASE_PHOTO.search(f["human"]) or
+            row["stage"] in ("held","sent","cancelled") and RETAKE.search(f["human"])):
         f["offer"]=new_offer(event,f,view)
-        if row["target"]:
-            f["offer"].update(target=row["target"],choices=[row["target"]],change=row["change"])
+        if row["change"]:
+            f["offer"].update(target=row["target"],choices=[row["target"]] if row["target"] else row["choices"],change=True)
     else:
         await refresh_meal(plugin,event,f,view)
         f["offer"]=copy.deepcopy(f.get("pending"))
@@ -273,11 +324,9 @@ async def settle_choice(plugin,event,f,text):
         return
     raw=(event.get_extra(EXT) or {}).get("photo") or {}
     op=raw.get("op")
-    if op=="cancel" and not f.get("auto"):
-        await swap(plugin,event,f,dict(row,stage="cancelled"))
-        return
-    if op=="cancel" and f.get("pending"):
-        await swap(plugin,event,f,dict(row,stage="cancelled"))
+    if op=="cancel":
+        if (not f.get("auto") or f.get("pending")) and not REMINDER.search(f["human"]):
+            await swap(plugin,event,f,dict(row,stage="cancelled"))
         return
     after=raw.get("after") if op=="defer" else None
     if after not in ("meal","later","ready"):
@@ -306,37 +355,76 @@ async def guard_draw(plugin,event,*,sending=False):
         return None,"这次照片已取消。"
     if not f or not (f.get("intent") or f.get("resume")):
         return None, ""
+    scope=f["scope"]
+    fish=fish_for(plugin,event,scope)
+    if not fish:
+        return None,"照片对应的会话绑定已变更。"
+    active=plugin.active_portraits.get(scope)
+    if sending and active is not event:
+        return None,"这次拍照已经结束。"
+    if not sending and active is not None:
+        return None,"已有一张照片正在处理。"
+    if f.get("direct_photo"):
+        if not sending:
+            event.set_extra("dafeiyu_outfit_photo_id",photo_request_id(event,scope))
+            plugin.active_portraits[scope]=event
+        return current_look(f),""
     row=f.get("offer")
     if not row:
         return None,"这次照片的约定已失效。"
-    fish=fish_for(plugin,event,f["scope"])
-    snap=fish.follow_snapshot(event) if fish else None
+    snap=fish.follow_snapshot(event)
     if not snap or snap[1]!=f.get("pending"):
         return None,"这次照片的约定已经更新，旧请求没有发送。"
-    view=await current_route(plugin.context,event,f["scope"],details=True)
+    if row["stage"] in ("sent","cancelled","held"):
+        return None,{"sent":"这张约定的照片已经发过了。","cancelled":"这张照片之前已取消。","held":"上次拍照没有确认送达。"}[row["stage"]]
+    if row["stage"]=="sending" and not sending:
+        return None,"这张照片正在处理中。"
+    if time.time()>=row["expires"]:
+        return None,"之前的拍照约定已过期。"
+    view=await current_route(plugin.context,event,scope,details=True) if row["change"] else f.get("view")
     f["view"]=view
-    worn=fresh_outfit(view)
+    worn=fresh_outfit(view) if row["change"] else current_look(f)
     if sending:
         latest=fish.follow_snapshot(event)
-        if (not latest or latest[1]!=row or row["stage"]!="sending" or not worn
-                or worn["id"]!=row["target"] or time.time()>=row["expires"]):
-            return None,"发送前未能确认原约定的穿着，本图没有发送。"
+        if not latest or latest[1]!=row or row["stage"]!="sending" or time.time()>=row["expires"]:
+            return None,"原来的照片约定已更新或过期，本图没有发送。"
+        if row["change"] and (not worn or worn["id"]!=row["target"]):
+            return None,"发送前未能确认约好的那套衣服，本图没有发送。"
         return worn,""
     if due_photo(row,view)!="draw":
-        return None,"本轮还没核实穿上约定的衣服，请按实际换装或等待进度回答。"
-    reserved=dict(row,stage="sending",target=worn["id"])
-    if not await swap(plugin,event,f,reserved):
+        if row["wait"]=="meal" or time.time()<row["not_before"]:
+            return None,"还没到约好的拍照时间。"
+        if not worn:
+            return None,"暂时读不到鱼世界的穿着，换装照还无法核实。"
+        return None,"还没核实穿上约好的那套衣服。"
+    if plugin.active_portraits.get(scope) is not None:
+        return None,"已有一张照片正在处理。"
+    reserved=dict(row,stage="sending",target=worn["id"] if row["change"] else row["target"])
+    event.set_extra("dafeiyu_outfit_photo_id",reserved["id"])
+    plugin.active_portraits[scope]=event
+    saved=False
+    try:
+        saved=await swap(plugin,event,f,reserved)
+    finally:
+        if not saved and plugin.active_portraits.get(scope) is event:
+            plugin.active_portraits.pop(scope)
+    if not saved:
         return None,"同一张照片已在处理或约定已更新。"
     return worn,""
 
 
 async def finish_draw(plugin,event,success):
     f=event.get_extra(FLOW)
-    if not f or not f.get("offer") or f["offer"]["stage"]!="sending":
+    if not f or plugin.active_portraits.get(f["scope"]) is not event:
         return
-    row=f["offer"]
+    row=f.get("offer")
     if success:f["image_done"]=True
-    await swap(plugin,event,f,dict(row,stage="sent" if success else "held"))
+    try:
+        if row and row["stage"]=="sending":
+            await swap(plugin,event,f,dict(row,stage="sent" if success else "held"))
+    finally:
+        if plugin.active_portraits.get(f["scope"]) is event:
+            plugin.active_portraits.pop(f["scope"])
 
 
 def outfit_wording(text,f,event):

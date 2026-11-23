@@ -62,6 +62,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         self._index = None
         self.provider_contracts=ProviderContracts()
         self.world_observation = WorldObservation()
+        self.active_portraits = {}
         self._growth=None;self.growth_task=None;self.growth_lock=asyncio.Lock()
         self.learning_ticks=Counter();self.learning_seen=deque(maxlen=512);self.learning_state_inflight=set()
         self.deferred_learning=DeferredLearning()
@@ -838,6 +839,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             'public_inspiration_in_primary_generation':True,
             'public_inspiration_extra_model_calls':0,
             'story_photo_narration':True,
+            'active_portraits':len(self.active_portraits),
             'self_details_on_demand':True,
             'project_reflections_require_query':True,
             'initial_interests_optional':True,

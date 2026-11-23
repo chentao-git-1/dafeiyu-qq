@@ -4,10 +4,12 @@ import asyncio
 import io
 import os
 import re
+import sqlite3
 import sys
 import time
 import uuid
 from copy import copy
+from contextlib import closing
 from pathlib import Path
 
 from PIL import Image as PillowImage
@@ -43,6 +45,18 @@ class DafeiyuDraw(Star):
 
     def forget_works(self, actor, origin):
         return self.works.forget(actor,origin)
+
+    def photo_delivered(self, actor, origin, request_id):
+        """Only a recorded QQ send for this exact promise counts after a restart."""
+        if not re.fullmatch(r"[0-9a-f]{24}",request_id) or not self.works.path.is_file():
+            return False
+        try:
+            with closing(sqlite3.connect(self.works.path.as_uri()+"?mode=ro",uri=True,timeout=2)) as db:
+                return db.execute("SELECT 1 FROM works WHERE actor=? AND origin=? AND artifact GLOB ? LIMIT 1",
+                                  (actor,origin,"drawing-"+request_id+"-*")).fetchone() is not None
+        except sqlite3.Error as error:
+            logger.warning("Photo delivery history unavailable (%s)",type(error).__name__)
+            return False
 
     def _allowed(self, event):
         if event.get_platform_name() != "aiocqhttp":
@@ -183,6 +197,11 @@ class DafeiyuDraw(Star):
         try:
             async with self.lock:
                 event.set_extra("dafeiyu_draw_attempted", True)
+                photo_id=event.get_extra("dafeiyu_outfit_photo_id","") or ""
+                tag=photo_id+"-" if re.fullmatch(r"[0-9a-f]{24}",photo_id) else ""
+                if tag and await asyncio.to_thread(self.photo_delivered,str(event.get_sender_id()),event.unified_msg_origin,photo_id):
+                    event.set_extra("dafeiyu_prior_photo_sent",True)
+                    return "这条请求的照片已经发过了。"
                 self.last[event.unified_msg_origin] = now
                 while len(self.last) > 128:
                     del self.last[next(iter(self.last))]
@@ -197,7 +216,7 @@ class DafeiyuDraw(Star):
                     reference=STORY_REFERENCE if presentation == 'story_photo' else None,
                 )
                 phase = 'image_ready'
-                path = self.image_dir / ("drawing-" + uuid.uuid4().hex + suffix)
+                path = self.image_dir / ("drawing-" + tag + uuid.uuid4().hex + suffix)
                 descriptor = os.open(
                     str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
                 )
@@ -276,7 +295,7 @@ class DafeiyuDraw(Star):
         record_action(event, 'draw', 'completed' if outcome == '图片已发送。' else 'not_confirmed', result=outcome)
 
     @filter.llm_tool(name="dafeiyu_draw")
-    async def draw_tool(self, event: AstrMessageEvent, prompt: str,presentation: str='') -> str:
+    async def draw_tool(self, event: AstrMessageEvent, prompt: str='',presentation: str='') -> str:
         """用户要求画图、自拍、头像、壁纸等图片，或继续修改上一张时，生成并发送真实图片。
 
         可以把用户的画面要求整理成完整描述，不要仅用文字或表情包代替画图。
@@ -290,7 +309,7 @@ class DafeiyuDraw(Star):
         这是同步等待实际图片结果的工具；先调用，不先说固定的等待台词或假装任务已经开始。
 
         Args:
-            prompt(string): 画面描述，2～1500 字，包含主体、场景、风格等要求。
+            prompt(string): 画面描述，2～1500 字。已明确要听澜自拍时可留空。
             presentation(string): story_photo是听澜故事中的照片；artwork是画作或设计图；留空时新图默认story_photo，连续修改继承上一张。
         """
         if not self._allowed(event):
@@ -324,6 +343,10 @@ class DafeiyuDraw(Star):
                     intent["previous_prompt"], event.message_str or "", prompt
                 )
             if wardrobe:
+                if not (prompt or "").strip():
+                    view=flow.get("view") or {}
+                    place=(flow.get("facts") or {}).get("你在") or view.get("text")
+                    prompt="陈听澜在"+str(place)[:100]+"的日常自拍" if place else "陈听澜的日常自拍"
                 prompt=controller.verified_portrait_prompt(prompt,wardrobe)
                 presentation="story_photo"
             result = await self._draw(event, prompt,presentation or 'story_photo')
@@ -334,7 +357,8 @@ class DafeiyuDraw(Star):
         finally:
             if controller is not None and wardrobe:
                 try:
-                    await controller.photo_after_draw(event,(event.get_extra("dafeiyu_image_result") or {}).get("delivery")=="sent")
+                    sent=(event.get_extra("dafeiyu_image_result") or {}).get("delivery")=="sent"
+                    await controller.photo_after_draw(event,sent or event.get_extra("dafeiyu_prior_photo_sent",False))
                 except Exception as error:
                     logger.warning("Photo continuation storage unavailable (%s)", type(error).__name__)
             event.set_extra("dafeiyu_draw_outcome", result)

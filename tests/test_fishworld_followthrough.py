@@ -122,7 +122,7 @@ class Fish(Followthrough):
 
 def app(directory):
     w=World();fish=Fish(directory);fish.session=w
-    s=NS(config={},review_stats=Counter(),feature=lambda _:False,model_verification_enabled=lambda:False,
+    s=NS(config={},active_portraits={},review_stats=Counter(),feature=lambda _:False,model_verification_enabled=lambda:False,
          world_observation=WorldObservation(),identity=lambda e:NS(origin=e.unified_msg_origin,actor='11',is_group=False,observed_at=time.time()),
          catalog=lambda **kw:NS(read=lambda *a:NS(items=[])),own_activity=AsyncMock(return_value=(None,None)),
          conversation_works=AsyncMock(return_value=[]),own_thoughts=AsyncMock(return_value={}),prepare_public_sharing=AsyncMock(),
@@ -157,7 +157,8 @@ async def call(s,e,req,n,args):
 
 def draw_fixture(s,folder):
     a=NS(context=s.context,config={'enabled':True,'api_key':'fixture','cooldown_seconds':0},image_dir=folder,
-         works=NS(begin=lambda *a:1,record=lambda *a:None),_allowed=lambda e:True,_intent=lambda e:{'mode':'new'},
+         works=NS(begin=lambda *a:1,record=lambda *a:None),photo_delivered=lambda *a:False,
+         _allowed=lambda e:True,_intent=lambda e:{'mode':'new'},
          intent_context=NS(remember=lambda *a:None),_prune=lambda:None,lock=asyncio.Lock(),last={},
          _error_context=lambda:NS(remember=lambda *a:None))
     a._draw=MethodType(drawing.DafeiyuDraw._draw,a)
@@ -207,8 +208,9 @@ async def regression(folder):
         again,_=await prepare(s,w,'自动',True);assert not again.get_extra(FLOW)['resume'] and len(sent_prompts)==1
     e,r=await prepare(s,w,'看看你在家的样子');worn,why=await guard_draw(s,e);assert worn and not why
     duplicate=await guard_draw(s,e);assert not duplicate[0]
-    cancel,_=await prepare(s,w,'不用拍了');assert fish.store.data['outfit_photo']['stage']=='cancelled'
+    cancel,_=await prepare(s,w,'不用拍了');assert fish.store.data['outfit_photo']['stage']=='sent'
     assert (await guard_draw(s,e,sending=True))[1] and (await guard_draw(s,cancel))[1]
+    await finish_draw(s,e,False)
     unrelated,_=await prepare(s,w,'帮我画一张海报给我看看');assert not unrelated.get_extra(FLOW)['resume'] and not unrelated.get_extra(FLOW)['intent']
     assert await guard_draw(s,unrelated)==(None,'')
     retry,_=await prepare(s,w,'那张照片重新拍一次');assert retry.get_extra(FLOW)['resume']
@@ -285,6 +287,112 @@ async def regression(folder):
     after,r=await prepare(s,w,'自动',True);assert r._dafeiyu_outfit_choice==('change',(GOLD,)),after.get_extra(FLOW)['pending']
     print('QA passed: purchase/repair/wear contradictions; durable meal -> change -> verified photo; no premature or duplicate image; cancellation; optional QQ/manual; push/closing boundaries',flush=True)
 
+async def portrait_regression(folder):
+    folder.mkdir()
+    s,fish,w=app(folder)
+    images=folder/'images'
+    images.mkdir()
+    drawer=draw_fixture(s,images)
+    drawer.works=drawing.WorkHistory(images)
+    drawer.photo_delivered=MethodType(drawing.DafeiyuDraw.photo_delivered,drawer)
+    stars={'astrbot_plugin_fishworld':fish,'astrbot_plugin_dafeiyu_draw':drawer,'dafeiyu_dialogue':s}
+    s.context.get_registered_star=lambda name:NS(activated=True,star_cls=stars.get(name,s))
+    draw=MethodType(drawing.DafeiyuDraw.draw_tool,drawer)
+    def reload_with(row):
+        fish.store.data['outfit_photo']=row
+        fish._save()
+        fish.store=StateStore(fish.path,time.time())
+        assert not s.active_portraits
+
+    requested,_=await prepare(s,w,'换上姜黄粗针毛衣再拍给我看')
+    legacy=dict(requested.get_extra(FLOW)['offer'],stage='sending',change=False,initial=GOLD)
+    reload_with(legacy)
+    generated=AsyncMock(return_value=(b'fixture pixels','.jpg',(12,12)))
+    with patch.object(drawing,'generate',generated):
+        event,req=await prepare(s,w,'好吧，我想看看你')
+        assert event.get_extra(FLOW)['direct_photo'] and req._dafeiyu_outfit_choice is None
+        assert fish.store.data['outfit_photo']==dict(legacy,stage='held')
+        assert json.loads(await draw(event,presentation='story_photo'))['delivery']=='sent'
+        assert LOOKS[GREEN] in generated.await_args.args[1] and len(event.sent)==1
+        await draw(event,presentation='story_photo')
+        generated.assert_awaited_once()
+        assert not s.active_portraits
+        replay,_=await prepare(s,w,'好吧，我想看看你')
+        replay.message_obj.message_id=event.message_obj.message_id
+        assert '已经发过' in await draw(replay) and not replay.sent
+        generated.assert_awaited_once()
+
+        with patch.object(followthrough,'current_route',AsyncMock(return_value=None)) as lookup:
+            event,_=await prepare(s,w,'想看看你')
+            assert json.loads(await draw(event,'以前的姜黄毛衣，全身入镜，窗边微笑'))['delivery']=='sent'
+            prompt=generated.await_args.args[1]
+            assert '脸部近景' in prompt and '姜黄' not in prompt and '全身入镜' not in prompt
+            lookup.assert_awaited_once()
+            event,_=await prepare(s,w,'给我一张你的自拍')
+            await followthrough.tool_result(s,event,toolset(w).get_tool('world_now'),{},result(w.now()))
+            assert json.loads(await draw(event))['delivery']=='sent' and LOOKS[GREEN] in generated.await_args.args[1]
+
+        held=fish.store.data['outfit_photo']
+        again,_=await prepare(s,w,'已经提了，照片呢照片呢？')
+        assert again.get_extra(FLOW)['direct_photo'] and fish.store.data['outfit_photo']==held
+        food,_=await prepare(s,w,'看看你那个西红柿炒蛋的样子')
+        assert not food.get_extra(FLOW)['direct_photo']
+        unchanged,_=await prepare(s,w,'不用换衣服，想看看你')
+        assert unchanged.get_extra(FLOW)['direct_photo'] and not unchanged.get_extra(FLOW).get('cancelled')
+
+        promise,_=await prepare(s,w,'换那件再拍给我看')
+        assert promise.get_extra(FLOW)['intent']=='change'
+        await final(s,promise,'吃完饭我就换好拍给你。',{'photo':{'op':'defer','after':'meal','outfit':GOLD}})
+        saved=fish.store.data['outfit_photo']
+        assert saved['target']==GOLD and saved['wait']=='meal'
+        reminder,_=await prepare(s,w,'别忘了给我看看那边的照片')
+        assert not reminder.get_extra(FLOW).get('cancelled') and fish.store.data['outfit_photo']==saved
+        reminder,_=await prepare(s,w,'不要忘记拍照')
+        assert not reminder.get_extra(FLOW).get('cancelled') and fish.store.data['outfit_photo']==saved
+        reminder,_=await prepare(s,w,'那张照片呢，别忘了拍')
+        await final(s,reminder,'记着呢。',{'photo':{'op':'cancel'}})
+        assert fish.store.data['outfit_photo']==saved
+
+        separate,_=await prepare(s,w,'我想看看你')
+        assert json.loads(await draw(separate))['delivery']=='sent' and fish.store.data['outfit_photo']==saved
+        active,_=await prepare(s,w,'看看你在家的样子')
+        assert (await guard_draw(s,active))[0]
+        await prepare(s,w,'不用拍了')
+        assert (await guard_draw(s,active,sending=True))[1] and fish.store.data['outfit_photo']==saved
+        await finish_draw(s,active,False)
+        await prepare(s,w,'那张照片不用发了')
+        assert fish.store.data['outfit_photo']['stage']=='cancelled'
+
+        strict,req=await prepare(s,w,'换上姜黄粗针毛衣再拍一张')
+        before=generated.await_count
+        assert '还没核实' in await draw(strict,'站在窗边') and generated.await_count==before
+        await call(s,strict,req,'world_update',{'outfit':GOLD})
+        w.worn=GOLD
+        ready,req=await prepare(s,w,'照片呢')
+        assert json.loads(await draw(ready,'站在窗边','story_photo'))['delivery']=='sent'
+        sent=fish.store.data['outfit_photo']
+        assert sent['stage']=='sent' and drawer.photo_delivered('11',Event.unified_msg_origin,sent['id'])
+        assert not drawer.photo_delivered('other',Event.unified_msg_origin,sent['id'])
+        assert not drawer.photo_delivered('11','different-chat',sent['id'])
+        # Kill after QQ confirms but before the reservation is settled. Even a pruned JPEG has its exact receipt.
+        next(images.glob('drawing-'+sent['id']+'-*.jpg')).unlink()
+        reload_with(dict(sent,stage='sending'))
+        event,_=await prepare(s,w,'照片呢')
+        before=generated.await_count
+        assert fish.store.data['outfit_photo']['stage']=='sent'
+        assert '已经发过' in await draw(event) and generated.await_count==before and not event.sent
+        # Another request for the same clothes has no receipt. Only a new human follow-up may retry it.
+        reload_with(dict(sent,stage='sending',id='a'*24))
+        tick,req=await prepare(s,w,'自动',True)
+        assert fish.store.data['outfit_photo']['stage']=='held' and not tick.get_extra(FLOW)['resume']
+        report,req=await prepare(s,w,'照片发了吗')
+        assert '没有确认送达' in await draw(report) and not report.sent
+        retry,req=await prepare(s,w,'那张照片呢')
+        assert json.loads(await draw(retry,'窗边'))['delivery']=='sent' and len(retry.sent)==1
+        assert fish.store.data['outfit_photo']['id']!='a'*24
+    print('QA passed: fresh selfies, no-outfit fallback, missing prompt, reminders, scoped cancellation, exact restart receipts',flush=True)
+
+
 async def qq_transport(folder):
     s,fish,world=app(folder)
     transport=AsyncMock(return_value=True)
@@ -342,6 +450,7 @@ async def qq_transport(folder):
 async def main():
     with tempfile.TemporaryDirectory(prefix='fishworld-example-') as root:
         await regression(Path(root))
+        await portrait_regression(Path(root)/'portraits')
         await qq_transport(Path(root))
 
 
