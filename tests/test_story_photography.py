@@ -188,6 +188,136 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
             'world_life': {'date': '2026-01-16', 'source': 'world_history', 'timeline': timeline},
         })
 
+    async def test_first_panel_keeps_adjacent_pose_without_borrowing_another_persons_action(self):
+        text = ('上午我在溪边捡了会儿石头，蹲在那儿挑了半天。路过的游客撑起一把红伞。'
+                '后来我在厨房折纸飞机。晚上在陶坊补好了白瓷杯。')
+        await self.candidate(text, [
+            '08:30  在溪边捡石头：溪边的石头都被水磨圆了',
+            '13:40  完成：在厨房冲洗锅柄',
+            '19:10  完成：在陶坊补好了白瓷杯',
+        ])
+        await prepare_post_images(self.context, text, editorial=self.editorial, layout='collage')
+        self.generate.assert_awaited_once()
+        prompt = self.generate.await_args.args[1]
+        first, last = prompt.split('第2格', 1)
+        self.assertIn('08:30', first)
+        self.assertIn('蹲在那儿挑了半天', first)
+        self.assertNotIn('白瓷杯', first)
+        self.assertIn('19:10', last)
+        self.assertNotIn('蹲在那儿', last)
+        for unsupported in ('红伞', '纸飞机', '锅柄', '第3格'):
+            self.assertNotIn(unsupported, prompt)
+
+    async def test_same_setting_or_object_does_not_substitute_for_actor_and_action(self):
+        for text, row in [
+            ('今晚在厨房折纸飞机。', '完成：在厨房冲洗锅柄'),
+            ('我在厨房敲碎白瓷杯。', '完成：在厨房冲洗白瓷杯'),
+            ('店员在厨房冲洗锅柄。', '完成：在厨房冲洗锅柄'),
+            ('我没有冲洗锅柄。', '完成：在厨房冲洗锅柄'),
+        ]:
+            with self.subTest(text=text):
+                await self.candidate(text, ['18:10  ' + row])
+                with self.assertRaises(ValueError):
+                    await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.generate.assert_not_awaited()
+        text = '我在厨房慢慢冲洗锅柄。'
+        await self.candidate(text, ['18:10  完成：在厨房冲洗锅柄'])
+        await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.generate.assert_awaited_once()
+        self.assertIn('慢慢冲洗锅柄', self.generate.await_args.args[1])
+        self.assertEqual(self.generate.await_args.kwargs['reference'], self.sheet)
+
+    async def test_looking_while_holding_a_cup_and_watching_a_bystander_have_different_subjects(self):
+        text = '我在窗边捧着杯子看着水面。'
+        await self.candidate(text, ['08:10  完成：在窗边捧着杯子看着水面'])
+        await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.assertEqual(self.generate.await_args.kwargs['reference'], self.sheet)
+        text = '我看见店员在厨房冲洗锅柄。'
+        await self.candidate(text, ['16:20  事件：店员在厨房冲洗锅柄'])
+        await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.assertIsNone(self.generate.await_args.kwargs['reference'])
+        self.assertIn('店员在厨房冲洗锅柄', self.generate.await_args.args[1])
+
+    async def test_camera_request_selects_the_named_moment_and_honors_only_an_explicit_costume_change(self):
+        text = '早上在钟楼修好铜铃。晚上回家喝姜汤，辣得额头冒汗。'
+        await self.candidate(text, ['08:00  换了衣服：灰蓝色工装', '09:05  完成：在钟楼修好铜铃',
+                                    '17:00  换了衣服：深绿色绒衣', '17:20  完成：回家喝姜汤'])
+        for brief, expected, excluded in [
+            ('从侧面画她喝姜汤', '深绿色绒衣', None),
+            ('从侧面画她喝姜汤，把衣服换成明黄色雨衣', '明黄色雨衣', '深绿色绒衣'),
+        ]:
+            with self.subTest(brief=brief):
+                self.generate.reset_mock()
+                paths = await prepare_post_images(self.context, text, image_prompt=brief,
+                                                  editorial=self.editorial)
+                self.assertEqual(len(paths), 1)
+                self.generate.assert_awaited_once()
+                request = self.generate.await_args
+                self.assertEqual(request.kwargs['reference'], self.sheet)
+                prompt = request.args[1]
+                for detail in ('17:20', '姜汤', '侧面', expected):
+                    self.assertIn(detail, prompt)
+                for detail in ('铜铃', '灰蓝色工装', text):
+                    self.assertNotIn(detail, prompt)
+                if excluded:
+                    self.assertNotIn(excluded, prompt)
+
+        self.generate.reset_mock()
+        await prepare_post_images(self.context, text, image_prompt='从侧面拍', layout='collage',
+                                  editorial=self.editorial)
+        self.generate.assert_awaited_once()
+        prompt = self.generate.await_args.args[1]
+        self.assertIn('侧面', prompt)
+        first, second = prompt.split('第2格', 1)
+        self.assertIn('灰蓝色工装', first)
+        self.assertNotIn('深绿色绒衣', first)
+        self.assertIn('深绿色绒衣', second)
+        self.assertNotIn('灰蓝色工装', second)
+
+    async def test_camera_request_for_drinking_uses_the_completed_moment_and_its_actual_subject(self):
+        text = ('清早我在花房剪了一束月季。晚上煮了碗米汤，米汤暖暖的，喝完额头冒汗。'
+                '后来我看见摊主在集市数铜币。')
+        await self.candidate(text, [
+            '08:10  完成：在花房剪了一束月季',
+            '18:00  换了衣服：烟灰色工作衫',
+            '18:40  开始：煮一碗米汤喝',
+            '18:45  换了衣服：靛蓝色棉衣',
+            '18:50  煮一碗米汤喝：米汤暖暖的，喝完额头冒汗',
+            '19:40  事件：摊主在集市数铜币',
+        ])
+        await prepare_post_images(self.context, text, editorial=self.editorial, image_prompt='从侧面画她喝米汤')
+        self.generate.assert_awaited_once()
+        request = self.generate.await_args
+        self.assertEqual(request.kwargs['reference'], self.sheet)
+        for detail in ('18:50', '侧面', '喝完额头冒汗', '靛蓝色棉衣'):
+            self.assertIn(detail, request.args[1])
+        for unrelated in ('烟灰色工作衫', '铜币', '月季'):
+            self.assertNotIn(unrelated, request.args[1])
+
+        self.generate.reset_mock()
+        await prepare_post_images(self.context, text, editorial=self.editorial, image_prompt='从侧面拍摊主数铜币')
+        self.generate.assert_awaited_once()
+        request = self.generate.await_args
+        self.assertIsNone(request.kwargs['reference'])
+        self.assertIn('19:40', request.args[1])
+        self.assertIn('铜币', request.args[1])
+        self.assertNotIn('靛蓝色棉衣', request.args[1])
+        self.assertNotIn('米汤', request.args[1])
+
+    async def test_named_resident_wins_over_an_earlier_bystander_doing_the_same_action(self):
+        text = '上午我看见摊主在喝米汤。晚上我在家喝米汤。'
+        await self.candidate(text, ['09:10  事件：摊主在喝米汤',
+                                    '18:20  换了衣服：金棕色毛衣', '18:50  完成：在家喝米汤'])
+        await prepare_post_images(self.context, text, editorial=self.editorial,
+                                  image_prompt='从侧面画听澜本人喝米汤')
+        self.generate.assert_awaited_once()
+        request = self.generate.await_args
+        self.assertEqual(request.kwargs['reference'], self.sheet)
+        for detail in ('18:50', '金棕色毛衣', '喝米汤'):
+            self.assertIn(detail, request.args[1])
+        self.assertNotIn('摊主', request.args[1])
+        self.assertNotIn('09:10', request.args[1])
+
     async def test_separate_layout_keeps_two_individual_scenes_in_time_order(self):
         text = '晚上回家补好了纸鸢的竹骨。下午到钟楼给铜铃换了红绳。上午在陶坊给白瓷杯画了一圈波纹。'
         await self.candidate(text, [
@@ -419,6 +549,8 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(paths), 1)
         self.assertIn(brief, self.generate.await_args.args[1])
         self.assertIsNone(self.generate.await_args.kwargs['reference'])
+        self.assertNotIn('白瓷杯', self.generate.await_args.args[1])
+        self.assertNotIn('铜铃', self.generate.await_args.args[1])
 
     async def test_attached_photo_takes_precedence_over_the_diary(self):
         text = '我坐在陶坊里给白瓷杯画了一圈波纹。'
@@ -427,7 +559,7 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
         event = NS(message_str='配我发的这张图', get_messages=lambda: [Image.fromURL(url)])
         paths = await prepare_post_images(
             self.context, text, event=event, editorial=self.editorial, require_supplied=True,
-            daily_album=True, layout='collage')
+            daily_album=True, layout='collage', image_prompt='从侧面画她给白瓷杯画花纹')
         self.assertEqual(paths, [url])
         self.generate.assert_not_awaited()
 

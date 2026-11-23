@@ -84,6 +84,34 @@ class Native(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(images.await_args.kwargs['layout'], layout)
                 obj.service.publish_post.assert_awaited_once()
 
+    async def test_owner_can_direct_the_camera_without_a_special_image_keyword(self):
+        obj = self.publisher()
+        words = '从侧面画她喝姜汤'
+        request = event('发今天的鱼世界日记，' + words)
+        with patch.object(q, 'prepare_post_images', new=AsyncMock(return_value=['picture'])) as images:
+            await obj.dafeiyu_qzone_publish(request, image_prompt=words)
+        images.assert_awaited_once()
+        self.assertEqual(images.await_args.args[4], words)
+        self.assertNotIn(words, obj.service.publish_post.await_args.kwargs['text'])
+
+    async def test_final_image_brief_preserves_quoted_directions_and_excludes_denied_private_details(self):
+        for wording, suggested in [
+            ('从侧面画她喝姜汤，不要把我的私聊画面是蓝色门牌这件事画进去', '从侧面画她喝姜汤，画上蓝色门牌'),
+            ('画面是“从侧面画她喝姜汤”', ''),
+        ]:
+            with self.subTest(wording=wording):
+                obj = self.publisher()
+                drawing = NS(generate_for_qzone=AsyncMock(return_value='generated-picture'))
+                obj.context.get_registered_star = lambda name: NS(activated=True, star_cls=drawing)
+                await obj.dafeiyu_qzone_publish(event('发今天的鱼世界日记，' + wording),
+                                               image_prompt=suggested)
+                drawing.generate_for_qzone.assert_awaited_once()
+                prompt = drawing.generate_for_qzone.await_args.args[0]
+                self.assertIn('侧面', prompt)
+                self.assertIn('喝姜汤', prompt)
+                self.assertNotIn('蓝色门牌', prompt)
+                self.assertNotIn('蓝色门牌', obj.service.publish_post.await_args.kwargs['text'])
+
     async def test_explicit_body_remains_verbatim_and_does_not_ask_again(self):
         obj=self.publisher();e=event('正文：今天的风很舒服，原文发空间。')
         with patch.object(q,'prepare_post_images',new=AsyncMock(return_value=[])):

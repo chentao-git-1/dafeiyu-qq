@@ -48,6 +48,48 @@ def layout_request(text):
     return layout, ''.join(material)
 
 
+CAMERA = re.compile(r'(?:从|以|用|换成|改用)?(?:正面|侧后方|侧后|侧面|背面|背后|侧脸|侧身|上方|低机位|高机位|'
+                    r'侧拍|侧视|俯拍|仰拍|平视|俯视|仰视|特写|近景|中景|远景|广角|第一人称|'
+                    r'拉近|推近|拉远|推远)'
+                    r'(?:的)?(?:角度|方向|机位|视角|镜头)?')
+COSTUME = re.compile(r'(?:把|将)?(?:她的|听澜的)?(?:衣服|服装|衣着|穿搭|造型)(?:改为|改成|换成|换为)|'
+                     r'(?:让她|给她|请她|让听澜|给听澜)(?:改穿|换上|穿上|穿)|(?:改穿|换上)|'
+                     r'(?:换成|改成)(?=[^，,。；;]{0,16}(?:衣|裙|衫|外套|裤|夹克|背心|制服|西装|睡袍))')
+
+
+def requested_image_direction(text):
+    """Extract instructions for this image from the owner's actual message."""
+    def visual_quote(match):
+        label = r'(?:画面|配图|镜头|构图|场景)(?:要求)?(?:是|为|要|用|按|[：:])\s*$'
+        return match[0][1:-1] if re.search(label, text[:match.start()]) else ''
+
+    material = re.sub(QUOTES.pattern + r"|‘[^’]*’", visual_quote, text)
+    while True:
+        cleaned = re.sub(r'（[^（）]*(?:）|$)|\([^()]*(?:\)|$)', '', material)
+        if cleaned == material:
+            break
+        material = cleaned
+    chosen = []
+    for clause in re.split(r'[，,。；;！!\n]', material):
+        if re.search(r'私聊|私信|聊天记录|私人信息|隐私|不公开|不得公开|'
+                     r'(?:请勿|不要|别|不许|禁止).{0,55}(?:公开|画进|写进|透露|放进|提起)', clause):
+            continue
+        marker = SCENE.search(clause)
+        camera = CAMERA.search(clause)
+        wardrobe = COSTUME.search(clause)
+        if camera and (chosen or re.search(r'画|拍|取景|镜头|角度|机位|视角', clause)):
+            start = min(camera.start(), marker.start()) if marker else camera.start()
+            # Keep the polarity when a direction says “别从正面拍”.
+            denied = re.search(r'(?:不要|不用|避免|别|不)\s*$', clause[:start])
+            chosen.append(clause[denied.start() if denied else start:].strip())
+        elif marker and clause[marker.end():].strip():
+            chosen.append(clause[marker.start():].strip())
+        elif wardrobe and (chosen or re.search(r'画|拍|配图', clause)):
+            denied = re.search(r'(?:不要|不用|避免|别|不)\s*$', clause[:wardrobe.start()])
+            chosen.append(clause[denied.start() if denied else wardrobe.start():].strip())
+    return '，'.join(chosen)[:300]
+
+
 def original_text(event):
     if event is None:return ''
     cached=event.get_extra('jingjing_original_input',None)
@@ -77,7 +119,9 @@ def material_scope(event):
     text=effective_request(original_text(event))
     layout, material = layout_request(text)
     scope = _material_scope(material)
-    scope.update(image_layout=layout, request_text=text)
+    direction = requested_image_direction(material) if not scope['text_only'] else ''
+    scope.update(image_layout=layout, request_text=text, image_direction=direction,
+                 explicit_scene=bool(direction))
     if layout != 'auto' and not scope['reject_supplied_images']:
         request = QUOTES.sub('', text)
         attachment = LAYOUT_ATTACHMENT.search(request)

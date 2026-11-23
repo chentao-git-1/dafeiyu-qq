@@ -1018,9 +1018,10 @@ class QzonePlugin(Star):
             try:
                 image_event=event if (scope['use_supplied_images'] or not autonomous) and not scope['reject_supplied_images'] else None
                 images = await prepare_post_images(self.context, text, image_event,
-                    (with_image or scope['use_supplied_images'] or scope['explicit_scene'] or scope['image_layout'] != 'auto') and not scope['text_only'], image_prompt if scope['explicit_scene'] else '',
+                    (with_image or scope['use_supplied_images'] or scope['explicit_scene'] or scope['image_layout'] != 'auto') and not scope['text_only'],
+                    (image_prompt or scope['image_direction']) if scope['explicit_scene'] else '',
                     editorial=getattr(getattr(self, 'llm', None), 'editorial', None),require_supplied=scope['use_supplied_images'],
-                    shows_face=shows_face, layout=scope['image_layout'])
+                    shows_face=shows_face, layout=scope['image_layout'], owner_direction=scope['image_direction'])
             except Exception:
                 logger.warning("QQ空间配图未完成，未提交发布")
                 return "这次配图未完成，QQ空间尚未发布，没有自动重试；可以稍后重新发起，或明确要求纯文字发布。"
