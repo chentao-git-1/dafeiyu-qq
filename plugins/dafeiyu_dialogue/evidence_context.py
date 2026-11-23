@@ -9,7 +9,7 @@ from pathlib import Path
 import time
 import datetime as dt
 import sqlite3
-from . import self_mood
+from . import self_mood, turn_audit
 from dafeiyu.dialogue.catalog import MemoryCatalog
 from dafeiyu.dialogue.review import review, verify_revision, packet_key, ReviewResult, UNAVAILABLE, SCHEMA_RETRY
 from dafeiyu.dialogue.self_state import self_state
@@ -85,6 +85,8 @@ class EvidenceContext:
         provider = await self.context.get_using_provider_async(event.unified_msg_origin)
         if provider is None:
             raise ValueError('Current provider unavailable')
+        if purpose == 'generation_format':
+            turn_audit.format_recovery(event)
         response=await self.metered_provider(provider,purpose).text_chat(prompt=prompt,
             system_prompt=policy,contexts=[],func_tool=None,request_max_retries=1)
         return response.completion_text

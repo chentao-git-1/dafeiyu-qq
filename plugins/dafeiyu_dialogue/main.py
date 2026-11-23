@@ -43,7 +43,7 @@ from .relationship_memory import RelationshipContext
 from .world_observation import DAY_QUERY, WorldObservation, asks_current_detail, binding_scope
 from .route_receipts import ROUTE, note_route, prepare_route, set_request_id
 from .spoken_price import QUOTE, prior_price
-from . import followthrough
+from . import followthrough, turn_audit
 from .world_activity import FLOW, proposed_share, quiet_result
 from .wardrobe import guard_draw, finish_draw, portrait_prompt, reserve_change
 
@@ -60,7 +60,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         self.review_stats = Counter()
         self._learning = None
         self._index = None
-        self.provider_contracts=ProviderContracts()
+        self.provider_contracts=ProviderContracts(is_current=lambda: self.current_dialogue() is self)
         self.world_observation = WorldObservation()
         self.active_portraits = {}
         self._growth=None;self.growth_task=None;self.growth_lock=asyncio.Lock()
@@ -70,6 +70,10 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         context.register_web_api('/dafeiyu_dialogue/status', self.status, ['GET'], '统一对话资料数值状态（无正文）')
         context.register_web_api('/dafeiyu_dialogue/personality',self.personality_status,['GET'],'长期性格成长版本与运行状态')
         context.register_web_api('/dafeiyu_dialogue/personality/rollback',self.rollback_personality,['POST'],'管理面板按版本回退全局成长倾向')
+
+    def current_dialogue(self):
+        meta = self.context.get_registered_star('dafeiyu_dialogue')
+        return getattr(meta, 'star_cls', None) if meta and meta.activated else None
 
     def natural(self):
         meta = self.context.get_registered_star('dafeiyu_natural_chat')
@@ -89,11 +93,12 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         if self.growth_enabled():self.growth_task=asyncio.create_task(self.growth_loop())
 
     async def terminate(self):
+        # Retire synchronously before pending background work gets another turn.
+        self.provider_contracts.close()
         await self.deferred_learning.close()
         if self.growth_task:
             self.growth_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):await self.growth_task
-        self.provider_contracts.close()
 
 
 
@@ -121,8 +126,13 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         return json_response(dict(rolled_back=True,version=version))
 
     def metered_provider(self,provider,purpose,structured=True):
+        if self.provider_contracts.closed:
+            current = self.current_dialogue()
+            if current is None or current is self or current.provider_contracts.closed:
+                raise RuntimeError('No active dialogue provider binding')
+            return current.metered_provider(provider, purpose, structured)
         self.provider_contracts.install(provider)
-        return MeteredProvider(provider,self.review_stats,purpose,structured)
+        return MeteredProvider(provider,self.review_stats,purpose,structured,owner=self)
 
     def feature(self, name):
         return bool(self.config.get(name, False))
@@ -225,6 +235,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
         event.set_extra('dafeiyu_group_contract',bool(selected and turn.is_group))
         event.set_extra('dafeiyu_generation_contract', selected and self.config.get('generation_contract', True))
         event.set_extra('dafeiyu_generation_capability',arm_contract(event.get_extra('dafeiyu_generation_contract',False)))
+        turn_audit.arm(event, event.get_extra('dafeiyu_generation_capability'))
         if selected:
             if turn.is_group:
                 event.set_extra('dafeiyu_group_current_rendering',event.get_extra('_group_chat_plus_current_message','') or '')
@@ -436,6 +447,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.on_agent_done(priority=-sys.maxsize + 1)
     async def save_native_context(self,event,run_context,response):
+        turn_audit.finish(event)
         if not event.get_extra('dafeiyu_generation_contract',False):return
         event.set_extra('dafeiyu_native_context',run_context)
         event.set_extra('dafeiyu_native_expected_text',str(getattr(response,'completion_text','') or ''))

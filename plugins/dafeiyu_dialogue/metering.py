@@ -4,12 +4,16 @@ from .provider_contract import STRUCTURED, STRUCTURED_MARKER, OUTPUT_BUDGET
 
 
 class MeteredProvider:
-    def __init__(self,provider,statistics,purpose,structured=True):
+    def __init__(self,provider,statistics,purpose,structured=True,*,owner=None):
         self.provider,self.statistics,self.purpose,self.structured=provider,statistics,purpose,structured
+        self.owner = owner
 
     def __getattr__(self,name):return getattr(self.provider,name)
 
     async def text_chat(self,**kwargs):
+        if self.owner is not None and self.owner.provider_contracts.closed:
+            live = self.owner.metered_provider(self.provider, self.purpose, self.structured)
+            return await live.text_chat(**kwargs)
         purpose=self.purpose;stats=self.statistics;stats[purpose+'_calls']+=1
         started=time.perf_counter();token=None
         from dafeiyu.life.agenda import PLAN_OUTPUT_TOKENS

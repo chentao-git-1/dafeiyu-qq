@@ -1,7 +1,7 @@
 """Connect world observations, accepted photo requests, and optional owner updates."""
 import re
 
-from . import self_mood
+from . import self_mood, turn_audit
 from .route_receipts import current_route, fish_tool
 from .world_activity import FLOW, add_packet, fish_for, now_facts, proposed_share, raw_text
 from .wardrobe import (AFTER_MEAL, CANCEL, CHASE_PHOTO, CLOTHES, LATER, OTHER_IMAGE, PHOTO_DONE, REPAIRED, RETAKE, SPOKEN_WEAR,
@@ -22,6 +22,7 @@ async def begin(plugin,event,req,source,items,turn):
     mood=await self_mood.prepare(plugin,event,str(source.get("text") or ""))
     if mood is not None:
         add_packet(req,"SELF_MOOD",mood)
+        turn_audit.expect(event, "SELF_MOOD", mood)
     fish=fish_for(plugin,event)
     snap=fish.follow_snapshot(event) if fish else None
     if not snap:

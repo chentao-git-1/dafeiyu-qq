@@ -52,4 +52,6 @@ QQ 自拍和空间配图共用画图插件的私有参考页 `data/plugin_data/a
 
 自主活动决定静默后，QQ 发送层会把这一轮记为 `quiet_completions`。可以在 NapCat 的私聊发送日志核对实际发出的消息。手动唤醒和主人发起的对话继续走正常的发送与故障提示流程。
 
+热重载后，可以用 AstrBot 日志里的 `[world-turn]` 核对真实自主轮次。同一轮的 `wire` 记录检查发给模型的首份请求是否带上听澜的心情、当轮预取的世界状态和 JSON 回复格式；`end` 记录请求是否得到确认，以及这一轮用了几次格式整理。诊断只记录轮次标记、计数和状态，不记录聊天正文或世界回执。
+
 宿主机的错误监控使用 `scripts/watchdog_errors.py` 读取带时间戳的 Docker 日志，按错误事件计数。同一次管理面板异常可能在 AstrBot 和 Hypercorn 中各留下一份堆栈。运行 `python tests/test_watchdog_errors.py` 可验证这些副本的合并和独立故障的计数。

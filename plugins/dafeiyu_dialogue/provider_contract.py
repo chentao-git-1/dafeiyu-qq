@@ -12,6 +12,7 @@ import time
 from .prompt_cache import project_turn_data
 from .route_receipts import route_tools
 from .wardrobe import outfit_tools
+from . import turn_audit
 
 MARKER='<!-- BEGIN_DAFEIYU_GENERATION -->'
 STRUCTURED_MARKER='<!-- DAFEIYU_STRUCTURED_TASK -->'
@@ -93,9 +94,15 @@ def isolate_background(payload):
 
 
 class ProviderContracts:
-    def __init__(self):self.installed=[];self.runner_adapter=None
+    def __init__(self, is_current=None):
+        self.installed = []
+        self.runner_adapter = None
+        self.closed = False
+        self.is_current = is_current
 
     def install_runner(self):
+        if self.closed:
+            return
         if self.runner_adapter is None:
             from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
             from .turn_history import DialogueTurnTruncator
@@ -107,7 +114,7 @@ class ProviderContracts:
             def contexts(runner,messages):
                 result=original(runner,messages)
                 binding=getattr(runner.req,'_dafeiyu_generation_binding',None)
-                if binding and binding[0] is owner:
+                if not owner.closed and binding and binding[0] is owner:
                     owner.install(runner.provider)
                     from dafeiyu.runtime.outbound import project_history
                     result=project_history(result,binding[2])
@@ -119,7 +126,7 @@ class ProviderContracts:
             async def reset(runner, *args, **kwargs):
                 await original_reset(runner, *args, **kwargs)
                 binding = getattr(runner.req, '_dafeiyu_generation_binding', None)
-                if binding and binding[0] is owner:
+                if not owner.closed and binding and binding[0] is owner:
                     runner.request_context_manager.truncator = DialogueTurnTruncator()
 
             methods = {
@@ -131,13 +138,42 @@ class ProviderContracts:
             self.runner_adapter = (ToolLoopAgentRunner, methods)
 
     def bind_request(self,request,nonce,outgoing=()):
+        if self.closed:
+            return
         self.install_runner()
         request._dafeiyu_generation_binding=(self,nonce,copy.deepcopy(list(outgoing)))
 
     def install(self,provider):
-        if provider is None:return False
-        if getattr(provider,'_dafeiyu_generation_json_owner',None) is self:return True
-        if getattr(provider,'_dafeiyu_generation_json_owner',None) is not None:return False
+        if self.closed or provider is None:
+            return False
+        previous = getattr(provider, '_dafeiyu_generation_json_owner', None)
+        if previous is self:
+            return True
+        if previous is not None:
+            # After a module reload the old class has the same qualified name but
+            # a different Python identity. Only the registered live plugin may
+            # retire its own predecessor, and only for a provider it actually owns.
+            cls = type(previous)
+            if (not self.is_current or not self.is_current() or cls.__module__ != __name__
+                    or cls.__name__ != 'ProviderContracts'
+                    or not any(item[0] is provider for item in previous.installed)):
+                return False
+            registered = getattr(previous, 'is_current', None)
+            if registered and registered() and not previous.closed:
+                return False
+            if not hasattr(previous, 'closed'):
+                # Pre-retirement versions can reinstall hooks after close() when
+                # a companion job resumes with an old controller. Its old
+                # metered_provider ignores False, so stop it before a model call.
+                def retired_install(*args, **kwargs):
+                    raise RuntimeError('Dialogue provider binding has retired')
+                previous.install = retired_install
+                previous.install_runner = retired_install
+            previous.close()
+            if getattr(provider, '_dafeiyu_generation_json_owner', None) is not None:
+                return False
+            from astrbot.api import logger
+            logger.info('[dialogue-binding] released a retired dialogue provider owner')
         convert=getattr(provider,'_finally_convert_payload',None)
         chat=getattr(provider,'text_chat',None)
         if not callable(convert) or not callable(chat):return False
@@ -147,6 +183,8 @@ class ProviderContracts:
         @functools.wraps(convert)
         def convert_payload(payload):
             convert(payload)
+            if self.closed:
+                return
             own,structured,voice_tones=WIRE_SCOPE.get()
             if not own:isolate_background(payload)
             dedup = constrain_payload(payload, own, structured, sanitize_messages, voice_tones)
@@ -157,6 +195,8 @@ class ProviderContracts:
 
         @functools.wraps(chat)
         async def text_chat(*args,**kwargs):
+            if self.closed:
+                return await chat(*args, **kwargs)
             own=contract_request(kwargs)
             first_route=False
             if own:
@@ -170,14 +210,18 @@ class ProviderContracts:
             voice_tones=contexts.voice_tones if own and isinstance(contexts,NativeContexts) else ()
             token=WIRE_SCOPE.set((own,structured,voice_tones))
             started=time.perf_counter()
+            nonce = contexts.nonce if isinstance(contexts, NativeContexts) else None
             try:
-                try:result=await chat(*args,**kwargs)
+                try:
+                    with turn_audit.provider_attempt(nonce):
+                        result = await chat(*args, **kwargs)
                 except Exception as error:
                     message=str(error).lower()
                     if (not first_route or getattr(error,'status_code',None) not in (400,422)
                             or 'tool_choice' not in message or not any(s in message for s in ('not support','unsupported','invalid','not allowed'))):
                         raise
-                    result=await chat(*args,**dict(kwargs,tool_choice='auto'))
+                    with turn_audit.provider_attempt(nonce):
+                        result = await chat(*args, **dict(kwargs, tool_choice='auto'))
             finally:WIRE_SCOPE.reset(token)
             if own:
                 if getattr(result,'tools_call_name',None):result.completion_text=''
@@ -202,6 +246,8 @@ class ProviderContracts:
             @functools.wraps(overrides)
             def request_overrides(payload,extra_body):
                 overrides(payload,extra_body)
+                if self.closed:
+                    return
                 budget=OUTPUT_BUDGET.get()
                 if WIRE_SCOPE.get()[1] and type(budget) is int and budget>0:
                     # AstrBot merges custom_extra_body after conversion. Override here,
@@ -210,12 +256,16 @@ class ProviderContracts:
                     for name in ('max_tokens','max_completion_tokens'):
                         payload.pop(name,None);extra_body.pop(name,None)
                     payload[key]=budget
+                turn_audit.observe_payload(payload, extra_body)
             wrappers['_apply_provider_specific_request_overrides']=request_overrides
         stream=getattr(provider,'text_chat_stream',None)
         if callable(stream) and inspect.isasyncgenfunction(stream):
             originals['text_chat_stream']=stream
             @functools.wraps(stream)
             async def text_chat_stream(*args,**kwargs):
+                if self.closed:
+                    async for chunk in stream(*args, **kwargs):yield chunk
+                    return
                 if contract_request(kwargs):
                     # A partial JSON envelope must never become a streaming QQ message.
                     result=await text_chat(*args,**kwargs)
@@ -233,6 +283,7 @@ class ProviderContracts:
         return True
 
     def close(self):
+        self.closed = True
         if self.runner_adapter is not None:
             runner, methods = self.runner_adapter
             for name, (original, wrapper) in methods.items():

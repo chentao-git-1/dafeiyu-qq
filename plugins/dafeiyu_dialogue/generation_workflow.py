@@ -8,7 +8,7 @@ import time
 import json
 from datetime import datetime
 from astrbot.api import logger
-from . import self_mood
+from . import self_mood, turn_audit
 from dafeiyu.dialogue.review import review, verify_revision, packet_key, ReviewResult, UNAVAILABLE, SCHEMA_RETRY
 from dafeiyu.dialogue.self_state import self_state
 from dafeiyu.dialogue.generation import parse_generation, claim_sources, validate_claim_sources, request_contract
@@ -155,6 +155,7 @@ class GenerationWorkflow:
                 if saved:
                     logger.info("[cache-world-merge] snapshot_characters_saved=%d", saved)
             data = json.dumps({"evidence_id": "tool:world_now", "result": text}, ensure_ascii=False)
+            turn_audit.expect(event, "WORLD_PREFETCH", data)
             request.system_prompt += (
                 "\n<!-- BEGIN_DAFEIYU_WORLD_PREFETCH -->\n" + data.replace("<", "\\u003c")
                 + "\n<!-- END_DAFEIYU_WORLD_PREFETCH -->"
@@ -165,7 +166,8 @@ class GenerationWorkflow:
     async def parse_generation_response(self, event, text):
         try:
             return parse_scoped(event,text)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as error:
+            turn_audit.failed_shape(event, text, error)
             world_results = [
                 row for row in event.get_extra('dafeiyu_dialogue_tool_evidence', [])
                 if row.get('tool') in {
