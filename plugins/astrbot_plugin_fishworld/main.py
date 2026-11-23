@@ -36,6 +36,7 @@ from .core import (
     wake_prompt,
 )
 from .followthrough import Followthrough
+from .outfit_history import outfit_at
 from .plans import (
     MISSED_HOLD,
     SIGNAL_KINDS,
@@ -122,6 +123,10 @@ class FishWorldPlugin(Followthrough, Star):
         self.delivery_failures = 0
         self._history_guard = None
         self._active_plan_offer = None
+
+    async def public_outfit_at(self, day, at, *, scene_row=None):
+        """Read the resident's confirmed clothing at a dated public event."""
+        return await outfit_at(self.context, day, at, scene_row)
 
     def _install_history_guard(self):
         if self._history_guard is not None:

@@ -188,6 +188,43 @@ class EditorialPolicy:
             return []
         return world.get('timeline') or []
 
+    async def world_cover_outfit(self, text, scene_row):
+        """Resolve clothing at this event using the draft first, then dated public history."""
+        timed = re.fullmatch(r'((?:[01]\d|2[0-3]):[0-5]\d)\s+(.+)', scene_row)
+        if not timed:
+            return None
+        plan = await self.candidate_plan(text)
+        world = plan.get('world_life') or {}
+        if world.get('source') not in ('world_history', 'world_day'):
+            return None
+        day = world.get('date')
+        if not isinstance(day, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
+            return None
+        records = [row.strip() for row in world.get('timeline', []) if isinstance(row, str)]
+        if scene_row not in records:
+            return None
+        if records.count(scene_row) == 1:
+            for row in reversed(records[:records.index(scene_row) + 1]):
+                change = re.fullmatch(
+                    r'((?:[01]\d|2[0-3]):[0-5]\d)\s+(?:换了衣服[：:]|换装[：:]|换上了)\s*(.{1,180})', row)
+                if change and change[1] <= timed[1]:
+                    return change[2].strip()
+
+        # The published material can be a short tail of the day's history.
+        # Only the FishWorld service can attest to the gap before this event.
+        registry = getattr(self.context, 'get_registered_star', None)
+        metadata = registry('astrbot_plugin_fishworld') if callable(registry) else None
+        fish = getattr(metadata, 'star_cls', None) if getattr(metadata, 'activated', False) else None
+        lookup = getattr(fish, 'public_outfit_at', None)
+        if callable(lookup):
+            try:
+                outfit = await lookup(day, timed[1], scene_row=scene_row)
+            except Exception:
+                return None
+            if isinstance(outfit, str):
+                return outfit.strip()[:180] or None
+        return None
+
     async def visual_plan(self, text):
         saved = await self.candidate_plan(text)
         if saved:

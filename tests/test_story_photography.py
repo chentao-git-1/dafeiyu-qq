@@ -11,6 +11,7 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock,patch
 from PIL import Image as PillowImage
+from mcp.types import CallToolResult, TextContent, Tool
 
 import test_nightly_agenda as agenda
 from dafeiyu.media.drawing.works import WorkHistory
@@ -19,9 +20,11 @@ from dafeiyu.media.drawing import framing
 from dafeiyu.dialogue.growth import own_experiences
 from dafeiyu.dialogue.self_state import self_state
 from dafeiyu.life.planning import parse_choice
+from astrbot.core.agent.mcp_client import MCPTool
 from astrbot.core.message.components import Image
 from data.plugins.astrbot_plugin_dafeiyu_draw import main as adapter
 from data.plugins.astrbot_plugin_dafeiyu_draw.photo_reference import FACE_SHEET, photo_input
+from data.plugins.astrbot_plugin_fishworld.main import FishWorldPlugin
 from data.plugins.astrbot_plugin_qzone.core.editorial import EditorialPolicy
 from data.plugins.astrbot_plugin_qzone.core.post_images import prepare_post_images
 f=agenda.base.fixture
@@ -204,6 +207,7 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
 
     async def test_scenery_does_not_attach_the_photographer_face(self):
         text = '旧船坞的紫色浮标在水面摇晃。'
+        self.editorial.world_cover_outfit = AsyncMock(side_effect=AssertionError('scenery requested wardrobe history'))
         for entry in ('13:05  事件：旧船坞的紫色浮标在水面摇晃', '13:05  到达：旧船坞的紫色浮标旁'):
             with self.subTest(entry=entry):
                 self.generate.reset_mock()
@@ -212,6 +216,71 @@ class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
                 self.generate.assert_awaited_once()
                 self.assertIn('紫色浮标', self.generate.await_args.args[1])
                 self.assertIsNone(self.generate.await_args.kwargs['reference'])
+        self.editorial.world_cover_outfit.assert_not_awaited()
+
+    async def test_character_cover_uses_the_last_change_before_the_selected_event(self):
+        text = '上午在陶坊给白瓷杯画了一圈波纹。晚上在书桌旁折纸。'
+        await self.candidate(text, [
+            '07:10  换了衣服：丁香色棉衫',
+            '08:50  换了衣服：赭石色工装外套',
+            '09:15  完成：在陶坊给白瓷杯画了一圈波纹',
+            '09:15  换了衣服：橘色雨披',
+            '18:40  换了衣服：松绿色绒衣',
+            '19:30  完成：在书桌旁折纸',
+        ])
+        await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.generate.assert_awaited_once()
+        prompt = self.generate.await_args.args[1]
+        self.assertIn('赭石色工装外套', prompt)
+        for other in ('丁香色棉衫', '橘色雨披', '松绿色绒衣', '折纸'):
+            self.assertNotIn(other, prompt)
+
+    async def test_character_without_verified_clothes_never_borrows_a_later_outfit(self):
+        text = '我坐在陶坊给杯子画格纹。'
+        selected = '09:15  完成：坐在陶坊给杯子画格纹'
+        await self.candidate(text, [selected, '19:00  换了衣服：紫红色绒衣'])
+        await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.generate.assert_awaited_once()
+        prompt = self.generate.await_args.args[1]
+        self.assertNotIn('紫红色绒衣', prompt)
+        self.assertIn('格纹', prompt)
+        self.assertIn('衣着留在取景范围外', prompt)
+        self.assertEqual(self.generate.await_args.kwargs['reference'], self.sheet)
+
+    async def test_diary_uses_older_history_page_and_skips_an_unfinished_change(self):
+        text = '我坐在陶坊给杯子画格纹。'
+        selected = '09:15  完成：坐在陶坊给杯子画格纹'
+        await self.candidate(text, [selected, '18:40  换了衣服：松绿色绒衣'])
+        pages = {
+            None: [selected, '09:15  换了衣服：橘色雨披', '18:40  换了衣服：松绿色绒衣',
+                   '—— 更早的：before=earlier-fixture'],
+            'earlier-fixture': ['07:20  换了衣服：丁香色棉衫', '08:50  换了衣服：赭石色工装外套',
+                                '09:10  开始：试穿紫色斗篷'],
+        }
+
+        async def read_page(*, tool_name, arguments, **kwargs):
+            self.assertEqual(tool_name, 'world_history')
+            self.assertEqual(arguments['date'], '2026-01-16')
+            self.assertEqual(arguments['limit'], 30)
+            lines = pages[arguments.get('before')]
+            return CallToolResult(content=[TextContent(type='text', text='\n'.join(lines))])
+
+        read = AsyncMock(side_effect=read_page)
+        tool = MCPTool(Tool(name='world_history', inputSchema={'type': 'object'}),
+                       NS(call_tool_with_reconnect=read), 'fish-world')
+        manager = NS(get_func=lambda name: tool if name == 'world_history' else None)
+        fish = FishWorldPlugin(NS(get_llm_tool_manager=lambda: manager), {'enabled': True})
+        plugins = {'astrbot_plugin_fishworld': fish, 'astrbot_plugin_dafeiyu_draw': self.draw}
+        self.context.get_registered_star = lambda name: NS(activated=True, star_cls=plugins[name])
+        self.editorial.context = self.context
+        await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.assertEqual([call.kwargs['arguments'].get('before') for call in read.await_args_list],
+                         [None, 'earlier-fixture'])
+        self.generate.assert_awaited_once()
+        prompt = self.generate.await_args.args[1]
+        self.assertIn('赭石色工装外套', prompt)
+        for other in ('橘色雨披', '松绿色绒衣', '丁香色棉衫', '紫色斗篷'):
+            self.assertNotIn(other, prompt)
 
     async def test_missing_face_sheet_stops_a_character_cover_before_generation(self):
         text = '我坐在陶坊里给白瓷杯画了一圈波纹。'

@@ -6,10 +6,10 @@ from astrbot.core.message.components import Image, Reply
 from .utils import get_image_urls
 
 
-def world_cover_scene(text, timeline, shows_face=None):
+def world_cover_scene(text, timeline, shows_face=None, *, with_record=False):
     """Bind the first well-supported visual detail to one public event."""
-    events = [re.sub(r'^\s*\d{2}:\d{2}\s+', '', row).strip()
-              for row in timeline if isinstance(row, str) and row.strip()]
+    records = [row.strip() for row in timeline if isinstance(row, str) and row.strip()]
+    events = [re.sub(r'^\d{2}:\d{2}\s+', '', row) for row in records]
     clauses = [part.strip() for part in re.split(r'[，,。！？!?；;\n]+', str(text)[:2000]) if part.strip()]
     if not events or not clauses:
         raise ValueError('鱼世界动态缺少可用的配图场景')
@@ -57,7 +57,9 @@ def world_cover_scene(text, timeline, shows_face=None):
     prompt = ('给鱼世界日记画一张二维手绘插画。只画一个时间、一个地点的一幅完整画面，'
               '单一镜头铺满画幅，不分格、不拼贴、不加其他时段的小图或文字。' + frame +
               '\n以下是公开的场景资料，按记录区分谁做了什么。只取与正文细节对应的这一刻。'
-              '\n正文细节：' + clause[:180] + '\n对应的鱼世界事件：' + event[:220])
+              '\n正文细节：' + clause[:180] + '\n对应的鱼世界事件：' + records[best][:230])
+    if with_record:
+        return prompt, shows_face, records[best]
     return prompt, shows_face
 
 
@@ -99,7 +101,14 @@ async def prepare_post_images(context, text, event=None, with_image=True, image_
         read_timeline = getattr(editorial, 'world_cover_timeline', None)
         timeline = await read_timeline(text) if callable(read_timeline) else None
         if timeline is not None:
-            prompt, shows_face = world_cover_scene(text, timeline, shows_face)
+            prompt, shows_face, scene_row = world_cover_scene(text, timeline, shows_face, with_record=True)
+            if shows_face:
+                read_outfit = getattr(editorial, 'world_cover_outfit', None)
+                outfit = await read_outfit(text, scene_row) if callable(read_outfit) else None
+                if outfit:
+                    prompt += '\n只用脸部参考确定长相。这个时刻听澜实际的穿搭：' + outfit
+                else:
+                    prompt += '\n这个时刻的穿搭没有核实。取脸部和动作细节的近景，衣着留在取景范围外。'
     options = {"shows_face": shows_face} if type(shows_face) is bool else {}
     path = await drawing.generate_for_qzone(prompt, presentation='story_photo', **options)
     return [path]
