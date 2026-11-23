@@ -24,8 +24,9 @@ from dafeiyu.media.drawing.presentation import drawing_error_text, http_status, 
 import json
 from dafeiyu.media.drawing.intent import IntentContext, continue_prompt
 from dafeiyu.media.drawing.works import WorkHistory
-from dafeiyu.media.drawing.framing import PHOTO_POLICY, STORY_REFERENCE, image_facts, image_prompt
+from dafeiyu.media.drawing.framing import PHOTO_POLICY, image_facts
 from dafeiyu.dialogue.action_facts import record_action
+from .photo_reference import FACE_SHEET, photo_input
 
 
 class DafeiyuDraw(Star):
@@ -144,18 +145,23 @@ class DafeiyuDraw(Star):
                 + intent["previous_prompt"]
             )
 
-    async def generate_for_qzone(self, prompt: str, *, presentation: str = 'artwork') -> str:
+    async def generate_for_qzone(self, prompt: str, *, presentation: str = 'artwork',
+                                 shows_face: bool | None = None) -> str:
         """Generate one bounded cover file without sending a QQ chat message."""
         if not self.config.get("enabled") or not self.config.get("api_key"):
             raise DrawingError("画图服务未启用")
         if self.lock.locked():
             raise DrawingError("画图服务正在处理另一张图片")
         async with self.lock:
+            description, reference = photo_input(
+                str(prompt)[:3000], presentation, self.image_dir.parent / "references" / FACE_SHEET,
+                shows_face=shows_face,
+            )
             raw, _, _ = await generate(
                 self.config["api_key"],
-                image_prompt(str(prompt)[:3000], presentation),
+                description,
                 self.config.get("timeout_seconds", 180),
-                reference=STORY_REFERENCE if presentation == 'story_photo' else None,
+                reference=reference,
             )
             with PillowImage.open(io.BytesIO(raw)) as image:
                 image.thumbnail((1024, 1024))
@@ -174,7 +180,7 @@ class DafeiyuDraw(Star):
             self._prune()
             return str(path)
 
-    async def _draw(self, event, prompt,presentation='artwork'):
+    async def _draw(self, event, prompt,presentation='artwork', *, shows_face=None):
         if not self._allowed(event):
             return "这个会话没有启用画图。"
         event.set_extra('dafeiyu_suppress_progress', True)
@@ -209,11 +215,15 @@ class DafeiyuDraw(Star):
                 try:work_epoch=await asyncio.to_thread(self.works.begin,str(event.get_sender_id()),event.unified_msg_origin)
                 except Exception as error:logger.warning('Drawing work scope unavailable: %s',type(error).__name__)
                 phase = 'generating'
+                description, reference = photo_input(
+                    prompt, presentation, self.image_dir.parent / "references" / FACE_SHEET,
+                    shows_face=shows_face, portrait=event.get_extra("dafeiyu_verified_photo", False),
+                )
                 raw, suffix, dimensions = await generate(
                     self.config["api_key"],
-                    image_prompt(prompt,presentation),
+                    description,
                     self.config.get("timeout_seconds", 180),
-                    reference=STORY_REFERENCE if presentation == 'story_photo' else None,
+                    reference=reference,
                 )
                 phase = 'image_ready'
                 path = self.image_dir / ("drawing-" + tag + uuid.uuid4().hex + suffix)
@@ -295,7 +305,8 @@ class DafeiyuDraw(Star):
         record_action(event, 'draw', 'completed' if outcome == '图片已发送。' else 'not_confirmed', result=outcome)
 
     @filter.llm_tool(name="dafeiyu_draw")
-    async def draw_tool(self, event: AstrMessageEvent, prompt: str='',presentation: str='') -> str:
+    async def draw_tool(self, event: AstrMessageEvent, prompt: str='',presentation: str='',
+                        shows_face: bool | None = None) -> str:
         """用户要求画图、自拍、头像、壁纸等图片，或继续修改上一张时，生成并发送真实图片。
 
         可以把用户的画面要求整理成完整描述，不要仅用文字或表情包代替画图。
@@ -311,6 +322,7 @@ class DafeiyuDraw(Star):
         Args:
             prompt(string): 画面描述，2～1500 字。已明确要听澜自拍时可留空。
             presentation(string): story_photo是听澜故事中的照片；artwork是画作或设计图；留空时新图默认story_photo，连续修改继承上一张。
+            shows_face(boolean): 画面能看见听澜本人的脸时填 true，包括自拍、侧脸或合影。拍风景、他人或仅露手和背影时填 false。
         """
         if not self._allowed(event):
             return "这个会话没有启用画图。"
@@ -349,7 +361,7 @@ class DafeiyuDraw(Star):
                     prompt="陈听澜在"+str(place)[:100]+"的日常自拍" if place else "陈听澜的日常自拍"
                 prompt=controller.verified_portrait_prompt(prompt,wardrobe)
                 presentation="story_photo"
-            result = await self._draw(event, prompt,presentation or 'story_photo')
+            result = await self._draw(event, prompt,presentation or 'story_photo', shows_face=shows_face)
             framing=event.get_extra('dafeiyu_image_result',None)
             if framing:
                 return json.dumps(dict(status='sent',**framing),ensure_ascii=False)

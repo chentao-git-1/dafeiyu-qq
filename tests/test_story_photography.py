@@ -2,6 +2,7 @@
 import asyncio
 from contextlib import closing
 import hashlib
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -9,6 +10,7 @@ import tempfile
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock,patch
+from PIL import Image as PillowImage
 
 import test_nightly_agenda as agenda
 from dafeiyu.media.drawing.works import WorkHistory
@@ -18,6 +20,7 @@ from dafeiyu.dialogue.growth import own_experiences
 from dafeiyu.dialogue.self_state import self_state
 from dafeiyu.life.planning import parse_choice
 from data.plugins.astrbot_plugin_dafeiyu_draw import main as adapter
+from data.plugins.astrbot_plugin_dafeiyu_draw.photo_reference import FACE_SHEET, photo_input
 from data.plugins.astrbot_plugin_qzone.core.post_images import prepare_post_images
 f=agenda.base.fixture
 
@@ -64,6 +67,27 @@ class PhotoHistory(unittest.TestCase):
             value=agenda.choice(kind='reading',presentation='story_photo')
             with self.assertRaises(ValueError):parse_choice(json.dumps(value),packet)
 
+    def test_face_reference_follows_who_is_in_this_picture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet=Path(tmp)/FACE_SHEET
+            PillowImage.new('RGB',(12,12),'blue').save(sheet)
+            for brief in ('陈听澜的侧脸，神情平静，穿深绿外套','听澜和思思在窗边合影'):
+                prompt,ref=photo_input(brief,'story_photo',sheet)
+                self.assertEqual(ref,sheet)
+                self.assertIn(brief,prompt)
+                self.assertIn('同一个陈听澜',prompt)
+            for brief in ('思思的自拍','听澜拍下的溪水和石头','只拍背影，不露脸',
+                          '上张是听澜的自拍\n本轮完整画面描述：湖面和小船',
+                          '动态文案：我的自拍\n爸爸指定的画面要求：一束玫瑰'):
+                self.assertIsNone(photo_input(brief,'story_photo',sheet)[1])
+            self.assertIsNone(photo_input('自拍，只露手','story_photo',sheet,shows_face=False,portrait=True)[1])
+            self.assertEqual(photo_input('平静地望向窗外','story_photo',sheet,portrait=True)[1],sheet)
+            self.assertEqual(photo_input('一张风力分布图','artwork',sheet),('一张风力分布图',None))
+            prompt,ref=photo_input('听澜的头像，用木刻版画风格','artwork',sheet)
+            self.assertEqual(ref,sheet)
+            self.assertIn('木刻版画',prompt)
+            self.assertNotIn('二维手绘',prompt)
+
 
 class PhotoTool(unittest.IsolatedAsyncioTestCase):
     def drawing(self,root):
@@ -73,6 +97,30 @@ class PhotoTool(unittest.IsolatedAsyncioTestCase):
         draw._allowed=lambda event:True;draw._prune=lambda:None;draw.intent_context=adapter.IntentContext()
         draw.context=NS(get_config=lambda *args:{'platform_settings':{}})
         return draw
+
+    async def test_private_and_qzone_select_one_reference_and_send_only_the_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp); draw=self.drawing(root)
+            directory=root/'references';directory.mkdir()
+            sheet=directory/FACE_SHEET
+            PillowImage.new('RGB',(12,12),'blue').save(sheet)
+            buf=io.BytesIO()
+            PillowImage.new('RGB',(18,18),'green').save(buf,format='PNG')
+            rendered=buf.getvalue()
+            event=f.event('想看看你')
+            covers=NS(get_registered_star=lambda _:NS(activated=True,star_cls=draw))
+            with patch.object(adapter,'generate',AsyncMock(return_value=(rendered,'.png',(18,18)))) as generate:
+                result=await draw.draw_tool(event,'平静地朝镜头看','story_photo',shows_face=True)
+                self.assertEqual(json.loads(result)['delivery'],'sent')
+                self.assertEqual(generate.await_args.kwargs['reference'],sheet)
+                event.send.assert_awaited_once()
+                self.assertEqual(next(draw.image_dir.glob('drawing-*.png')).read_bytes(),rendered)
+                paths=await prepare_post_images(covers,'桥边留念',image_prompt='转头微笑',shows_face=True)
+                self.assertEqual(generate.await_args.kwargs['reference'],sheet)
+                self.assertNotEqual(Path(paths[0]).read_bytes(),sheet.read_bytes())
+                await prepare_post_images(covers,'我的自拍',image_prompt='只拍溪水',shows_face=False)
+                self.assertIsNone(generate.await_args.kwargs['reference'])
+                self.assertEqual(generate.await_count,3)
 
     async def test_photo_is_sent_once_and_its_meaning_survives_a_later_read(self):
         with tempfile.TemporaryDirectory() as tmp:

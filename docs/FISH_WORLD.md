@@ -42,6 +42,8 @@ QQ 生成流程收到不符合 JSON 协议的最终回复时，若本轮有完�
 
 穿搭照默认可按文字描述生成。要为角色固定外观，可自行提供有权使用的 JPEG 参考图，放在已安装的 `dafeiyu/media/drawing/tinglan-reference.jpg` 后重新加载相关插件。
 
+QQ 自拍和空间配图共用画图插件的私有参考页 `data/plugin_data/astrbot_plugin_dafeiyu_draw/references/tinglan-face.jpg`。上排放睁眼正面、侧脸，下排放笑容、眨眼及原角色整体外形。听澜露脸时，插件把整页随这一次生图请求传入，表情、衣服和场景由本次描述决定。拍风景或其他人时，脸部参考页留在服务器。
+
 安装框架依赖后，运行 `python scripts/run_tests.py test_fishworld_followthrough.py test_fish_world_generation.py`。测试使用虚构的衣柜、店铺和本地模拟收件人。
 
 自主活动决定静默后，QQ 发送层会把这一轮记为 `quiet_completions`。可以在 NapCat 的私聊发送日志核对实际发出的消息。手动唤醒和主人发起的对话继续走正常的发送与故障提示流程。

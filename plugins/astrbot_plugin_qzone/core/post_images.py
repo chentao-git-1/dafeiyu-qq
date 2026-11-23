@@ -4,7 +4,8 @@ from astrbot.core.message.components import Image, Reply
 from .utils import get_image_urls
 
 
-async def prepare_post_images(context, text, event=None, with_image=True, image_prompt='', *, editorial=None, require_supplied=False):
+async def prepare_post_images(context, text, event=None, with_image=True, image_prompt='', *,
+                              editorial=None, require_supplied=False, shows_face=None):
     if not with_image:
         return []
     message = str(getattr(event, 'message_str', '') or '')
@@ -37,5 +38,6 @@ async def prepare_post_images(context, text, event=None, with_image=True, image_
     )
     if image_prompt:
         prompt += '\n爸爸指定的画面要求：' + str(image_prompt)[:300]
-    path = await drawing.generate_for_qzone(prompt, presentation='story_photo')
+    options = {"shows_face": shows_face} if type(shows_face) is bool else {}
+    path = await drawing.generate_for_qzone(prompt, presentation='story_photo', **options)
     return [path]

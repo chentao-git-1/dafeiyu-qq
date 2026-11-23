@@ -990,6 +990,7 @@ class QzonePlugin(Star):
         get_image: bool = False,
         with_image: bool = True,
         image_prompt: str = "",
+        shows_face: bool | None = None,
     ):
         """
         爸爸本人要求发QQ空间、朋友圈或说说时，直接发布，无须审稿或再次确认。支持爸爸QQ私信与已开放的群聊。
@@ -999,6 +1000,7 @@ class QzonePlugin(Star):
             get_image(boolean): 爸爸明确要求附当前消息或引用消息的图片时设为True
             with_image(boolean): 默认True自动配图，优先使用当前或引用消息附图，否则生成一张；明确纯文字或不要配图时设为False
             image_prompt(string): 可选的配图画面要求；配图在发布流程中生成，不要另调画图工具
+            shows_face(boolean): 需要生成配图时，听澜本人露脸填 true。镜头朝外、只露背影或只拍别人填 false。
         """
         if not self._owner_publish_chat(event):
             return "QQ空间发布仅限爸爸本人在QQ私信或已开放的群聊中使用。"
@@ -1017,7 +1019,8 @@ class QzonePlugin(Star):
                 image_event=event if (scope['use_supplied_images'] or not autonomous) and not scope['reject_supplied_images'] else None
                 images = await prepare_post_images(self.context, text, image_event,
                     (with_image or scope['use_supplied_images'] or scope['explicit_scene']) and not scope['text_only'], image_prompt if scope['explicit_scene'] else '',
-                    editorial=getattr(getattr(self, 'llm', None), 'editorial', None),require_supplied=scope['use_supplied_images'])
+                    editorial=getattr(getattr(self, 'llm', None), 'editorial', None),require_supplied=scope['use_supplied_images'],
+                    shows_face=shows_face)
             except Exception:
                 logger.warning("QQ空间配图未完成，未提交发布")
                 return "这次配图未完成，QQ空间尚未发布，没有自动重试；可以稍后重新发起，或明确要求纯文字发布。"
