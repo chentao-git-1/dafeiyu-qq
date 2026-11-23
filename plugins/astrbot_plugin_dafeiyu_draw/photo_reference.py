@@ -21,7 +21,7 @@ def photo_input(description: str, presentation: str, face_sheet: Path, *,
                shows_face: bool | None = None, portrait: bool = False) -> tuple[str, Path | None]:
     """Return the prompt and its matching attachment for one generation."""
     framing.image_facts(presentation)
-    if not face_sheet.is_file():
+    if shows_face is not False and not face_sheet.is_file():
         reference = framing.STORY_REFERENCE if presentation == "story_photo" else None
         return framing.image_prompt(description, presentation), reference
 

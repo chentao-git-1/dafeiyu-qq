@@ -19,8 +19,10 @@ from dafeiyu.media.drawing import framing
 from dafeiyu.dialogue.growth import own_experiences
 from dafeiyu.dialogue.self_state import self_state
 from dafeiyu.life.planning import parse_choice
+from astrbot.core.message.components import Image
 from data.plugins.astrbot_plugin_dafeiyu_draw import main as adapter
 from data.plugins.astrbot_plugin_dafeiyu_draw.photo_reference import FACE_SHEET, photo_input
+from data.plugins.astrbot_plugin_qzone.core.editorial import EditorialPolicy
 from data.plugins.astrbot_plugin_qzone.core.post_images import prepare_post_images
 f=agenda.base.fixture
 
@@ -157,6 +159,78 @@ class PhotoTool(unittest.IsolatedAsyncioTestCase):
                 result=await draw.draw_tool(event,'临湾的街道','story_photo')
             self.assertIn('发送未确认',result);self.assertFalse(draw.conversation_works(f.OWNER,f.ORIGIN))
             self.assertIsNone(event.get_extra('dafeiyu_image_result',None));generate.assert_awaited_once()
+
+
+class WorldDiaryCover(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        self.editorial = EditorialPolicy(root / 'posts.db')
+        self.draw = PhotoTool.drawing(self, root)
+        self.context = NS(get_registered_star=lambda _: NS(activated=True, star_cls=self.draw))
+        self.sheet = root / 'references' / FACE_SHEET
+        self.sheet.parent.mkdir()
+        PillowImage.new('RGB', (12, 12), 'blue').save(self.sheet)
+        output = io.BytesIO()
+        PillowImage.new('RGB', (18, 18), 'green').save(output, format='PNG')
+        transport = patch.object(adapter, 'generate', new=AsyncMock(
+            return_value=(output.getvalue(), '.png', (18, 18))))
+        self.generate = transport.start()
+        self.addCleanup(transport.stop)
+
+    async def candidate(self, text, timeline):
+        await self.editorial.remember_candidate(text, {
+            'diary': True, 'kind': '鱼世界生活',
+            'world_life': {'date': '2026-01-16', 'source': 'world_history', 'timeline': timeline},
+        })
+
+    async def test_diary_with_several_own_actions_sends_one_scene_and_the_face_sheet(self):
+        text = '上午在陶坊给白瓷杯画了一圈波纹。后来到钟楼给铜铃换了红绳。晚上回家补好了纸鸢的竹骨。'
+        await self.candidate(text, [
+            '09:15  完成：在陶坊给白瓷杯画了一圈波纹',
+            '15:40  完成：到钟楼给铜铃换了红绳',
+            '19:25  完成：回家补好了纸鸢的竹骨',
+            '20:00  完成：整理邮票册',
+        ])
+        paths = await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.generate.assert_awaited_once()
+        prompt = self.generate.await_args.args[1]
+        self.assertEqual(sum(item in prompt for item in ('白瓷杯', '铜铃', '纸鸢')), 1, prompt)
+        self.assertNotIn('邮票册', prompt)
+        self.assertEqual(self.generate.await_args.kwargs['reference'], self.sheet)
+        self.assertEqual(len(paths), 1)
+        self.assertNotEqual(Path(paths[0]).read_bytes(), self.sheet.read_bytes())
+
+    async def test_scenery_does_not_attach_the_photographer_face(self):
+        text = '旧船坞的紫色浮标在水面摇晃。'
+        for entry in ('13:05  事件：旧船坞的紫色浮标在水面摇晃', '13:05  到达：旧船坞的紫色浮标旁'):
+            with self.subTest(entry=entry):
+                self.generate.reset_mock()
+                await self.candidate(text, [entry])
+                await prepare_post_images(self.context, text, editorial=self.editorial)
+                self.generate.assert_awaited_once()
+                self.assertIn('紫色浮标', self.generate.await_args.args[1])
+                self.assertIsNone(self.generate.await_args.kwargs['reference'])
+
+    async def test_missing_face_sheet_stops_a_character_cover_before_generation(self):
+        text = '我坐在陶坊里给白瓷杯画了一圈波纹。'
+        await self.candidate(text, ['09:15  完成：坐在陶坊里给白瓷杯画了一圈波纹'])
+        self.sheet.unlink()
+        with self.assertRaises(adapter.DrawingError):
+            await prepare_post_images(self.context, text, editorial=self.editorial)
+        self.generate.assert_not_awaited()
+        self.assertEqual(list(self.draw.image_dir.iterdir()), [])
+
+    async def test_attached_photo_takes_precedence_over_the_diary(self):
+        text = '我坐在陶坊里给白瓷杯画了一圈波纹。'
+        await self.candidate(text, ['09:15  完成：坐在陶坊里给白瓷杯画了一圈波纹'])
+        url = 'https://example.invalid/my-cup.jpg'
+        event = NS(message_str='配我发的这张图', get_messages=lambda: [Image.fromURL(url)])
+        paths = await prepare_post_images(
+            self.context, text, event=event, editorial=self.editorial, require_supplied=True)
+        self.assertEqual(paths, [url])
+        self.generate.assert_not_awaited()
 
 
 class PhotoLife(unittest.IsolatedAsyncioTestCase):

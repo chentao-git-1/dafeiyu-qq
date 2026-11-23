@@ -171,13 +171,27 @@ class EditorialPolicy:
                 (text_key(text), text, json.dumps(plan, ensure_ascii=False), int(time.time())))
             await db.commit()
 
-    async def visual_plan(self, text):
+    async def candidate_plan(self, text):
         await self.initialize()
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute('SELECT plan FROM qzone_editorial_candidates WHERE text_key=?', (text_key(text),))
             row = await cursor.fetchone()
-        if row:
-            return json.loads(row[0])
+        return json.loads(row[0]) if row else {}
+
+    async def world_cover_timeline(self, text):
+        """Read the public events already approved for this exact draft."""
+        plan = await self.candidate_plan(text)
+        if 'world_life' not in plan and plan.get('kind') != '鱼世界生活':
+            return None
+        world = plan.get('world_life') or {}
+        if world.get('source') not in ('world_history', 'world_day'):
+            return []
+        return world.get('timeline') or []
+
+    async def visual_plan(self, text):
+        saved = await self.candidate_plan(text)
+        if saved:
+            return saved
         plan, _ = await self.choose_plan(topic='爸爸明确指定的公开文案')
         plan['kind'] = '指定文案'
         await self.remember_candidate(text, plan)

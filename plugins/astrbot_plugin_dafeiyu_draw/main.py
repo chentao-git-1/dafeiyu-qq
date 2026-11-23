@@ -153,8 +153,11 @@ class DafeiyuDraw(Star):
         if self.lock.locked():
             raise DrawingError("画图服务正在处理另一张图片")
         async with self.lock:
+            face_sheet = self.image_dir.parent / "references" / FACE_SHEET
+            if shows_face is True and not face_sheet.is_file():
+                raise DrawingError("空间配图需要听澜露脸，但她的脸部参考图不可用")
             description, reference = photo_input(
-                str(prompt)[:3000], presentation, self.image_dir.parent / "references" / FACE_SHEET,
+                str(prompt)[:3000], presentation, face_sheet,
                 shows_face=shows_face,
             )
             raw, _, _ = await generate(
