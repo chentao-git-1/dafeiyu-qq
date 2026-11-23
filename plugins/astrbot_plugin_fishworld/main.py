@@ -36,6 +36,7 @@ from .core import (
     wake_prompt,
 )
 from .followthrough import Followthrough
+from .mcp_recovery import FishWorldMCPRecovery
 from .outfit_history import outfit_at
 from .plans import (
     MISSED_HOLD,
@@ -123,6 +124,7 @@ class FishWorldPlugin(Followthrough, Star):
         self.delivery_failures = 0
         self._history_guard = None
         self._active_plan_offer = None
+        self.mcp_recovery = FishWorldMCPRecovery()
 
     async def public_outfit_at(self, day, at, *, scene_row=None):
         """Read the resident's confirmed clothing at a dated public event."""
@@ -165,6 +167,7 @@ class FishWorldPlugin(Followthrough, Star):
             self.task.cancel()
             with suppress(asyncio.CancelledError):
                 await self.task
+        await self.mcp_recovery.close()
         if self.session:
             await self.session.close()
         if self._history_guard is not None:
@@ -198,6 +201,7 @@ class FishWorldPlugin(Followthrough, Star):
     async def check(self):
         async with self.lock:
             if self.storage_error or self.store is None:
+                self.mcp_recovery.tick(self.context, None)
                 return
             cfg = settings(self.config)
             state = self.store.data
@@ -207,7 +211,9 @@ class FishWorldPlugin(Followthrough, Star):
                 state["busy"] = None
                 state["last_delivery"] = "上次唤醒等待超时，执行结果未知；不会自动重试该批事件"
                 self._save()
-            if not cfg["enabled"] or state["paused"] or not state["binding"]:
+            binding = state["binding"] if cfg["enabled"] and not state["paused"] else None
+            self.mcp_recovery.tick(self.context, binding.get("umo") if binding else None)
+            if not binding:
                 return
             if error := self._prepare_watch_key(cfg, now):
                 self.last_error = error
