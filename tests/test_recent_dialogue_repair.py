@@ -22,6 +22,156 @@ class RecentDialogueRepair(unittest.IsolatedAsyncioTestCase):
     run_hooks=f.NativeHooks.run_hooks
     ready=base.SingleGeneration.ready
 
+    def bind_fish(self, event):
+        registry = self.context.get_registered_star
+        binding = dict(umo=event.unified_msg_origin, sender_id=str(event.get_sender_id()), group_id='')
+        state = dict(binding=binding, key_hash='fixture-fish')
+        fish = NS(config={'enabled': True}, store=NS(data=state))
+        self.context.get_registered_star = lambda name: (
+            NS(star_cls=fish, activated=True) if name == 'astrbot_plugin_fishworld' else registry(name))
+        return state
+
+    async def observe_fish_tool(self, event, name, args, text, *, failed=False):
+        tool = NS(name=name, mcp_server_name='fish-world')
+        result = NS(content=[NS(type='text', text=text)], isError=failed)
+        await self.plugin.collect_tool_evidence(event, tool, args, result)
+
+    async def test_only_matching_fish_receipts_can_confirm_completed_actions(self):
+        event, _ = await self.ready('放好了吗？')
+        self.bind_fish(event)
+        stored = '我把番茄炒蛋放进冰箱了。'
+        noodles = '我点好面了。'
+        await self.observe_fish_tool(event, 'world_now', {}, '现在 12:03 · 在家')
+        self.assertNotEqual(await self.plugin.grounded_wording(event, noodles, final=True), noodles)
+        await self.observe_fish_tool(event, 'world_now', {}, '可用操作：下单番茄鸡蛋面 order-noodles')
+        self.assertNotEqual(await self.plugin.grounded_wording(event, noodles, final=True), noodles)
+        await self.observe_fish_tool(event, 'world_do', {'id': 'throw-dish-22'}, '好的，你把「清炒青菜」扔掉了。')
+        self.assertNotEqual(await self.plugin.grounded_wording(event, stored, final=True), stored)
+        discarded = '我把清炒青菜扔掉了。'
+        self.assertEqual(await self.plugin.grounded_wording(event, discarded, final=True), discarded)
+        await self.observe_fish_tool(event, 'world_do', {'id': 'fridge-dish-21'},
+                                     'error: MCP session is not available', failed=True)
+        self.assertNotEqual(await self.plugin.grounded_wording(event, stored, final=True), stored)
+
+        await self.observe_fish_tool(event, 'world_do', {'id': 'fridge-dish-21'},
+                                     '你醒了，起来了。\n好的，你把番茄炒蛋放进了冰箱。冰箱放了 9 格，最多 25 格。')
+        self.assertEqual(await self.plugin.grounded_wording(event, stored, final=True), stored)
+        other = '我把清炒青菜放进冰箱了。'
+        self.assertNotEqual(await self.plugin.grounded_wording(event, other, final=True), other)
+        for original in ('我想点一碗番茄鸡蛋面。', '如果我点好了面，就告诉你。', '你已经点好了面，可以歇歇了。'):
+            with self.subTest(original=original):
+                self.assertEqual(await self.plugin.grounded_wording(event, original, final=True), original)
+        self.context.get_using_provider_async.return_value.text_chat.assert_not_awaited()
+
+    async def test_receipt_follows_the_bound_chat_and_dated_history_can_confirm_an_order(self):
+        event, _ = await self.ready('点面了吗？')
+        state = self.bind_fish(event)
+        await self.observe_fish_tool(event, 'world_history', {}, '12:05  已下单：番茄鸡蛋面')
+        later = f.event('刚才那碗面呢？')
+        later.message_obj.message_id = 'next-turn'
+        await self.run_hooks(later, f.ProviderRequest(prompt=later.message_str))
+        ordered = '我点好番茄鸡蛋面了。'
+        self.assertEqual(await self.plugin.grounded_wording(later, ordered, final=True), ordered)
+        state['key_hash'] = 'another-fish'
+        self.assertNotEqual(await self.plugin.grounded_wording(later, ordered, final=True), ordered)
+
+    async def test_reading_inventory_cannot_confirm_a_new_storage_action(self):
+        event, _ = await self.ready('这次把番茄炒蛋放进去了吗？')
+        self.bind_fish(event)
+        await self.observe_fish_tool(event, 'world_now', {},
+            '冰箱（放了 3 格，最多 25 格）：番茄炒蛋 dish-21。world_do 可以将食物放进冰箱。')
+        observed = '番茄炒蛋在冰箱里。'
+        self.assertEqual(await self.plugin.grounded_wording(event, observed, final=True), observed)
+        for claimed in ('我刚把番茄炒蛋放进冰箱了。', '我刚把番茄炒蛋又放进冰箱了。'):
+            with self.subTest(claimed=claimed):
+                self.assertNotEqual(await self.plugin.grounded_wording(event, claimed, final=True), claimed)
+        event.send.assert_not_awaited()
+
+    async def test_unrelated_world_read_cannot_support_a_declared_external_action(self):
+        self.plugin.config['chat_model_verification'] = False
+        claimed = '我修好自行车了。'
+        event, _ = await self.ready('自行车修好了吗？')
+        self.bind_fish(event)
+        async def finish(turn, tool):
+            claim = dict(kind='external_action', span=claimed, evidence_ids=['tool:' + tool])
+            envelope = json.loads(base.envelope(claimed, claims=[claim]))
+            envelope['focus'] = ['action']
+            response = NS(completion_text=json.dumps(envelope, ensure_ascii=False), tools_call_name=[])
+            await self.plugin.review_response(turn, response)
+            return response.completion_text
+        await self.observe_fish_tool(event, 'world_now', {}, '位置在家')
+        self.assertNotIn('修好自行车了', await finish(event, 'world_now'))
+        next_turn = f.event('现在呢？')
+        next_turn.message_obj.message_id = 'bicycle-completed'
+        await self.run_hooks(next_turn, f.ProviderRequest(prompt=next_turn.message_str))
+        await self.observe_fish_tool(next_turn, 'world_do', {'id': 'repair-bicycle'}, '好的，你修好了自行车。')
+        self.assertEqual(await finish(next_turn, 'world_do'), claimed)
+        self.context.get_using_provider_async.return_value.text_chat.assert_not_awaited()
+
+    async def test_location_is_readable_and_textual_item_failure_is_not_a_success(self):
+        from data.plugins.dafeiyu_dialogue.world_receipts import unsupported_world_spans
+        sources = {'tool:world_now': {'data': {'tool':'world_now','result':'现在 00:03 · 在家'}}}
+        claim = dict(kind='external_action',span='我已经在家了。',evidence_ids=['tool:world_now'])
+        self.assertEqual(unsupported_world_spans(NS(claims=[claim]),sources), [])
+        event, _ = await self.ready('收好了吗？')
+        self.bind_fish(event)
+        await self.observe_fish_tool(event,'world_do',{'id':'fridge-dish-21'},'把番茄炒蛋放进冰箱失败，容量不足。')
+        reply = '我把番茄炒蛋放进冰箱了。'
+        self.assertNotEqual(await self.plugin.grounded_wording(event,reply,final=True), reply)
+
+    async def test_rereading_old_order_history_does_not_revive_a_cancelled_order(self):
+        event, _ = await self.ready('我记得你点了面，还有在等的订单吗？')
+        self.bind_fish(event)
+        old = '00:00  已下单：番茄鸡蛋面'
+        await self.observe_fish_tool(event, 'world_history', {}, old)
+        waiting = '那碗番茄鸡蛋面还没送到。'
+        self.assertEqual(await self.plugin.grounded_wording(event, waiting, final=True), waiting)
+        await self.observe_fish_tool(event, 'world_history', {}, '00:01  订单已取消：番茄鸡蛋面')
+        await self.observe_fish_tool(event, 'world_history', {}, old)
+        self.assertNotEqual(await self.plugin.grounded_wording(event, waiting, final=True), waiting)
+
+    async def test_continuing_private_chat_uses_recent_confirmed_bedtime_closing(self):
+        self.plugin.config['chat_model_verification'] = False
+        first, _ = await self.ready('能给我看看那本书吗？')
+        followup = '这本书你最喜欢哪一章？'
+        key = 'recent_bedtime_closing'
+
+        async def hint(text):
+            event = f.event(text)
+            event.message_obj.message_id = str(time.time_ns())
+            await self.run_hooks(event, f.ProviderRequest(prompt=text))
+            self.assertTrue(event.get_extra('dafeiyu_generation_contract'))
+            return event.get_extra('dafeiyu_dialogue_evidence')['current_confirmed_facts'].get(key)
+
+        closing = '那本蓝皮的旅行手记。你也早点睡吧。'
+        response = NS(completion_text=base.envelope(closing), tools_call_name=[])
+        await self.plugin.review_response(first, response)
+        self.assertTrue(first.get_extra('dafeiyu_generation_valid'))
+        await self.natural.remember_delivered_reply(first)
+        self.assertFalse(await hint(followup))
+        first.set_extra('dafeiyu_confirmed_delivery', [dict(kind='reply', text=closing, at=time.time())])
+        await self.natural.remember_delivered_reply(first)
+        self.assertTrue(await hint(followup))
+        self.assertFalse(await hint('晚安，明天见。'))
+        self.assertFalse(await hint('你还没睡着吗？'))
+        self.context.get_using_provider_async.return_value.text_chat.assert_not_awaited()
+
+    def test_bedtime_signal_has_private_scope_and_recent_time_window(self):
+        from data.plugins.dafeiyu_dialogue.recent_closing import recent_bedtime_closing
+        now = time.time()
+        turn = f.TurnContext(f.OWNER, f.ORIGIN, 'dafeiyu-qq', 'fixture', now)
+        def exchange(origin=f.ORIGIN, owner=f.OWNER, age=60, reply='我这就回去睡了。'):
+            return f.MemoryItem('exchange:1', owner, origin, 'session', 'exchange',
+                                json.dumps({'human': '说说你的画吧', 'reply': reply}, ensure_ascii=False),
+                                now-age, 'confirmed_exchange')
+        text = '你准备给那只海鸟涂什么颜色？'
+        self.assertTrue(recent_bedtime_closing(turn, text, [exchange()]))
+        self.assertFalse(recent_bedtime_closing(turn, text, [exchange(age=3600)]))
+        self.assertFalse(recent_bedtime_closing(turn, text, [
+            exchange(origin='dafeiyu-qq:FriendMessage:' + f.FRIEND, owner=f.FRIEND)]))
+        group = f.TurnContext(f.OWNER, 'dafeiyu-qq:GroupMessage:812', turn.platform, 'group', now)
+        self.assertFalse(recent_bedtime_closing(group, text, [exchange(origin=group.origin)]))
+
     async def test_semantic_path_retains_directory_but_not_legacy_whole_reply_override(self):
         e,req=await self.ready('在QQ空间里的')
         routes=importlib.import_module('data.plugins.dafeiyu_message_routes.main').MessageRoutes(self.context)

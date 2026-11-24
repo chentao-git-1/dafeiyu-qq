@@ -17,6 +17,7 @@ from dafeiyu.dialogue.learning import LearningStore, proposals
 from .prompt_cache import merge_world_snapshot
 from .world_observation import SHANGHAI, binding_scope, current_field, place_record, visit_actions
 from .purchase_evidence import CHECK as PURCHASE_CHECK, calibrate, prepare_purchase
+from .world_receipts import ledger_for, unsupported_world_spans
 from .route_receipts import ROUTE, refresh_if_due, route_wording
 from .spoken_price import QUOTE, quote_wording
 from . import followthrough
@@ -45,7 +46,9 @@ class GenerationWorkflow:
             if not any(r.get("id")==quote["id"] for r in memory):
                 return "我现在确认不了当时那条消息的原话。"
             body = quote_wording(body,quote,final)
-        return body
+        if event.get_extra('dafeiyu_semantic_forgetting',False):
+            return body
+        return ledger_for(self).wording(self.context,event,body,event.message_str or '',time.time())
 
     def purchase_wording(self, event, text):
         check = event.get_extra(PURCHASE_CHECK)
@@ -248,6 +251,15 @@ class GenerationWorkflow:
             offered.update(mood_evidence)
             current_sources = claim_sources(materials, tool_rows)
             current_sources.update(mood_evidence)
+            # A scoped receipt may have expired or been superseded since the request.
+            if binding_scope(self.context,event):
+                live={r['id']:r for r in ledger_for(self).facts(self.context,event,time.time())}
+                for key in list(current_sources):
+                    if key.startswith('world_action:') and current_sources[key]['data']!=live.get(key):
+                        current_sources.pop(key)
+                invalid_world_spans=unsupported_world_spans(generated,current_sources)
+            else:
+                invalid_world_spans=[]
             try:validate_claim_sources(generated, offered, current_sources)
             except ValueError:recover=True
             human=self.natural().input_snapshot(event)['text']
@@ -327,7 +339,10 @@ class GenerationWorkflow:
             confirmed=event.get_extra('dafeiyu_confirmed_delivery',[])
             sent=list(dict.fromkeys(r['text'] for r in confirmed if r.get('kind')=='reply' and r.get('text')))
             if sent:body='\n'.join(sent)
-            else:body=await self.grounded_wording(event,body,final=True,memory=materials["memory"])
+            else:
+                for span in invalid_world_spans:
+                    body=body.replace(span,'这件事我还没拿到确认')
+                body=await self.grounded_wording(event,body,final=True,memory=materials["memory"])
             f=event.get_extra(FLOW)
             if f and f["auto"]:
                 share=not sent and followthrough.final_share(event,body)

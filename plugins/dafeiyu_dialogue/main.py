@@ -41,8 +41,10 @@ from .generation_workflow import GenerationWorkflow
 from .public_sharing import PublicSharing
 from .relationship_memory import RelationshipContext
 from .world_observation import DAY_QUERY, WorldObservation, asks_current_detail, binding_scope
+from .world_receipts import ledger_for
 from .route_receipts import ROUTE, note_route, prepare_route, set_request_id
 from .spoken_price import QUOTE, prior_price
+from .recent_closing import recent_bedtime_closing
 from . import followthrough, turn_audit
 from .world_activity import FLOW, proposed_share, quiet_result
 from .wardrobe import guard_draw, finish_draw, portrait_prompt, reserve_change
@@ -298,8 +300,16 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             if self.growth_enabled():
                 character=dict(character or {},growth=await self.growth_profile(turn))
             if on_demand:character=default_character(character)
+            facts = {} if on_demand else dict(event.get_extra('jingjing_current_facts', {}) or {})
+            if (on_demand and not event.get_extra('fishworld_wake_id')
+                    and recent_bedtime_closing(turn, source['text'], snapshot.items)):
+                facts['recent_bedtime_closing'] = True
+            if not turn.is_group and not event.get_extra('fishworld_wake_id'):
+                receipts = ledger_for(self).facts(self.context,event,time.time())
+                if receipts:
+                    facts['recent_world_actions'] = receipts
             built = compose(prompt, turn, snapshot, source['text'],
-                facts={} if event.get_extra('dafeiyu_generation_contract',False) else event.get_extra('jingjing_current_facts', {}),
+                facts=facts,
                 character=character,
                 preferences={} if turn.is_group else natural.interaction_store().preferences(turn.actor),
                 life=None if on_demand else record,progress=None if on_demand else progress,
@@ -346,6 +356,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
                 built.evidence['self_details_on_demand']=True
             selected = bool(event.get_extra(ACTIVE_KEY, False))
             built.evidence['action_facts'] = copy.deepcopy(event.get_extra(ACTION_FACTS, []) or [])
+            built.evidence['action_facts'].extend(facts.get('recent_world_actions', []))
             self.samples.append(dict(built.metrics, active=selected, persona_compacted=compacted))
             if selected:
                 req.system_prompt = built.prompt
@@ -596,6 +607,8 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
 
     @filter.on_using_llm_tool(priority=-sys.maxsize + 1)
     async def review_tool_message(self, event, tool, arguments):
+        if event.get_extra(ACTIVE_KEY, False):
+            ledger_for(self).pending(self.context,event,tool,arguments,time.time())
         flow=event.get_extra(FLOW)
         if (flow and getattr(tool,"mcp_server_name",None)=="fish-world" and tool.name=="world_update"
                 and binding_scope(self.context,event)==flow["scope"]):
@@ -642,7 +655,7 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
             await followthrough.tool_result(self,event,tool,arguments,result)
         if event.get_extra(ACTIVE_KEY, False) and event.get_extra(ROUTE):
             await note_route(self,event,tool,arguments,result)
-        if not event.get_extra(ACTIVE_KEY, False) or getattr(result,'isError',False):
+        if not event.get_extra(ACTIVE_KEY, False):
             return
         text = result if isinstance(result, str) else None
         if text is None:
@@ -651,6 +664,10 @@ class Dialogue(GrowthLifecycle, EvidenceContext, GenerationWorkflow, PublicShari
                 texts=[getattr(part,'text',None) for part in parts if getattr(part,'type',None)=='text']
                 if len(texts)==len(parts) and all(isinstance(p,str) for p in texts):text='\n'.join(texts)
             elif isinstance(result,dict):text=json.dumps(result,ensure_ascii=False)
+        failed = getattr(result,'isError',False)
+        ledger_for(self).observe(self.context,event,tool,arguments,text,failed,time.time())
+        if failed:
+            return
         if getattr(tool, 'name', '') == 'world_now' and getattr(tool, 'mcp_server_name', None) == 'fish-world':
             self.world_observation.remember(binding_scope(self.context, event), text, time.time())
         rows = event.get_extra('dafeiyu_dialogue_tool_evidence', [])
